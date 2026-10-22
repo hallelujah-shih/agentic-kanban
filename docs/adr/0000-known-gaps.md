@@ -14,4 +14,6 @@
 | G6 | 候选工具未调研，自研依据未闭合 | ② | 已裁决：无候选满足合取，自研为主 + agent-kanban-pm 为移植种子（docs/adr/0001-reuse-vs-build.md） | ADR 0001 生效起（已闭合） |
 | G7 | agent-kanban-pm 骨架（认领/租约/角色门控 MCP/append-only）移植性未经真机验证 | ② | 已闭合：Spike 真机验证（2026-10-22），命中 3/4 偏差触发（认领非 DB 排他 / claim 非单事务 / agent 面可释放置终态）；移植边界收窄并登记于 docs/adr/0001-reuse-vs-build.md「G7 Spike 验证」，证据 docs/ops/spike-g7.md | 2026-10-22 闭合 |
 
+| G8 | Spike 结果盲审登记的 M0 缺口：REOPEN 边无接口可达（PRD 3.1 vs 4.2）；abandon 于 CLAIMED 的认领处置未规定；读事务 BEGIN IMMEDIATE 锁竞争下非结构化读错；export LIMIT 200 截断 | ② | M0 裁决并修复（详址 docs/ops/spike-verification.md「结果盲审 P2 处置」） | Spike 合入起 |
+
 登记规则：新增残余必须同时写明档位与生效点；档位 ③ 冒充 ① 或 ② 视为虚标，审查照报。
