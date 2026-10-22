@@ -261,16 +261,18 @@ class REST:
         raise TimeoutError("server did not become healthy")
 
     def req(self, method: str, path: str, body: dict | None = None,
-            params: dict | None = None, token: str | None = None) -> tuple[int, object]:
-        """token 显式传才置 header（None=无 token）；params 含 token 时走 query。"""
+            params: dict | None = None, token: str | None = None,
+            headers: dict | None = None) -> tuple[int, object]:
+        """token 显式传才置 header（None=无 token）；params 含 token 时走 query；
+        headers 显式传合并（如 Accept: text/html 内容协商用例，M1-2）。"""
         url = f"http://{self.host}:{self.port}{path}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
         data = None
-        headers = {}
+        headers = dict(headers or {})
         if body is not None:
             data = json.dumps(body).encode()
-            headers["Content-Type"] = "application/json"
+            headers.setdefault("Content-Type", "application/json")
         if token and not (params and "token" in params):
             headers["X-Agent-Kanban-Token"] = token
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
