@@ -31,7 +31,7 @@ M0 AC 判据表全文见 docs/plans/m0-plan.md「AC 判据表 / REST 错误映�
 |---|---|---|---|
 | M0-1 首发 | tests/red-1.log 0/10（空实现 stub 全红） | tests/green-1.log 160/160 | 视图/REST/CLI M0 首批断言 |
 | M0-1 盲审修复 | tests/red-2.log 5/21（修复未落时针对 P1-1/P2-1/P2-3 定向红） | tests/green-2.log 184/184 | id 归一全链闭合、note/update_progress 8KB、拆解新增口径 |
-| M0-2 新增 | tests/red-3.log 8/9（reconcile 命令缺失 -> 对账断言全红；AC10 验证 M0-1 判别力结构 7 断言即绿） | tests/green-3.log 19/19 | AC10 7 断言 + reconcile 12 断言 |
+| M0-2 新增 | tests/red-3.log 8/9（reconcile 命令缺失 -> 对账断言全红；AC10 7 断言即绿 = 判别力结构验证性质：M0-1 视图已就绪，红证据不适用，断言力以精确断言 + 场景业务自洽背书，见结果盲审 P2-3） | tests/green-3.log 19/19 | AC10 7 断言 + reconcile 12 断言 |
 
 - 每 AC 断言逐字引自 PRD，未读实现私有成员；AC10 断言基于渲染输出（summary dict / CLI 文本）；reconcile 断言基于 reconcile 事件与报告（直查 events 表）；并发场景真实多进程，未 mock。
 

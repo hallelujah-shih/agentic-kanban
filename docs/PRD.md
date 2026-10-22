@@ -61,7 +61,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 - `UNIQUE (requirement_id, seq)` on events；seq 全局单调递增，服务端签发
 - `ts` 由服务端在写入时签发，不接受调用方传入
 
-事件 kind：`decision` / `risk` / `deviation` / `decomposition` / `progress_note` / `state_change` / `review_request` / `approval` / `release` / `note`。
+事件 kind：`decision` / `risk` / `deviation` / `decomposition` / `progress_note` / `state_change` / `review_request` / `approval` / `release` / `note` / `reconcile`（对账事件，系统对账写事件，PRD §6 可观测）。
 事件 severity：`info` / `attention` / `critical`。**deviation 的 severity 强制 >= attention**（不允许压级逃逸，见 5.3）。
 
 `awaiting_human` 是 requirements 上的 JSON 列，不是状态：

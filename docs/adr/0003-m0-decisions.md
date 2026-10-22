@@ -13,7 +13,7 @@
 - **ORPHANED 语义（审#8）**: 只属 reconcile 产物（报告 + 事件）。`claim_view.signal` 保持 PRD 推导序（ended/waiting/stale/suspect/active），view.py 现状不动。ORPHANED = 连接失活（last_activity_at 超 idle）且租约未过期且无 awaiting_human —— 即 SUSPECT 区间在 reconcile 时点的显式化；**等待中优先于 ORPHANED**（不因连接失活盖过「等待人裁决」）。drift/ORPHANED 入摘要「需要关注区」。
 - **reconcile 观测源（审#1）**: claims 表（agent_conn + last_activity_at，共享 DB），**无进程内 conn registry**（跨进程各自 registry 会互相误标 ORPHANED）。agent_conn 为观测/审计记录，存活判定 = last_activity_at 超 idle。
 - **触发（审#10）**: CLI `agent-kanban reconcile` 命令 + FastAPI lifespan（api/main.py 启动对账）；**MCP server 启动不跑**（避免多进程事件噪音）。
-- **reconcile 写入**: append-only `kind='reconcile'` 事件（actor=system/reconcile），payload 含 findings（claim_id/requirement_id/signal）与 drift 明细；只标记不删除。
+- **reconcile 写入**: append-only `kind='reconcile'` 事件（actor=system/reconcile），payload 含 findings（claim_id/requirement_id/signal）与 drift 明细；只标记不删除。**时点观测语义（结果盲审 P2-1）**: reconcile 事件是派生量（STALE/ORPHANED/drift）在扫描时点的快照标注，**无 ACTIVE 闭合事件（设计如此）**；当前状态以 claims 时间轴 + 视图时点重推导为准（view 展示前以当前事实重判，陈旧事件不可能产生陈旧显示）；**未来埋点禁用 reconcile 事件作状态源**（须用活推导）。M1 可选项：同一 claim 观测到非 active -> active 转移时写闭合事件（有前次非 active 观测才写，限噪），属契约变更待 M1 裁决。
 - **activity 口径（G10 声明）**: `last_activity_at` 仅写调用更新（现状，lease.touch_activity 挂 agent 面写路径）；PRD 3.2「读写任一计活动」为既有偏差 -> 登记 G10（M1 定读计活动的连接级模型），本批不改；reconcile 用 last_activity_at 作观测源与 SUSPECT 同源一致。
 
 ## REST HTTP 错误映射表（契约，审#7 注明不可达码）
