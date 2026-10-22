@@ -51,22 +51,9 @@ async def summary(
         select(Event).where(Event.requirement_id == requirement_id).order_by(Event.seq)
     )).all()
 
-    milestone_rows = []
-    for m in milestones:
-        delay = None
-        if m.state != "achieved" and m.planned_at is not None and now > m.planned_at:
-            delay = "overdue"
-        elif m.state == "achieved" and m.actual_at is not None and m.planned_at is not None and m.actual_at > m.planned_at:
-            delay = "late"
-        milestone_rows.append({
-            "milestone_id": _nid(m.id), "title": m.title, "state": m.state,
-            "planned_at": m.planned_at.isoformat() if m.planned_at else None,
-            "actual_at": m.actual_at.isoformat() if m.actual_at else None,
-            "delay": delay,
-        })
+    milestone_rows = [_milestone_row(m, now) for m in milestones]
 
     decisions: list[dict] = []
-    risks: list[dict] = []
     deviations: list[dict] = []
     for e in events:
         if e.kind == "decision":
@@ -78,53 +65,19 @@ async def summary(
                 "alternatives": payload.get("alternatives") or [],
                 "actor_surface": e.actor_surface, "actor_conn": e.actor_conn,
             })
-        elif e.kind == "risk" and e.severity in ("attention", "critical"):
-            risks.append({
-                "seq": e.seq, "ts": e.ts.isoformat(), "title": e.title,
-                "severity": e.severity, "actor_conn": e.actor_conn,
-            })
         elif e.kind == "deviation":
             deviations.append({
                 "seq": e.seq, "ts": e.ts.isoformat(), "title": e.title,
                 "severity": e.severity, "payload": e.payload,
                 "actor_conn": e.actor_conn,
             })
+    risks = _risk_rows(events)
 
     # 验收对照表（下界语义：只保证未链接锚项必然显示缺口）
-    anchors = list(req.acceptance or [])
-    table = []
-    for a in anchors:
-        aid = str(a.get("id") or a.get("item"))
-        linked = []
-        for st in subtasks:
-            for acc in (st.acceptance or []):
-                if not isinstance(acc, dict):
-                    continue
-                refs = acc.get("links_to") or []
-                if isinstance(refs, str):
-                    refs = [refs]
-                if aid in {str(x) for x in refs}:
-                    linked.append({
-                        "subtask_id": _nid(st.id), "subtask_title": st.title,
-                        "item": acc.get("item"), "state": acc.get("state"),
-                        "criteria": acc.get("criteria"),
-                    })
-        table.append({
-            "anchor_id": aid, "item": a.get("item"),
-            "linked": linked, "uncovered": len(linked) == 0,
-        })
+    table = _acceptance_table(list(req.acceptance or []), subtasks)
 
     # 进度派生值：done/total；blocked=进行中；abandoned 不计分母
-    states = [s.state for s in subtasks]
-    total = sum(1 for s in states if s != "abandoned")
-    done = sum(1 for s in states if s == "done")
-    progress = {
-        "done": done,
-        "total": total,
-        "remaining": total - done,
-        "blocked": sum(1 for s in states if s == "blocked"),
-        "abandoned": sum(1 for s in states if s == "abandoned"),
-    }
+    progress = _progress_dict([s.state for s in subtasks])
 
     needs_attention = _derived_signals(
         subtasks, milestones, events, milestone_rows,
@@ -157,6 +110,122 @@ async def summary(
         "created_at": req.created_at.isoformat(),
         "updated_at": req.updated_at.isoformat(),
     }
+
+
+def _milestone_row(m: Milestone, now: datetime) -> dict:
+    """里程碑行（审#P2-2 共享 helper，summary 与 board 同口径）：
+    planned_at 未达成且超期 -> overdue；achieved 且 actual_at>planned_at -> late。"""
+    delay = None
+    if m.state != "achieved" and m.planned_at is not None and now > m.planned_at:
+        delay = "overdue"
+    elif m.state == "achieved" and m.actual_at is not None and m.planned_at is not None and m.actual_at > m.planned_at:
+        delay = "late"
+    return {
+        "milestone_id": _nid(m.id), "title": m.title, "state": m.state,
+        "planned_at": m.planned_at.isoformat() if m.planned_at else None,
+        "actual_at": m.actual_at.isoformat() if m.actual_at else None,
+        "delay": delay,
+    }
+
+
+def _progress_dict(states: list[str]) -> dict:
+    """进度派生值（审#P2-2 共享 helper）：done/total；blocked=进行中；abandoned 不计分母。"""
+    total = sum(1 for s in states if s != "abandoned")
+    done = sum(1 for s in states if s == "done")
+    return {
+        "done": done,
+        "total": total,
+        "remaining": total - done,
+        "blocked": sum(1 for s in states if s == "blocked"),
+        "abandoned": sum(1 for s in states if s == "abandoned"),
+    }
+
+
+def _risk_rows(events: list[Event]) -> list[dict]:
+    """risk 计数口径（审#P2-1 共享 helper）：severity>=attention 才展示（PRD 5.3）。"""
+    return [
+        {
+            "seq": e.seq, "ts": e.ts.isoformat(), "title": e.title,
+            "severity": e.severity, "actor_conn": e.actor_conn,
+        }
+        for e in events if e.kind == "risk" and e.severity in ("attention", "critical")
+    ]
+
+
+def _acceptance_table(anchors: list, subtasks: list[Subtask]) -> list[dict]:
+    """验收对照表（审#P2-2 共享 helper，下界语义：只保证未链接锚项必然显示缺口）。"""
+    table = []
+    for a in anchors:
+        aid = str(a.get("id") or a.get("item"))
+        linked = []
+        for st in subtasks:
+            for acc in (st.acceptance or []):
+                if not isinstance(acc, dict):
+                    continue
+                refs = acc.get("links_to") or []
+                if isinstance(refs, str):
+                    refs = [refs]
+                if aid in {str(x) for x in refs}:
+                    linked.append({
+                        "subtask_id": _nid(st.id), "subtask_title": st.title,
+                        "item": acc.get("item"), "state": acc.get("state"),
+                        "criteria": acc.get("criteria"),
+                    })
+        table.append({
+            "anchor_id": aid, "item": a.get("item"),
+            "linked": linked, "uncovered": len(linked) == 0,
+        })
+    return table
+
+
+async def board(
+    session: AsyncSession,
+    *,
+    status: str | None = None,
+    actor_surface: str,
+    actor_conn: str,
+    now: datetime | None = None,
+) -> dict:
+    """看板默认列表（PRD 5.3 + 审#P1-2）：非终态默认过滤 + status 过滤；
+    每需求 needs_attention = _derived_signals 全口径（与 summary 同源，零假阴性）；
+    progress/milestone delay/coverage/risk 口径与 summary 同源（审#P2-1/P2-2）。"""
+    now = now or now_utc()
+    stmt = select(Requirement)
+    if status:
+        stmt = stmt.where(Requirement.state == status)
+    else:
+        stmt = stmt.where(Requirement.state.not_in(["DONE", "REJECTED", "CANCELLED"]))
+    rows = (await session.scalars(stmt.order_by(Requirement.created_at))).all()
+    tasks = []
+    for r in rows:
+        claim = await session.scalar(
+            select(Claim).where(Claim.requirement_id == r.id, Claim.ended_at.is_(None))
+        )
+        subtasks = (await session.scalars(
+            select(Subtask).where(Subtask.requirement_id == r.id).order_by(Subtask.ordinal)
+        )).all()
+        milestones = (await session.scalars(
+            select(Milestone).where(Milestone.requirement_id == r.id).order_by(Milestone.created_at)
+        )).all()
+        events = (await session.scalars(
+            select(Event).where(Event.requirement_id == r.id).order_by(Event.seq)
+        )).all()
+        milestone_rows = [_milestone_row(m, now) for m in milestones]
+        needs_attention = _derived_signals(
+            subtasks, milestones, events, milestone_rows,
+            claim=claim, state=r.state, awaiting_human=r.awaiting_human, now=now,
+        )
+        tasks.append({
+            "requirement_id": _nid(r.id),
+            "title": r.title,
+            "state": r.state,
+            "awaiting_human": r.awaiting_human,
+            "claim": _claim_view(claim, r.awaiting_human, now),
+            "progress": _progress_dict([s.state for s in subtasks]),
+            "needs_attention": needs_attention,
+        })
+    attention_ids = [t["requirement_id"] for t in tasks if t["needs_attention"]]
+    return {"tasks": tasks, "attention_ids": attention_ids}
 
 
 def _claim_view(claim: Claim | None, awaiting_human: dict | None, now: datetime) -> dict | None:

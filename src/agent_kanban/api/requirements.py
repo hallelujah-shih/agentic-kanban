@@ -106,6 +106,16 @@ async def list_requirements() -> dict:
     return await _run("list_tasks", is_write=False)
 
 
+@router.get("/board")
+async def get_board(status: str | None = None) -> dict:
+    """看板默认列表（PRD §4.2/§5.3）：非终态 + status 过滤；每需求派生需要关注信号。"""
+    surface, conn = rest_actor()
+    return await run_op(
+        get_session_factory(), view.board, is_write=False,
+        status=status, actor_surface=surface, actor_conn=conn,
+    )
+
+
 @router.get("/requirements/{requirement_id}")
 async def get_requirement(requirement_id: str) -> dict:
     """深潜（view.detail，含状态重建与完整事件流）。"""
