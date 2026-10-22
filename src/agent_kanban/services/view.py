@@ -223,6 +223,7 @@ async def board(
             "claim": _claim_view(claim, r.awaiting_human, now),
             "progress": _progress_dict([s.state for s in subtasks]),
             "needs_attention": needs_attention,
+            "risks": _risk_rows(events),
         })
     attention_ids = [t["requirement_id"] for t in tasks if t["needs_attention"]]
     return {"tasks": tasks, "attention_ids": attention_ids}

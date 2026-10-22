@@ -6,8 +6,9 @@ wait-for-event deadline helper 禁 sleep 撞窗；跨进程写经 MCP stdio 子�
 （同一 SQLite，跨进程可靠信号，P2-B 先等 keepalive 再写）。
 
 - 反证位：SSE 跨进程（MCP stdio 子进程写 -> HTTP SSE 收）+ 无回填（连接后首轮询
-  窗口零历史）+ board==summary needs_attention 口径一致性（4 形态，含覆盖缺口与
-  拆解新增无解释）+ 内容协商壳无原始输出 + 缺省 Accept JSON 形状回归 + 401 覆盖新端点。
+  窗口零历史）+ board==summary needs_attention 口径一致性（5 形态，含覆盖缺口、
+  拆解新增无解释、未解释放弃）+ board risks 同源 + 内容协商壳无原始输出 +
+  缺省 Accept JSON 形状回归 + 401 覆盖新端点。
 - 时点无歧义（P2-C）：里程碑 planned_at 远过去（overdue 确定）、租约正常（active 确定），
   now 依赖断言与口径一致性断言正交。
 """
@@ -153,7 +154,7 @@ def sse_stream():
 
 
 def board_view():
-    print("== M1-2.2: board 4 形态 + board==summary 口径一致性 + status 过滤 + 401")
+    print("== M1-2.2: board 5 形态 + board==summary 口径一致性 + risks 同源 + status 过滤 + 401")
 
     db = new_db()
     m = MCP(db).start()
@@ -164,12 +165,17 @@ def board_view():
     m.call_ok("update_subtask", {"requirement_id": r2, "subtask_id": s1["subtask_id"], "state": "blocked"})
     m.call_ok("add_milestone", {"requirement_id": r2, "title": "M2", "planned_at": "2020-01-01T00:00:00+00:00"})
     m.call_ok("mark_blocked", {"requirement_id": r2, "reason": "need decision"})
+    m.call_ok("add_record", {"requirement_id": r2, "kind": "risk", "title": "R-critical", "severity": "critical"})
     r3 = seed_req(db, "board-gap")      # 覆盖缺口：acceptance 锚无子任务链接
     cli_ok(db, "set_expectations", "--requirement-id", r3, "--acceptance", '[{"item": "G1"}]')
     r4 = seed_req(db, "board-decomp")   # 拆解新增无解释：CLAIMED 期间 add_subtask 无 decision/deviation
     m.call_ok("claim_task", {"requirement_id": r4, "agent_name": "b"})
     m.call_ok("add_subtask", {"requirement_id": r4, "title": "x1", "ordinal": 1})
     m.call_ok("add_subtask", {"requirement_id": r4, "title": "x2", "ordinal": 2})
+    r5 = seed_req(db, "board-abandon")  # 未解释放弃：abandoned 子任务无 deviation/note 解释
+    m.call_ok("claim_task", {"requirement_id": r5, "agent_name": "c"})
+    s5 = m.call_ok("add_subtask", {"requirement_id": r5, "title": "y1", "ordinal": 1})
+    m.call_ok("update_subtask", {"requirement_id": r5, "subtask_id": s5["subtask_id"], "state": "abandoned"})
     m.close()
 
     rest = REST(db, token="sekret").start()
@@ -179,9 +185,9 @@ def board_view():
         code, data = rest.req("GET", "/board", token="sekret")
         ok("board: 有 token /board 200", code == 200, str(code))
         tasks = {t["requirement_id"]: t for t in data["tasks"]}
-        ok("board: 4 需求在板（非终态默认过滤）", {r1, r2, r3, r4} <= set(tasks), str(list(tasks)))
+        ok("board: 5 需求在板（非终态默认过滤）", {r1, r2, r3, r4, r5} <= set(tasks), str(list(tasks)))
         # 口径一致性（审#P1-2）：每需求 board needs_attention == summary needs_attention
-        for rid in (r1, r2, r3, r4):
+        for rid in (r1, r2, r3, r4, r5):
             code, s = rest.req("GET", f"/requirements/{rid}/summary", token="sekret")
             b_na = sorted(n["type"] for n in tasks[rid]["needs_attention"])
             s_na = sorted(n["type"] for n in s["needs_attention"])
@@ -195,20 +201,30 @@ def board_view():
            str(tasks[r2]["awaiting_human"]))
         ok("board: R2 claim signal=active（租约远未来，无歧义时点）",
            (tasks[r2]["claim"] or {}).get("signal") == "active", str(tasks[r2]["claim"]))
+        ok("board: R2 risks 含 critical（审#P2-3：默认视图展示风险，PRD §0）",
+           any(x.get("severity") == "critical" and x.get("title") == "R-critical" for x in tasks[r2]["risks"]),
+           str(tasks[r2]["risks"]))
+        code, s2 = rest.req("GET", f"/requirements/{r2}/summary", token="sekret")
+        ok("board: R2 board risks == summary risks（共享 helper 同源）",
+           tasks[r2]["risks"] == s2["risks"], f"board={tasks[r2]['risks']} summary={s2['risks']}")
         na4 = sorted(n["type"] for n in tasks[r4]["needs_attention"])
         ok("board: R4 decomposition_added 信号", "decomposition_added" in na4, str(na4))
+        na5 = sorted(n["type"] for n in tasks[r5]["needs_attention"])
+        ok("board: R5 abandoned_subtask 信号", "abandoned_subtask" in na5, str(na5))
+        ok("board: R5 unexplained_abandonment 信号（无 deviation/note 解释）",
+           "unexplained_abandonment" in na5, str(na5))
         ok("board: R1 正常无 attention", tasks[r1]["needs_attention"] == [], str(tasks[r1]["needs_attention"]))
         ok("board: R3 覆盖缺口不入 attention（非派生信号，与 summary 同源）",
            tasks[r3]["needs_attention"] == [], str(tasks[r3]["needs_attention"]))
         code, s3 = rest.req("GET", f"/requirements/{r3}/summary", token="sekret")
         ok("board: R3 summary 覆盖缺口 uncovered=True（共享 helper 无回归）",
            any(a["uncovered"] for a in s3["acceptance_table"]), str(s3["acceptance_table"]))
-        ok("board: attention_ids = {R2, R4}", set(data["attention_ids"]) == {r2, r4}, str(data["attention_ids"]))
+        ok("board: attention_ids = {R2, R4, R5}", set(data["attention_ids"]) == {r2, r4, r5}, str(data["attention_ids"]))
         code, d = rest.req("GET", "/board", params={"status": "OPEN"}, token="sekret")
         ok("board: status=OPEN 过滤只留 OPEN", {t["requirement_id"] for t in d["tasks"]} == {r1, r3},
            str([t["state"] for t in d["tasks"]]))
         code, d = rest.req("GET", "/board", params={"status": "CLAIMED"}, token="sekret")
-        ok("board: status=CLAIMED 过滤只留 CLAIMED", {t["requirement_id"] for t in d["tasks"]} == {r4},
+        ok("board: status=CLAIMED 过滤只留 CLAIMED", {t["requirement_id"] for t in d["tasks"]} == {r4, r5},
            str([t["state"] for t in d["tasks"]]))
     finally:
         rest.stop()

@@ -23,6 +23,7 @@ h1{font-size:1.2rem;margin:0 0 12px}
 .row a{color:#065fd4;text-decoration:none}
 .tag{font-size:0.75rem;padding:2px 6px;border-radius:4px;background:#eee;white-space:nowrap}
 .tag.attn{background:#fde68a}
+.tag.risk{background:#fecaca}
 .tag.state{background:#dbeafe}
 .meta{color:#666;font-size:0.78rem}
 </style></head>
@@ -48,11 +49,12 @@ async function loadBoard(){
 }
 function rowHTML(t){
   var attn = (t.needs_attention || []).map(function(n){ return "<span class='tag attn'>" + esc(n.type) + "</span>"; }).join(" ");
+  var risks = (t.risks || []).map(function(x){ return "<span class='tag risk'>风险[" + esc(x.severity) + "]: " + esc(x.title) + "</span>"; }).join(" ");
   var meta = "<span class='meta'>进度 " + t.progress.done + "/" + t.progress.total + "</span>";
   if (t.claim) meta += " <span class='meta'>认领:" + esc(t.claim.agent_name) + "[" + esc(t.claim.signal) + "]</span>";
   if (t.awaiting_human) meta += " <span class='meta'>等待人:" + esc(t.awaiting_human.kind) + "</span>";
   return "<div class='row'><a href='/requirements/" + encodeURIComponent(t.requirement_id) + "'>" + esc(t.title) + "</a>"
-    + "<span class='tag state'>" + esc(t.state) + "</span>" + (attn ? attn : "") + meta + "</div>";
+    + "<span class='tag state'>" + esc(t.state) + "</span>" + (attn ? attn : "") + risks + meta + "</div>";
 }
 function render(data){
   var attn = {}, attnRows = [], otherRows = [];

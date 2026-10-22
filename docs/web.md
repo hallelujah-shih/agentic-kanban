@@ -9,7 +9,7 @@
 | 路径 | 说明 |
 |---|---|
 | `GET /` | 看板壳（HTML）：JS fetch `/board` 渲染，需要关注区置顶 + 紧凑行；EventSource 订阅 `/events/stream`，收到事件或重连（onopen）即重拉 |
-| `GET /board` | 看板数据（JSON）：`{tasks: [{requirement_id,title,state,awaiting_human,claim,progress,needs_attention}], attention_ids}`。默认只含非终态需求（DONE/REJECTED/CANCELLED 过滤掉）；`?status=` 精确过滤状态 |
+| `GET /board` | 看板数据（JSON）：`{tasks: [{requirement_id,title,state,awaiting_human,claim,progress,needs_attention,risks}], attention_ids}`。默认只含非终态需求（DONE/REJECTED/CANCELLED 过滤掉）；`?status=` 精确过滤状态 |
 | `GET /events/stream` | SSE：全局 seq 游标轮询，连接时刻初始化、无历史回填；帧只含纯触发器字段 `{seq, requirement_id, kind, severity, ts, actor_surface, actor_conn}`；keepalive `: ping`（默认 2s，env `AGENT_KANBAN_SSE_POLL_MS`） |
 | `GET /requirements/{id}` | 内容协商：Accept 含 `text/html` 返回深潜 HTML 壳（JS 渲染 + 人面操作按钮）；缺省/`*/*` 返回 JSON（与 M0 形状一致） |
 | `GET /requirements/{id}/summary.html` | M0 静态摘要 HTML（保留，与深潜壳不冲突） |
@@ -24,7 +24,7 @@
 
 ## 页面
 
-看板页（`/`）：每需求一行紧凑行 = title(链接到深潜壳) + state 标签 + 需要关注信号标签（blocked_subtask/abandoned/milestone_delay/decomposition_added/unexplained/orphaned/drift 等，来自 `_derived_signals` 全口径）+ 进度 done/total + 认领(agent/signal) + awaiting_human。需要关注需求置顶（attention_ids）。
+看板页（`/`）：每需求一行紧凑行 = title(链接到深潜壳) + state 标签 + 需要关注信号标签（blocked_subtask/abandoned/milestone_delay/decomposition_added/unexplained/orphaned/drift 等，来自 `_derived_signals` 全口径）+ 风险标签（severity>=attention）+ 进度 done/total + 认领(agent/signal) + awaiting_human。需要关注需求置顶（attention_ids）。
 
 深潜页（`/requirements/{id}`，Accept text/html）：标题 + state + 需要关注 + 认领/租约/awaiting_human + 进度、验收对照表（覆盖缺口标红）、子任务清单、里程碑（planned/actual）、决策/风险/偏离列表、需要关注区、事件流（按 kind/severity 过滤，只渲染标题行，无 content/payload 原始输出）、人面操作区。
 

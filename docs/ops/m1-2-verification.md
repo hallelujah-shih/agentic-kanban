@@ -46,9 +46,15 @@ uv run python tests/run_ac.py                      # tier-1（全 AC，需 ~5-6 
 
 ## Verdicts
 
-- 看板: 4 形态需求 board 与 detail `needs_attention` 逐项一致（含 blocked_subtask/decomposition_added/milestone_delay 全口径；覆盖缺口不入 attention 与 summary 同源且 summary 的 uncovered=True 无回归）；attention_ids 置顶正确；status 过滤正确；无 token 401。
+- 看板: 5 形态需求 board 与 detail `needs_attention` 逐项一致（含 blocked_subtask/decomposition_added/milestone_delay/unexplained_abandonment 全口径；覆盖缺口不入 attention 与 summary 同源且 summary 的 uncovered=True 无回归）；board risks 与 summary risks 同源（审#P2-3：默认视图展示风险，PRD §0）；attention_ids 置顶正确；status 过滤正确；无 token 401。
 - SSE: 连接前历史事件存在（游标基线非零）但连接后首轮询零历史（无回填）；MCP stdio 子进程写入的跨进程事件以 seq=游标+1 到达；帧字段纯触发器无 title/payload；keepalive `: ping`；无 token 401。
 - Web: `/` 壳含 EventSource 且无原始输出泄漏；`Accept: text/html` 深潜壳；缺省 Accept JSON 形状不变（既有 248 零回归）；`/summary.html` 保留。
+
+## 结果盲审 P2 折入（2026-10-23，verdict APPROVE）
+
+- P2-1 壳请求效率: GET /requirements/{id} 先判 Accept，HTML 分支只做 `require_requirement` 存在性校验（404 保真），不再跑完整 detail 的无谓 DB 工作；缺省 JSON 路径不变。
+- P2-2 全口径覆盖: harness 补第 5 形态「未解释放弃」（abandoned 子任务无 deviation/note 解释 -> unexplained_abandonment），board==summary 一致性断言扩至 5 需求；同时补 board risks 直接断言（critical risk 事件 -> board 行 risks 与 summary risks 逐项相等）。
+- P2-3 看板行风险信号: board 行补 `risks` 字段（`_risk_rows` 共享 helper，severity>=attention）；/ 壳 JS 渲染风险徽标。闭合 PRD §0「默认视图只展示关键节点（…风险…）」的产品解读张力。
 
 ## 盲区登记
 

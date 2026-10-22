@@ -24,6 +24,7 @@ from ..services import operations as ops
 from ..services import view
 from ..services.identity import rest_actor
 from ..services.ids import norm_id
+from ..services.write_guard import require_requirement
 from .web import board_shell, detail_shell
 
 router = APIRouter()
@@ -172,16 +173,20 @@ async def board_page() -> HTMLResponse:
 
 @router.get("/requirements/{requirement_id}")
 async def get_requirement(requirement_id: str, request: Request) -> Any:
-    """深潜（view.detail，含状态重建与完整事件流）。内容协商（审#P2-7）：
-    Accept 含 text/html -> HTML 壳；缺省/* -> JSON（形状不变）。"""
+    """深潜（view.detail，含状态重建与完整事件流）。内容协商（审#P2-7 + 审#P2-1）：
+    Accept 含 text/html -> HTML 壳（只做存在性校验，不跑完整 detail 的无谓 DB 工作）；
+    缺省/* -> JSON（形状不变）。"""
+    accept = request.headers.get("accept") or ""
+    if "text/html" in accept:
+        await run_op(
+            get_session_factory(), require_requirement, is_write=False, requirement_id=requirement_id,
+        )
+        return HTMLResponse(content=detail_shell())
     surface, conn = rest_actor()
     data = await run_op(
         get_session_factory(), view.detail, is_write=False,
         requirement_id=requirement_id, actor_surface=surface, actor_conn=conn,
     )
-    accept = request.headers.get("accept") or ""
-    if "text/html" in accept:
-        return HTMLResponse(content=detail_shell())
     return data
 
 
