@@ -17,7 +17,7 @@ AC1-9/16 + 9 码矩阵（db_busy / not_found / illegal_state / no_active_claim /
 ## 结果（主循环复验 2026-10-22）
 
 - tier-0: compileall 退出 0。
-- tier-1: `uv run python tests/run_ac.py` -> 66/66 PASS（主循环复验一致；sub agent 连续 4 轮复验稳定）。
+- tier-1: `uv run python tests/run_ac.py` -> 68/68 PASS。原始批 66/66（green-0.log 首发），P2-1 折入（links_to 删除保护 + 2 断言）后 68/68，green-0.log 已刷新为 68/68 全量输出，主循环复验一致。
 - 关键对抗变体均绿：AC1 并发 10 真实多进程 MCP 客户端（1 成功 9 already_claimed）+ SIGKILL 崩溃原子性（重开直查 DB：无 ended_at IS NULL 孤儿、claim-state 全局一致）；AC6 释放+3 写进程竞争（seq 提交序主 oracle + ts 窗口 2s 副 oracle，无孤儿）；AC8 第 17 认领（含 STALE/等待中）；AC2/9 租约经 env 确定性加速（AGENT_KANBAN_LEASE_SECONDS=-1/短秒）。
 
 ## 红绿证据
@@ -47,6 +47,15 @@ FastAPI/REST（M0）、Alembic（M0，create_all 占位）、reconcile 对账（
 2. renew/approve 非 MCP 工具（PRD 4.1/4.2 设计事实）：lease_expired 触发路径为 CLI renew；MCP 调 renew 得 "Unknown tool: renew"。
 3. mark_blocked/request_review 前置顺序：实现先查 state 再查认领（OPEN 无认领误回 no_active_claim 的次序问题已修），state=CLAIMED 违反应 illegal_state。
 4. uv 将包装入 .venv：红跑空实现改走 PYTHONPATH 遮蔽 stub 包方案（site-packages 优先）。
+
+## 结果盲审 P2 处置（2026-10-22，审者 APPROVE-WITH-FIXES 无 P0/P1）
+
+1. set_expectations 缺 links_to 删除保护（PRD 4.2 承诺）——【已实现】operations.py set_expectations 增 removed 锚检查，被 subtasks.acceptance[].links_to 引用则 invalid_record；harness 增 2 断言（68/68）。
+2. REOPEN 边无接口可达（PRD 3.1 vs 4.2 内部不一致：命令行清单无 reopen；harness 用 raw SQL 播种）——【登记】PRD 缺口，M0 裁决（补 reopen 命令或 REST 面）。
+3. abandon->REJECTED 于 CLAIMED 需求残留活动认领（PRD 3.1 只规定清 awaiting_human，未规定认领处置；REJECTED 上遗留 ended_at IS NULL = claim-state 失配，M0 reconcile 将报 drift）——【登记】M0 裁决（REJECT 是否同事务置 ended_at）。
+4. export 非全量：get_task_detail LIMIT 200 被 export_data 继承，>200 事件需求导出截断——【登记】M0 导出走无 limit 查询。
+5. 读事务也开 BEGIN IMMEDIATE（读持写锁，锁竞争下读抛裸 OperationalError -> MCP 面非结构化错误）——【登记】单用户低风险，M0 评估（读不强制 BEGIN IMMEDIATE 或读锁失败转结构化码）。
+6. 代码卫生：rand_id() 死代码【已删】；_claim_hook 60s sleep 在 env 门控生产路径【登记】M0 建议移入测试专属模块。
 
 ## 基线
 

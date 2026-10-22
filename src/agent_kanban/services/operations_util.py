@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 from typing import Any
 
@@ -66,7 +65,3 @@ def normalize_anchors(acceptance: Any, existing: list | None = None) -> list:
             item["id"] = by_item.get(str(item.get("item"))) or f"a{i + 1}"
         out.append(item)
     return out
-
-
-def rand_id() -> str:
-    return uuid.uuid4().hex

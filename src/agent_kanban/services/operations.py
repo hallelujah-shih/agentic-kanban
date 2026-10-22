@@ -93,9 +93,35 @@ async def set_expectations(
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
-    req.acceptance = normalize_anchors(acceptance, req.acceptance or [])
+    old = req.acceptance or []
+    new = normalize_anchors(acceptance, old)
+    removed = {a.get("id") for a in old if isinstance(a, dict) and a.get("id")} - {
+        a.get("id") for a in new if isinstance(a, dict) and a.get("id")
+    }
+    if removed:
+        # PRD 4.2：删除被 subtasks.acceptance[].links_to 引用的锚项被拒绝
+        sts = (
+            await session.scalars(
+                select(Subtask).where(Subtask.requirement_id == requirement_id)
+            )
+        ).all()
+        for st in sts:
+            for acc in (st.acceptance or []):
+                if not isinstance(acc, dict):
+                    continue
+                refs = acc.get("links_to") or []
+                if isinstance(refs, str):
+                    refs = [refs]
+                hit = removed & set(refs)
+                if hit:
+                    raise BusinessError(
+                        "invalid_record",
+                        f"acceptance anchor {sorted(hit)} still referenced by subtask {st.title}",
+                        requirement_id,
+                    )
+    req.acceptance = new
     req.updated_at = now
-    return {"requirement_id": requirement_id, "acceptance": req.acceptance}
+    return {"requirement_id": requirement_id, "acceptance": new}
 
 
 async def approve(

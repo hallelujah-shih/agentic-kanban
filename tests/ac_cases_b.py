@@ -223,4 +223,18 @@ def extras():
     d = m.call_ok("get_task_detail", {"requirement_id": r})
     ah = d["awaiting_human"] or {}
     ok("e: mark_blocked 覆盖旧 marker(kind=blocked)", ah.get("kind") == "blocked", json.dumps(ah))
+
+    # links_to 删除保护（PRD 4.2：删除被 links_to 引用的锚项被拒绝）
+    r2 = seed_req(db, "extras-links")
+    cli_ok(db, "set_expectations", "--requirement-id", r2,
+           "--acceptance", '[{"item": "A1"}, {"item": "A2"}]')
+    m.call_ok("claim_task", {"requirement_id": r2, "agent_name": "a"})
+    m.call_ok("add_subtask", {"requirement_id": r2, "title": "impl2", "ordinal": 2,
+                              "acceptance": [{"item": "x", "links_to": "a1"}]})
+    code, _ = cli_err(db, "set_expectations", "--requirement-id", r2,
+                      "--acceptance", '[{"item": "A2"}]')
+    ok("e: 删除被 links_to 引用的锚项 -> invalid_record", code == "invalid_record", code)
+    cli_ok(db, "set_expectations", "--requirement-id", r2,
+           "--acceptance", '[{"item": "A1"}, {"item": "A2"}]')
+    ok("e: 保留被引用锚项 -> set_expectations 成功", True, "ok")
     m.close()
