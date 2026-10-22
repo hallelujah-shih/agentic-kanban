@@ -84,13 +84,14 @@ def main() -> int:
     # 轨 B：create_all（app 双轨兼容路径）
     create_script = (
         "import asyncio\n"
-        "from pathlib import Path\n"
-        "from agent_kanban.db import make_engine\n"
+        "from agent_kanban.db import get_session_factory\n"
         "from agent_kanban.models import Base\n"
         "async def main():\n"
-        f"    eng = make_engine(Path('{create_db}'))\n"
-        "    async with eng.begin() as conn:\n"
+        "    factory = get_session_factory()\n"
+        "    async with factory() as session:\n"
+        "        conn = await session.connection()\n"
         "        await conn.run_sync(Base.metadata.create_all)\n"
+        "        await session.commit()\n"
         "asyncio.run(main())\n"
     )
     env["AGENT_KANBAN_DB"] = str(create_db)

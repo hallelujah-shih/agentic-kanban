@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sqlite3
 import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -205,3 +209,91 @@ class MCP:
                 self.proc.kill()
                 self.proc.wait(timeout=5)
             self._alive = False
+
+
+def _free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+class REST:
+    """真实子进程 uvicorn + urllib（stdlib，禁 TestClient：父进程 _Runtime 单例共享破坏隔离）。
+    与 CLI/MCP harness 同隔离模式：env_for 注入 HOST/TOKEN/DB。"""
+
+    def __init__(self, db: Path, *, host: str = "127.0.0.1", token: str | None = None,
+                 extra: dict | None = None):
+        self.db = db
+        self.host = host
+        self.token = token
+        self.extra = extra or {}
+        self.port = _free_port()
+        self.proc: subprocess.Popen | None = None
+
+    def start(self) -> "REST":
+        env = env_for(self.db, {
+            "AGENT_KANBAN_HOST": self.host,
+            "AGENT_KANBAN_PORT": str(self.port),
+            **self.extra,
+        })
+        if self.token:
+            env["AGENT_KANBAN_TOKEN"] = self.token
+        self.proc = subprocess.Popen(
+            [str(VENV_PY), "-m", "agent_kanban.api"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=env, cwd=str(REPO_ROOT),
+        )
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(f"http://{self.host}:{self.port}/healthz", timeout=1) as r:
+                    if r.status == 200:
+                        return self
+            except Exception:
+                if self.proc.poll() is not None:
+                    out, _ = self.proc.communicate(timeout=5)
+                    raise RuntimeError(
+                        f"server exited rc={self.proc.returncode}:\n{out.decode(errors='replace')}"
+                    )
+                time.sleep(0.1)
+        raise TimeoutError("server did not become healthy")
+
+    def req(self, method: str, path: str, body: dict | None = None,
+            params: dict | None = None, token: str | None = None) -> tuple[int, object]:
+        """token 显式传才置 header（None=无 token）；params 含 token 时走 query。"""
+        url = f"http://{self.host}:{self.port}{path}"
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        data = None
+        headers = {}
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        if token and not (params and "token" in params):
+            headers["X-Agent-Kanban-Token"] = token
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                raw = r.read().decode()
+                try:
+                    return r.status, json.loads(raw)
+                except json.JSONDecodeError:
+                    return r.status, raw
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode()
+            try:
+                return e.code, json.loads(raw)
+            except json.JSONDecodeError:
+                return e.code, raw
+
+    def stop(self) -> None:
+        if self.proc:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait(timeout=5)
+            self.proc = None

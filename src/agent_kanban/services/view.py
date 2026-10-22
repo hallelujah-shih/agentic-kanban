@@ -311,7 +311,7 @@ async def detail(
         "acceptance": req.acceptance,
         "awaiting_human": req.awaiting_human,
         "claim": _claim_view(claim, req.awaiting_human, now),
-        "claims": _claim_timeline(session, requirement_id, now),
+        "claims": await _claim_timeline(session, requirement_id, now),
         "subtasks": [
             {
                 "subtask_id": _nid(s.id), "ordinal": s.ordinal, "title": s.title, "state": s.state,
