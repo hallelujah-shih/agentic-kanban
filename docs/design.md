@@ -10,9 +10,9 @@
 
 看板是**记录面 + 协作窗口**，不是控制面。
 
-- 需求从 Jira/手工导入，进入看板成为一张卡片。
+- 需求手工登记进入看板（Jira 需求以链接引用登记，不做自动导入）。
 - 一个原始需求 = 一个 agent 认领并执行（并行发生在跨需求）。
-- 调度、分解、里程碑设定是 agent（你的 harness + opencode v2）做的，但**这些信息必须通过 MCP 渠道结构化记录到看板**——看板不只是进度跟踪，它承载：需求原文、子任务拆解树、里程碑时间线、决策/风险、事件流与归属。
+- 调度、分解、里程碑设定是 agent（你的 harness + opencode v2）做的，但**这些信息必须通过 MCP 渠道结构化记录到看板**——看板不只是进度跟踪，它承载：需求登记（来源指针 + 摘要）、子任务拆解树、里程碑时间线、决策/风险、事件流与归属。
 - 看板不控制执行，它记录"发生了什么"，供人介入与回溯分析。
 
 对传统看板的升级点：列（状态机）只是骨架；卡片内部承载结构化深度，且每个字段都标注来源（agent 报告 / 人确认 / 系统观测）。
@@ -23,7 +23,7 @@
 
 | 表 | 关键字段 | 状态由谁写 |
 |---|---|---|
-| requirements | id, source(`jira`/`manual`), source_ref, title, description(原文), acceptance[]（人写预期验收锚）, state, awaiting_human{reason,evidence,since,kind}, created_at, updated_at | 状态机（见 2），DONE 仅人确认；acceptance 仅人面可写 |
+| requirements | id, source(`jira`/`manual`), source_ref, title, description(摘要), acceptance[]（人写预期验收锚）, state, awaiting_human{reason,evidence,since,kind}, created_at, updated_at | 状态机（见 2），DONE 仅人确认；acceptance 仅人面可写；source=`jira` 时 source_ref 存链接 |
 | claims | id, requirement_id, agent_name(声明), agent_conn(观测), started_at, lease_expires_at, last_activity_at, ended_at, release_reason | 系统推导（租约） |
 | subtasks | id, requirement_id, ordinal, title, acceptance[{item, criteria, state: met|not_met|deviated, deviation_reason?, links_to[]}], state, milestone_id?, created_at, updated_at | agent 报告，带 provenance |
 | milestones | id, requirement_id, title, planned_at?, actual_at?, state, created_at, updated_at | agent 报告，带 provenance |
@@ -138,9 +138,9 @@ agent 与人 inline 交互的结果（批准方案、纠偏、解答问题）由
 
 ---
 
-## 7. Jira：导入 first-class，回写可选
+## 7. Jira：链接引用登记，不做导入/回写（ADR 0004）
 
-`jira import <key>`（API）或"粘贴 ticket"手动导入；`source_ref` 存 key，`description` 存原文。回写默认关闭；开启时失败不阻塞、写事件。
+Jira 需求以 `new --source jira --source-ref <链接>` 登记：`source_ref` 存链接，`description` 贴摘要；完整详情留在 Jira（单一事件源），由 agent 自行获取。不做自动导入与回写（AI 已能做好的事不重复造）。
 
 ---
 
@@ -162,7 +162,7 @@ agent 与人 inline 交互的结果（批准方案、纠偏、解答问题）由
 
 1. ~~分析闸门~~ 已解决：不设强制闸门，方案批准走 inline 交互，结果记 decision 事件。`request_review` 证据要求已定：至少一项，缺证据拒绝（PRD 11）。
 2. **心跳模型**：harness 是看板拉起的还是外部进程？推荐 M0 按外部进程（心跳 = MCP 活动频率），M1 支持看板拉起。
-3. **Jira 回写**：M0 不做，M1 可选。
+3. **Jira 回写**：不做（PRD §11 默认 + ADR 0004）。
 
 ---
 
@@ -172,7 +172,7 @@ agent 与人 inline 交互的结果（批准方案、纠偏、解答问题）由
 |---|---|---|
 | Spike（2 天） | CLI + SQLite + MCP stdio：requirements + claims + subtasks + milestones + events + 工具面 | AC1-9、AC16（一次真实流程：导入 -> 认领 -> 拆 3 子任务 -> 记 2 决策 + 1 里程碑 -> request_review(证据) -> 人确认 DONE；第二 agent 认领被拒；租约过期不自动释放） |
 | M0 | 交接/标记语义、证据校验、导出、终端看板（列 + 卡片展开）、派生偏离 | AC10-13、AC15、AC17（5 条回溯判据可回答 + 判别力测试） |
-| M1 | Web 窗口、Jira 导入、对账、派生进度视图 | AC14（一周试用协议，G3 基线采集为硬前置） |
+| M1 | Web 窗口 | AC14（一周试用协议，G3 基线采集为硬前置） |
 
 ---
 

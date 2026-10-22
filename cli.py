@@ -46,6 +46,7 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
 def _cmd_new(args: argparse.Namespace) -> int:
     return _invoke(
         "new_requirement", title=args.title, description=args.description,
+        source=args.source, source_ref=args.source_ref,
         acceptance=_load_json(args.acceptance),
     )
 
@@ -150,9 +151,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("mcp", help="运行 MCP stdio server（agent 面，12 工具）")
     p.set_defaults(handler=_cmd_mcp)
 
-    p = sub.add_parser("new", help="创建需求（手工导入）")
+    p = sub.add_parser("new", help="创建需求（手工登记；jira 以链接引用）")
     p.add_argument("--title", required=True)
     p.add_argument("--description")
+    p.add_argument("--source", help="来源：manual（默认）| jira")
+    p.add_argument("--source-ref", help="外部引用（jira 时为链接）")
     p.add_argument("--acceptance", help="JSON 数组，如 '[{\"item\": \"...\"}]'")
     p.set_defaults(handler=_cmd_new)
 

@@ -18,6 +18,8 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 
 **反淹没约束（最高设计约束）**：人的默认视图只展示关键节点（里程碑、决策、风险、偏离、等待人裁决、覆盖缺口），原始日志、会话内容、过程细节一律不默认展示。
 
+**单一事件源（指引优先）**：完整内容留在其源头（Jira 详情、代码、会话原文），看板只存指针（链接/引用）+ 摘要。登记是 URL+摘要 还是完整详情并不重要，**做好指引更重要**；需要完整内容时由 agent 从源头获取。与反淹没互补：反淹没 = 不默认展示，本原则 = 不留存、只指引。
+
 职责边界：看板是记录面 + 协作窗口，不是控制面。它不管理 worktree、不执行合入、不隔离执行。
 
 ### 0.1 全局不做清单
@@ -28,7 +30,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 - 不做模型推理或 prompt 编排。
 - 不做移动端；不做 Web 之外的第二界面（M1 起）。
 - 不做 PostgreSQL（SQLite 足够，双方言 CI 是纯成本）。
-- 不做 Jira 回写以外的双向同步。
+- 不做 Jira 自动导入/回写与任何内容搬运（单一事件源原则：完整内容留在源头，看板只存指针 + 摘要——Jira 需求、代码/PR、会话原文同理，由 agent 自行获取；AI 已能做好的事不重复造）。
 
 ---
 
@@ -48,7 +50,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 
 | 表 | 关键字段 | 状态由谁写 |
 |---|---|---|
-| requirements | id, source(`jira`/`manual`), source_ref, title, description(原文), acceptance[]（人写预期验收锚）, state, awaiting_human{reason,evidence,since,kind}, created_at, updated_at | 状态机；acceptance 仅人面可写；DONE 仅人确认 |
+| requirements | id, source(`jira`/`manual`), source_ref, title, description(摘要), acceptance[]（人写预期验收锚）, state, awaiting_human{reason,evidence,since,kind}, created_at, updated_at | 状态机；acceptance 仅人面可写；DONE 仅人确认；source=`jira` 时 source_ref 存链接（引用登记，无自动导入）；description 存摘要，完整内容留源头（单一事件源） |
 | claims | id, requirement_id, agent_name(声明), agent_conn(观测), started_at, lease_expires_at, last_activity_at, ended_at, release_reason | 系统推导（租约） |
 | subtasks | id, requirement_id, ordinal, title, acceptance[{item, criteria, state: met|not_met|deviated, deviation_reason?, links_to[]}], state, milestone_id?, created_at, updated_at | agent 报告，带 provenance |
 | milestones | id, requirement_id, title, planned_at?, actual_at?, state, created_at, updated_at | agent 报告，带 provenance |
@@ -155,7 +157,7 @@ OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN。
 ### 4.2 人面（CLI/REST，非 MCP）
 
 - `new`：创建需求（手工导入），可写入 acceptance 预期锚。
-- `jira import <key>`：导入需求，原文入 description。（缘由：日常流程以 Jira 为需求源，现状靠人工抄写，导入免复制。）
+- `new --source jira --source-ref <链接>`：以链接引用登记 Jira 需求（description 贴摘要，完整详情留在 Jira——单一事件源，由 agent 自行获取）；不做自动导入（AI 已能做好的事不重复造，ADR 0004）。
 - `set_expectations`：设置/修改 requirement.acceptance（唯一入口，agent 面无此工具）。锚项可修改文本；删除被 links_to 引用的锚项被拒绝（需 agent 先解除链接）。
 - `approve`：按**当前状态**确认（决策表见 3.4）——CLAIMED 上确认 DONE、BLOCKED 上解除阻塞；按 awaiting_human.kind 清除标记，写 approval/state_change 事件（同事务）。
 - `release`：释放认领（唯一释放路径，人面）；要求存在未结束认领，无则 `not_found`；写 release 事件 + 清除 awaiting_human。`release --all-stale`：批量释放全部 STALE 认领（仅覆盖 CLAIMED 需求；逐项执行单释放语义，部分失败逐项返回，非全有全无）。
@@ -274,7 +276,7 @@ agentic-kanban/
       view.py              # 摘要视图 / 深潜视图组装（覆盖对照、派生偏离）
     api/v1/requirements.py
     mcp/server.py
-    cli.py                 # 人面：new / set_expectations / approve / release(--all-stale) / renew / note / abandon / export / jira-import
+    cli.py                 # 人面：new(--source jira --source-ref <链接>) / set_expectations / approve / release(--all-stale) / renew / note / abandon / export
   tests/
   docs/adr/
 ```
@@ -299,7 +301,7 @@ agentic-kanban/
 |---|---|---|---|
 | Spike（2 天） | CLI + SQLite + MCP stdio：requirements(acceptance) + claims(租约) + subtasks + milestones + events + 工具面；agent 协同技能（skills/agent-kanban/）+ MCP 配置说明（docs/mcp-config.md） | AC1-9、AC16 | Web、Jira、对账、视图 |
 | M0 | 摘要/深潜视图（CLI + 静态 HTML）、交接/标记语义完整、导出、对账、派生偏离 | AC10-13、AC15、AC17 | Web 窗口 |
-| M1 | Web 窗口、Jira 导入、可选回写 | AC14（一周试用协议，G3 基线采集完成为硬前置） | 控制面任何能力 |
+| M1 | Web 窗口 | AC14（一周试用协议，G3 基线采集完成为硬前置） | 控制面任何能力；Jira 导入/回写（已裁决不做，ADR 0004） |
 
 Spike 前置任务（不可跳过）：候选工具调研与裁决已完成（docs/adr/0001-reuse-vs-build.md，无候选满足合取，自研为主 + agent-kanban-pm 为移植种子）。Spike 内实操验证收窄为：对 agent-kanban-pm 骨架做 2h 移植性验证（MCP 面能否推进状态，对应 AC1/2/3 场景，G7）。
 
@@ -351,7 +353,7 @@ M1：
 |---|---|---|
 | 心跳模型：harness 外部进程（心跳 = MCP 活动）vs 看板拉起（心跳 = 进程存活） | M0 开工前 | 外部进程 |
 | 租约参数：lease 时长 / idle 阈值 | M0 内 | 2h / 30min |
-| Jira 回写 | M1 开工前 | 不做 |
+| Jira 导入/回写 | 已裁决（ADR 0004） | 不做（Jira 需求以链接引用登记） |
 | request_review 证据强制 | M0 内 | 已定：至少一项，缺证据拒绝（PRD 4.1 + AC17；design.md §4 同步） |
 | MCP HTTP 形态 | M1 开工前 | 不做 |
 | 候选工具裁决 | Spike 前 | 已裁决：自研 + agent-kanban-pm 移植种子（ADR 0001） |

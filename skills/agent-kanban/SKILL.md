@@ -9,7 +9,7 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 
 ## 门序（每段工作照此走）
 
-1. 读：`list_tasks`（按状态过滤）-> `get_task_detail`（需求原文 + requirement.acceptance 预期锚 + 现有拆解/里程碑/关键事件）。先读后动，尤其先看预期验收锚。
+1. 读：`list_tasks`（按状态过滤）-> `get_task_detail`（需求登记 = 来源指针 + 摘要 + requirement.acceptance 预期锚 + 现有拆解/里程碑/关键事件）。先读后动，尤其先看预期验收锚；完整内容（Jira 详情/原文）按链接从源头获取（单一事件源）。
 2. 认领：`claim_task`。独占；`already_claimed` 说明别人持有，换任务，不要抢。
 3. 拆解：`add_subtask`，每条带 acceptance[]（验收项 + 链接预期锚 links_to）。不要窄化范围；锚项无覆盖会显示覆盖缺口，这是有意的下界语义。
 4. 执行 + 记录：见「记录纪律」。
