@@ -65,3 +65,6 @@ MCP transport_security（JWT，走统一 token 中间件 PRD 6）；SSE 旧 tran
 1. **CallToolResult 客户端字段名事实（非 bug）**: mcp SDK 客户端 `CallToolResult` 字段为 `is_error`（非协议层 `isError`），harness 断言已按客户端字段修正；属 SDK 命名事实，非实现缺陷。
 2. **mounted Starlette 子 app lifespan 不执行（实现说明）**: 已读 starlette 1.9.0 Mount 源码确认，`mcp_server.session_manager.run()` 必须在 FastAPI lifespan 内显式执行（session 内存管理与 idle 回收），否则挂载的 /mcp 无会话管理。
 3. **MCP 面 db_busy 语义同源（见盲区登记）**: 与 m0 既有 503 映射同一 `run_op` 路径，无需新增代码。
+4. **协议版本协商（信息性，结果盲审 P2-1）**: mcp 2.3.0 SDK 对客户端协商降级到 2025-11-25（双 era 协商）；若客户端硬编码发送 modern `MCP-Protocol-Version: 2026-07-28` 会走 SDK 单交换路径（无 session id），工具调用命中 identity 的「无 session 拒绝」illegal_state——与服务端一贯协商降级的现实客户端行为不冲突，符合 plan「无 session 时拒绝」语义；不修，登记留档。
+5. **`_http_sid` 依赖 SDK 私有属性（结果盲审 P2-2）**: identity.py `_http_sid` 读取 `ctx.session._connection.session_id`（mcp 2.3.0 服务端铸币值，harness 已钉住 = initialize 响应 Mcp-Session-Id）。mcpserver Context 无公开等价访问器，属 SDK 私有 API 依赖——mcp 升级时回归风险点，登记留档。
+6. **无 session 拒绝分支不可达性（结果盲审 P2-3）**: stateful 模式下 SDK 会话管理器在 handler 前即 404 拒绝未知/缺失 session id，identity 的「无 session 拒绝」为防御性（关键不变量「HTTP 永不落 stdio 进程级 CONN_ID」由结构保证）；无独立用例，登记留档。
