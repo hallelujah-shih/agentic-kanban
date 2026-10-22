@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,3 +27,9 @@ def mcp_actor(ctx: "Context | None", fallback_conn: str) -> tuple[str, str]:
 
 def cli_actor() -> tuple[str, str]:
     return "cli", CLI_CONN
+
+
+def rest_actor() -> tuple[str, str]:
+    """REST 面（PRD 5.1 枚举无 rest，用 conn 区分传输）：surface='cli'（人面语义），
+    conn='rest:<短随机>'（服务端派生）。"""
+    return "cli", f"rest:{uuid.uuid4().hex[:8]}"

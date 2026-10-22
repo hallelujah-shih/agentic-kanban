@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -23,6 +24,18 @@ SEVERITIES = {"info", "attention", "critical"}
 SUBTASK_STATES = {"todo", "in_progress", "done", "blocked", "abandoned"}
 MILESTONE_STATES = {"planned", "in_progress", "achieved"}
 EVIDENCE_FIELDS = ("pr_url", "commit_range", "test_summary")
+MAX_PAYLOAD_BYTES = 8192  # PRD §6：单事件 payload < 8 KB（写时强制）
+
+
+def _check_payload_size(requirement_id: str, *objects: Any) -> None:
+    for obj in objects:
+        if obj is None:
+            continue
+        size = len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+        if size > MAX_PAYLOAD_BYTES:
+            raise BusinessError(
+                "invalid_record", f"payload exceeds {MAX_PAYLOAD_BYTES} bytes", requirement_id
+            )
 
 
 def _validate_decision_payload(payload: Any) -> None:
@@ -191,6 +204,47 @@ async def release(
     return {"requirement_id": requirement_id, "state": "OPEN", "claim_id": claim.id}
 
 
+async def release_all_stale(
+    session: AsyncSession,
+    *,
+    actor_surface: str,
+    actor_conn: str,
+    now: datetime | None = None,
+) -> dict:
+    """`release --all-stale`（PRD 4.2）：批量释放全部 STALE 认领（仅覆盖 CLAIMED 需求；
+    逐项单释放语义，部分失败逐项返回，非全有全无）。"""
+    now = now or now_utc()
+    claimed = (
+        await session.scalars(select(Requirement).where(Requirement.state == "CLAIMED"))
+    ).all()
+    results: list[dict] = []
+    for r in claimed:
+        claim = await session.scalar(
+            select(Claim).where(Claim.requirement_id == r.id, Claim.ended_at.is_(None))
+        )
+        if claim is None:
+            continue
+        if lease_svc.derive_signal(claim, now, r.awaiting_human) != "stale":
+            continue
+        try:
+            await transition(
+                session, requirement_id=r.id, from_state="CLAIMED", to_state="OPEN",
+                actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
+            )
+            await session.execute(
+                update(Claim).where(Claim.id == claim.id).values(ended_at=now, release_reason="stale")
+            )
+            await add_event(
+                session, requirement_id=r.id, kind="release", severity="info",
+                title="released", payload={"reason": "stale", "agent_name": claim.agent_name},
+                actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
+            )
+            results.append({"requirement_id": r.id.replace("-", ""), "ok": True, "state": "OPEN"})
+        except BusinessError as exc:
+            results.append({"requirement_id": r.id.replace("-", ""), "ok": False, "error": exc.code})
+    return {"released": results}
+
+
 async def renew(
     session: AsyncSession,
     *,
@@ -234,6 +288,32 @@ async def note(
     return {"requirement_id": requirement_id}
 
 
+async def reopen(
+    session: AsyncSession,
+    *,
+    requirement_id: str,
+    continue_: bool = False,
+    actor_surface: str,
+    actor_conn: str,
+    now: datetime | None = None,
+) -> dict:
+    """PRD 4.2（审#2-reopen）：`reopen` = DONE->REOPEN（避免死端）；
+    `--continue` = REOPEN->OPEN（回到可认领）。REOPEN->CANCELLED 由 abandon 覆盖。"""
+    now = now or now_utc()
+    await require_requirement(session, requirement_id)
+    if continue_:
+        await transition(
+            session, requirement_id=requirement_id, from_state="REOPEN", to_state="OPEN",
+            actor_surface=actor_surface, actor_conn=actor_conn, now=now,
+        )
+        return {"requirement_id": requirement_id, "state": "OPEN"}
+    await transition(
+        session, requirement_id=requirement_id, from_state="DONE", to_state="REOPEN",
+        actor_surface=actor_surface, actor_conn=actor_conn, now=now,
+    )
+    return {"requirement_id": requirement_id, "state": "REOPEN"}
+
+
 async def abandon(
     session: AsyncSession,
     *,
@@ -245,21 +325,30 @@ async def abandon(
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
+    claim = await session.scalar(
+        select(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None))
+    )
+    claim_id = claim.id if claim is not None else None
     if to_state == "REJECTED":
         await transition(
             session, requirement_id=requirement_id, from_state=None, to_state="REJECTED",
-            actor_surface=actor_surface, actor_conn=actor_conn, now=now,
+            actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim_id, now=now,
         )
-        return {"requirement_id": requirement_id, "state": "REJECTED"}
-    if to_state == "CANCELLED":
+    elif to_state == "CANCELLED":
         if req.state not in ("OPEN", "REOPEN"):
             raise BusinessError("illegal_state", f"cannot cancel from state {req.state}", requirement_id)
         await transition(
             session, requirement_id=requirement_id, from_state=req.state, to_state="CANCELLED",
-            actor_surface=actor_surface, actor_conn=actor_conn, now=now,
+            actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim_id, now=now,
         )
-        return {"requirement_id": requirement_id, "state": "CANCELLED"}
-    raise BusinessError("invalid_record", f"invalid abandon state: {to_state}", requirement_id)
+    else:
+        raise BusinessError("invalid_record", f"invalid abandon state: {to_state}", requirement_id)
+    # G8 P2-3：REJECTED/CANCELLED 同事务置 claim ended_at（+清 marker 由 transition 完成 + 事件同事务）
+    if claim is not None:
+        await session.execute(
+            update(Claim).where(Claim.id == claim.id).values(ended_at=now, release_reason=f"abandon:{to_state}")
+        )
+    return {"requirement_id": requirement_id, "state": to_state}
 
 
 # ---------------------------------------------------------------- agent 面（MCP）
@@ -366,6 +455,7 @@ async def add_subtask(
         id=new_id(), requirement_id=requirement_id, ordinal=ordinal, title=norm_title,
         acceptance=list(acceptance or []), state="todo", created_at=now, updated_at=now,
     )
+    _check_payload_size(requirement_id, st.acceptance)  # PRD §6：acceptance 拆解载荷 < 8KB
     session.add(st)
     await add_event(
         session, requirement_id=requirement_id, kind="decomposition", severity="info",
@@ -493,6 +583,7 @@ async def add_record(
     if kind == "decision":
         _validate_decision_payload(payload)
     payload = payload or {}
+    _check_payload_size(requirement_id, payload, content)  # PRD §6：payload/content < 8KB
     await add_event(
         session, requirement_id=requirement_id, kind=kind, severity=severity,
         title=title, content=content, payload=payload,
@@ -657,14 +748,14 @@ async def list_tasks(
     return {"tasks": tasks}
 
 
-async def get_task_detail(
+async def _requirement_detail(
     session: AsyncSession,
-    *,
     requirement_id: str,
-    actor_surface: str,
-    actor_conn: str,
+    *,
+    event_limit: int | None,
     now: datetime | None = None,
 ) -> dict:
+    """需求深潜数据组装（MCP get_task_detail 与 export 共用）。event_limit=None 全量（G8 P2-4）。"""
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
     claim = await session.scalar(
@@ -676,9 +767,10 @@ async def get_task_detail(
     milestones = (await session.scalars(
         select(Milestone).where(Milestone.requirement_id == requirement_id).order_by(Milestone.created_at)
     )).all()
-    events = (await session.scalars(
-        select(Event).where(Event.requirement_id == requirement_id).order_by(Event.seq).limit(200)
-    )).all()
+    stmt = select(Event).where(Event.requirement_id == requirement_id).order_by(Event.seq)
+    if event_limit is not None:
+        stmt = stmt.limit(event_limit)
+    events = (await session.scalars(stmt)).all()
     return {
         "requirement_id": req.id,
         "title": req.title,
@@ -689,6 +781,14 @@ async def get_task_detail(
         "acceptance": req.acceptance,
         "awaiting_human": req.awaiting_human,
         "claim": lease_svc.claim_view(claim, req.awaiting_human, now),
+        "claims": [
+            {k: v for k, v in (lease_svc.claim_view(c, None, now) or {}).items()}
+            for c in (
+                await session.scalars(
+                    select(Claim).where(Claim.requirement_id == requirement_id).order_by(Claim.started_at)
+                )
+            ).all()
+        ],
         "subtasks": [
             {
                 "subtask_id": s.id, "ordinal": s.ordinal, "title": s.title, "state": s.state,
@@ -715,6 +815,20 @@ async def get_task_detail(
             for e in events
         ],
     }
+
+
+async def get_task_detail(
+    session: AsyncSession,
+    *,
+    requirement_id: str,
+    actor_surface: str,
+    actor_conn: str,
+    now: datetime | None = None,
+) -> dict:
+    now = now or now_utc()
+    return await _requirement_detail(
+        session, requirement_id, event_limit=200, now=now,
+    )
 
 
 async def list_awaiting(
@@ -748,22 +862,35 @@ async def list_awaiting(
     return {"awaiting": out}
 
 
-# ---------------------------------------------------------------- 导出（CLI 占位，AC 不测）
+# ---------------------------------------------------------------- 导出（JSON/Markdown 全量，无 LIMIT）
 async def export_data(
     session: AsyncSession,
     *,
     requirement_id: str | None = None,
+    fmt: str = "json",
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
-) -> dict:
+) -> dict | str:
+    """PRD 4.2 export：JSON / Markdown 全量导出（G8 P2-4：独立全量查询，无 LIMIT）。"""
     now = now or now_utc()
+    if fmt not in ("json", "markdown"):
+        raise BusinessError("invalid_record", f"invalid export format: {fmt}", None)
     if requirement_id:
-        return {"requirement": await get_task_detail(session, requirement_id=requirement_id, actor_surface=actor_surface, actor_conn=actor_conn, now=now)}
-    rows = (await session.scalars(select(Requirement).order_by(Requirement.created_at))).all()
-    return {
-        "requirements": [
-            await get_task_detail(session, requirement_id=r.id, actor_surface=actor_surface, actor_conn=actor_conn, now=now)
-            for r in rows
-        ]
-    }
+        data = {
+            "requirement": await _requirement_detail(
+                session, requirement_id, event_limit=None, now=now,
+            )
+        }
+    else:
+        rows = (await session.scalars(select(Requirement).order_by(Requirement.created_at))).all()
+        data = {
+            "requirements": [
+                await _requirement_detail(session, r.id, event_limit=None, now=now) for r in rows
+            ]
+        }
+    if fmt == "markdown":
+        from .view import render_export_markdown
+
+        return render_export_markdown(data)
+    return data
