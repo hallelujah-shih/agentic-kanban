@@ -46,4 +46,19 @@
 
 - 生效点: 本 ADR 生效即 G6 决策层闭合；PRD §8 Spike 前置措辞随 v3.2 折入更新（候选对照已完成，实操验证收窄为「agent-kanban-pm 骨架可移植性验证」）。
 - 残余: 移植性未经真机验证（G7，档位 ③），Spike 内用 2h 实操验证其 MCP 面能否推进状态（对应 PRD AC1/2/3 的场景）。
-- 复审: 若 Spike 实操发现骨架与声明的重大偏差，回到本 ADR 重议移植边界。
+- 复审: 若 Spike 实操发现骨架与声明的重大偏差，回到本 ADR 重议移植边界。G7 已触发重议，结论见下节「G7 Spike 验证」。
+
+## G7 Spike 验证（2026-10-22，真机 2h 实操）
+
+前置: docs/ops/spike-g7.md（证据报告，pin e29d288e4f454254c4f276a4cc25b64581b1ddf5）
+
+四断言实测 verdict（证据行号见报告）:
+- 认领排他: partial——DB 索引为 (task_id, agent_id) WHERE ACTIVE，非 per-task 粒度；per-task 排他靠应用层无锁 check-then-insert（models.py L393-400 / mcp/handlers/coordination.py L70-80）。
+- 租约/心跳/stale: pass——expires_at TTL + 心跳 upsert + stale/orphaned sweeper 存在；注意项: 过期不自动释放/不置 EXPIRED、AGENT_STALE 死代码（events.py L52）。
+- 认领原子性: fail——MCP claim_task 单事务只建租约、不碰任务状态；状态推进是独立 move_task 事务（mcp/handlers/coordination.py L58-118 / mcp/handlers/tasks.py L169-197）。
+- 角色门控 MCP: fail——MCP 面有 release_task + move_task 可达 completed，DONE 非人独有（mcp/tool_schemas.py L94/L304）。
+
+偏差触发: 命中 ① ③ ④（回退分支生效）。重议结论: 方向不变（自研为主、不引入运行依赖），移植边界收窄——只借已证实模式，其余自研（正是 T2 骨架任务）:
+- 借: lease 表结构 + partial unique index 写法（按 PRD per-requirement 粒度重建）+ 认领拒绝语义 + 心跳/stale sweeper 推导 + append-only 事件表。
+- 不借（自研）: per-task DB 排他约束（PRD UNIQUE(requirement_id) WHERE ended_at IS NULL）、claim+state 单事务原子性（AC1）、agent 面无 release（AC16）、DONE 仅人面（AC3）、claim 级 activity 口径。
+- G7 闭合: docs/adr/0000-known-gaps.md G7 更新为已闭合。

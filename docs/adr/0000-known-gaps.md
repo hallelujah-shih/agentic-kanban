@@ -12,6 +12,6 @@
 | G4 | MCP SDK 2.x 选型（版本锁定、stdio、鉴权模型）未登记 ADR | ② | 登记 ADR 0002 | 登记完成起 |
 | G5 | 性能目标无基准 | ③ | M1 跑基准测试 | 基准跑完起 |
 | G6 | 候选工具未调研，自研依据未闭合 | ② | 已裁决：无候选满足合取，自研为主 + agent-kanban-pm 为移植种子（docs/adr/0001-reuse-vs-build.md） | ADR 0001 生效起（已闭合） |
-| G7 | agent-kanban-pm 骨架（认领/租约/角色门控 MCP/append-only）移植性未经真机验证 | ③ | Spike 内 2h 实操：MCP 面推进状态（AC1/2/3 场景）；偏差大则回 ADR 0001 重议 | Spike 验证完成起 |
+| G7 | agent-kanban-pm 骨架（认领/租约/角色门控 MCP/append-only）移植性未经真机验证 | ② | 已闭合：Spike 真机验证（2026-10-22），命中 3/4 偏差触发（认领非 DB 排他 / claim 非单事务 / agent 面可释放置终态）；移植边界收窄并登记于 docs/adr/0001-reuse-vs-build.md「G7 Spike 验证」，证据 docs/ops/spike-g7.md | 2026-10-22 闭合 |
 
 登记规则：新增残余必须同时写明档位与生效点；档位 ③ 冒充 ① 或 ② 视为虚标，审查照报。
