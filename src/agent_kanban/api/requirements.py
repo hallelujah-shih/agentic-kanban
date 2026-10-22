@@ -8,18 +8,28 @@ queue_full 为 agent 面（MCP）专用码，REST 无触发端点（保留作契
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
 from typing import Any
 
-from fastapi import APIRouter
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
-from ..db import get_session_factory, run_op
+from ..db import get_read_session_factory, get_session_factory, run_op
+from ..models import Event
 from ..services import operations as ops
 from ..services import view
 from ..services.identity import rest_actor
+from ..services.ids import norm_id
 
 router = APIRouter()
+
+
+def _sse_poll_seconds() -> float:
+    return int(os.environ.get("AGENT_KANBAN_SSE_POLL_MS", "2000")) / 1000
 
 
 class NewIn(BaseModel):
@@ -114,6 +124,43 @@ async def get_board(status: str | None = None) -> dict:
         get_session_factory(), view.board, is_write=False,
         status=status, actor_surface=surface, actor_conn=conn,
     )
+
+
+@router.get("/events/stream")
+async def events_stream(request: Request) -> StreamingResponse:
+    """SSE 事件推送（PRD §5.3）：全局 seq 游标轮询（WHERE seq > last_seq ORDER BY seq）；
+    游标初始化 = 连接时刻（无历史回填，无 id: 帧、忽略 Last-Event-ID）；每轮询显式
+    事务边界（WAL 快照不跨轮询，跨进程写入可见）；is_disconnected 停轮询 + finally 关
+    session；纯触发器字段（无 title/payload，反淹没）；keepalive `: ping`。"""
+    async def gen():
+        session = get_read_session_factory()()
+        try:
+            cursor = (await session.execute(select(Event.seq).order_by(Event.seq.desc()).limit(1))).scalar() or 0
+            await session.commit()
+            while True:
+                if await request.is_disconnected():
+                    break
+                rows = (await session.execute(
+                    select(Event.seq, Event.requirement_id, Event.kind, Event.severity,
+                           Event.ts, Event.actor_surface, Event.actor_conn)
+                    .where(Event.seq > cursor).order_by(Event.seq)
+                )).all()
+                await session.commit()  # 显式事务边界：释放快照，下轮询新读事务
+                if rows:
+                    for r in rows:
+                        yield "data: " + json.dumps({
+                            "seq": r.seq, "requirement_id": norm_id(r.requirement_id), "kind": r.kind,
+                            "severity": r.severity, "ts": r.ts.isoformat(),
+                            "actor_surface": r.actor_surface, "actor_conn": r.actor_conn,
+                        }, ensure_ascii=False) + "\n\n"
+                    cursor = rows[-1].seq
+                else:
+                    yield ": ping\n\n"
+                await asyncio.sleep(_sse_poll_seconds())
+        finally:
+            await session.close()
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @router.get("/requirements/{requirement_id}")
