@@ -24,6 +24,7 @@ from ..services import operations as ops
 from ..services import view
 from ..services.identity import rest_actor
 from ..services.ids import norm_id
+from .web import board_shell, detail_shell
 
 router = APIRouter()
 
@@ -163,14 +164,25 @@ async def events_stream(request: Request) -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+@router.get("/", response_class=HTMLResponse)
+async def board_page() -> HTMLResponse:
+    """看板 HTML 壳（反淹没：壳无数据嵌入，JS fetch /board 渲染 + EventSource 重拉）。"""
+    return HTMLResponse(content=board_shell())
+
+
 @router.get("/requirements/{requirement_id}")
-async def get_requirement(requirement_id: str) -> dict:
-    """深潜（view.detail，含状态重建与完整事件流）。"""
+async def get_requirement(requirement_id: str, request: Request) -> Any:
+    """深潜（view.detail，含状态重建与完整事件流）。内容协商（审#P2-7）：
+    Accept 含 text/html -> HTML 壳；缺省/* -> JSON（形状不变）。"""
     surface, conn = rest_actor()
-    return await run_op(
+    data = await run_op(
         get_session_factory(), view.detail, is_write=False,
         requirement_id=requirement_id, actor_surface=surface, actor_conn=conn,
     )
+    accept = request.headers.get("accept") or ""
+    if "text/html" in accept:
+        return HTMLResponse(content=detail_shell())
+    return data
 
 
 @router.get("/requirements/{requirement_id}/summary")
