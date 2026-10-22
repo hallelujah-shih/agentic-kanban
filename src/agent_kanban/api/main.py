@@ -1,4 +1,10 @@
-"""FastAPI app（M0-1.1 安全 + M0-1.3 错误映射 + /healthz 豁免 token）。"""
+"""FastAPI app（M0-1.1 安全 + M0-1.3 错误映射 + /healthz 豁免 token + M1-1.1 MCP HTTP 挂载 /mcp）。
+
+M1-1.1：Starlette Mount 剥前缀，streamable_http_app(streamable_http_path="/") 内层 Route 在 "/"
+（审#P2-1）；host 传 config.host()（非 localhost 时 SDK DNS rebinding 保护自动关闭，token 为门，
+不传则默认 127.0.0.1 保护在非 localhost 绑定下静默 421，审#P2-2）。
+Mount 子 app 的 lifespan 不被 Starlette 执行，故 lifespan 显式跑 mcp_server.session_manager.run()。
+"""
 
 from __future__ import annotations
 
@@ -12,6 +18,7 @@ from fastapi.responses import JSONResponse
 from .. import config
 from ..db import ensure_schema, get_session_factory, run_op
 from ..errors import BusinessError
+from ..mcp.server import build_server
 from ..services import reconcile as reconcile_svc
 from .requirements import router
 
@@ -31,23 +38,28 @@ REST_ERROR_STATUS = {
 }
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # PRD §6 威胁模型 A/C：非 localhost 绑定必须带 token，否则启动拒绝+告警日志
-    bind = config.host()
-    if not config.is_localhost(bind) and not config.token():
-        logger.warning("refusing to start: non-localhost bind (%s) requires AGENT_KANBAN_TOKEN", bind)
-        raise RuntimeError(f"non-localhost bind ({bind}) requires AGENT_KANBAN_TOKEN")
-    await ensure_schema()
-    # 审#10：FastAPI lifespan 触发对账（重启对账，PRD 3.2/§6）；MCP server 启动不跑
-    # （避免多进程事件噪音）。读扫描（WAL 快照）不抢写锁；有 finding/drift 才写事件。
-    await run_op(get_session_factory(), reconcile_svc.reconcile, is_write=False)
-    yield
-
-
 def create_app() -> FastAPI:
+    mcp_server = build_server()
+    mcp_app = mcp_server.streamable_http_app(streamable_http_path="/", host=config.host())
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # PRD §6 威胁模型 A/C：非 localhost 绑定必须带 token，否则启动拒绝+告警日志
+        bind = config.host()
+        if not config.is_localhost(bind) and not config.token():
+            logger.warning("refusing to start: non-localhost bind (%s) requires AGENT_KANBAN_TOKEN", bind)
+            raise RuntimeError(f"non-localhost bind ({bind}) requires AGENT_KANBAN_TOKEN")
+        await ensure_schema()
+        # 审#10：FastAPI lifespan 触发对账（重启对账，PRD 3.2/§6）；MCP server 启动不跑
+        # （避免多进程事件噪音）。读扫描（WAL 快照）不抢写锁；有 finding/drift 才写事件。
+        await run_op(get_session_factory(), reconcile_svc.reconcile, is_write=False)
+        # Mount 子 app 的 lifespan 不执行：显式跑 MCP 会话管理器（session 内存管理与 idle 回收）
+        async with mcp_server.session_manager.run():
+            yield
+
     app = FastAPI(title="agent-kanban", version="0.1.0", lifespan=lifespan)
     app.include_router(router)
+    app.mount("/mcp", mcp_app)
 
     @app.middleware("http")
     async def token_middleware(request: Request, call_next):

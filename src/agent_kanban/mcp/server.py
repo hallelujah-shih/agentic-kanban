@@ -1,5 +1,6 @@
-"""MCP stdio server（PRD 4.1）：12 工具；错误返回 is_error + {code,message,task_id}（PRD 4.3）。
-actor 经 Context 派生（identity.mcp_actor），不接受调用方传入（ADR 0002）。"""
+"""MCP server（PRD 4.1）：12 工具；错误返回 is_error + {code,message,task_id}（PRD 4.3）。
+actor 经 Context 派生（identity.mcp_actor），不接受调用方传入（ADR 0002/P1-1）。
+build_server() 为 12 工具注册单点，stdio（cli.py mcp）与 HTTP（api /mcp）共用（审#P2-4）。"""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from ..errors import BusinessError
 from ..services import operations as ops
 from ..services.identity import mcp_actor
 
+# stdio 进程级 conn id（HTTP 不用，HTTP 用服务端铸币 session id）
 CONN_ID = f"conn-{uuid.uuid4().hex[:8]}"
 
 
@@ -32,7 +34,10 @@ def _ok(data: dict) -> CallToolResult:
 async def _call(
     ctx: Context | None, op_name: str, *, is_write: bool = True, **kwargs: Any
 ) -> CallToolResult:
-    surface, conn = mcp_actor(ctx, CONN_ID)
+    try:
+        surface, conn = mcp_actor(ctx, CONN_ID)
+    except BusinessError as exc:
+        return _error(exc)
     try:
         result = await run_op(
             get_session_factory(), getattr(ops, op_name), is_write=is_write,
@@ -128,26 +133,29 @@ async def list_awaiting(ctx: Context | None = None) -> CallToolResult:
     return await _call(ctx, "list_awaiting", is_write=False)
 
 
-server = MCPServer(name="agent-kanban", version="0.1.0")
-for tool in (
-    list_tasks,
-    get_task_detail,
-    claim_task,
-    add_subtask,
-    update_subtask,
-    add_milestone,
-    update_milestone,
-    add_record,
-    update_progress,
-    request_review,
-    mark_blocked,
-    list_awaiting,
-):
-    server.add_tool(tool)
+def build_server() -> MCPServer:
+    """12 工具注册单点（审#P2-4）：stdio 与 HTTP transport 共用，防注册表手工复制漂移。"""
+    server = MCPServer(name="agent-kanban", version="0.1.0")
+    for tool in (
+        list_tasks,
+        get_task_detail,
+        claim_task,
+        add_subtask,
+        update_subtask,
+        add_milestone,
+        update_milestone,
+        add_record,
+        update_progress,
+        request_review,
+        mark_blocked,
+        list_awaiting,
+    ):
+        server.add_tool(tool)
+    return server
 
 
 def main() -> None:
-    server.run(transport="stdio")
+    build_server().run(transport="stdio")
 
 
 if __name__ == "__main__":
