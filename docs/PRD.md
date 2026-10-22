@@ -170,6 +170,17 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 - `export`：JSON / Markdown 全量导出。
 - `abandon`：REJECTED / CANCELLED。
 
+**Web 窗口（M1，人面）**：
+
+| surface | 语义 |
+|---|---|
+| `GET /board` | 看板默认列表（反淹没）：非终态需求 + 每需求派生需要关注信号（口径同 §5.3 摘要 `_derived_signals`，全口径含 decomposition_added/unexplained/orphaned/drift），返回 `{tasks, attention_ids}` |
+| `GET /events/stream` | SSE 事件推送：全局 seq 游标、连接时刻初始化、无回填、纯触发器字段（语义见 §5.3） |
+| `GET /` | 看板 HTML 壳：内联 JS fetch `/board` 渲染 + EventSource 重拉，无原始输出 |
+| `GET /requirements/{id}` | 内容协商：Accept 含 `text/html` -> 深潜 HTML 壳（JS 渲染 + 人面操作），缺省/`*/*` -> JSON（形状不变） |
+| `GET /requirements/{id}/summary.html` | M0 静态摘要 HTML（保留，不冲突） |
+| token 传播 | EventSource 无法设 header：页面从 URL `?token=` 读 token 存入 sessionStorage，全部 fetch/EventSource 附 token（localhost 默认无 token 不生效；非 localhost 单用户可接受 URL 可见 token，威胁模型 C） |
+
 ### 4.3 错误码
 
 MCP `is_error` + structured content（`{code, message, task_id}`），无 HTTP 码：
@@ -214,6 +225,10 @@ MCP `is_error` + structured content（`{code, message, task_id}`），无 HTTP �
 - 认领信息（谁、何时、租约信号）与 awaiting_human 标记
 
 深潜视图（按需展开）：完整事件流（按 kind/severity 过滤），支持重建事件发生时需求的状态（由 state_change 链 + 该时点事件推导）。
+
+看板视图（Web 默认列表，M1）：每需求一行紧凑行（title/state/awaiting_human/claim/progress/needs_attention），需要关注需求置顶；`needs_attention` 口径与摘要视图同源——每需求以 `_derived_signals` 全口径派生（blocked/abandoned/未解释放弃/里程碑延误/拆解新增无解释/orphaned/drift），返回 `attention_ids` 供置顶；risk 计数 severity>=attention 过滤同摘要；覆盖缺口经摘要验收对照表展示（口径同源，board 不默认展示缺口明细）。
+
+事件推送（SSE，M1）：`GET /events/stream` 以全局单调 seq 为游标（`WHERE seq > last_seq ORDER BY seq`）；游标初始化 = 连接时刻（无历史回填）；帧只含纯触发器字段 `{seq, requirement_id, kind, severity, ts, actor_surface, actor_conn}`（无 title/payload——客户端收到"变了"即重拉结构，反淹没）；无 `id:` 帧、忽略 Last-Event-ID；keepalive `: ping`；每轮询新读事务（WAL 快照不跨轮询，跨进程写入可见）。
 
 **反淹没结构保证**：原始输出流不在数据模型内（无 run_logs 表，payload 上限 8 KB，深潜视图只存外部会话引用），摘要视图结构上不可能包含原始输出。
 
