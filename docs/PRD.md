@@ -20,6 +20,8 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 
 **单一事件源（指引优先）**：完整内容留在其源头（Jira 详情、代码、会话原文），看板只存指针（链接/引用）+ 摘要。登记是 URL+摘要 还是完整详情并不重要，**做好指引更重要**；需要完整内容时由 agent 从源头获取。与反淹没互补：反淹没 = 不默认展示，本原则 = 不留存、只指引。
 
+**报告纪律（agent 侧）**：写给人看的每一段文字（验收自评、decision rationale、deviation 原因、交接说明）必须**简约、大白话、无黑话**，尊重人脑带宽；报告里程碑与关键事件（节点），不报过程流水账。与反淹没互补：反淹没管视图展示什么，本纪律管 agent 写进记录的是什么。
+
 职责边界：看板是记录面 + 协作窗口，不是控制面。它不管理 worktree、不执行合入、不隔离执行。
 
 ### 0.1 全局不做清单
@@ -136,6 +138,8 @@ OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN。
 ## 4. 记录渠道（MCP 工具面 + 人面）
 
 ### 4.1 MCP 工具面
+
+transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **streamable-http**（挂载 FastAPI /mcp，ADR 0005；与 stdio 共用同一工具注册表；localhost 默认 + token 一致）。agent 面无 release 工具，写保护语义两 transport 相同。
 
 | 工具 | 语义 | 前置 |
 |---|---|---|
@@ -301,7 +305,7 @@ agentic-kanban/
 |---|---|---|---|
 | Spike（2 天） | CLI + SQLite + MCP stdio：requirements(acceptance) + claims(租约) + subtasks + milestones + events + 工具面；agent 协同技能（skills/agent-kanban/）+ MCP 配置说明（docs/mcp-config.md） | AC1-9、AC16 | Web、Jira、对账、视图 |
 | M0 | 摘要/深潜视图（CLI + 静态 HTML）、交接/标记语义完整、导出、对账、派生偏离 | AC10-13、AC15、AC17 | Web 窗口 |
-| M1 | Web 窗口 | AC14（一周试用协议，G3 基线采集完成为硬前置） | 控制面任何能力；Jira 导入/回写（已裁决不做，ADR 0004） |
+| M1 | Web 窗口（AI-人沟通渠道，必须）、MCP HTTP | AC14（一周试用协议，G3 基线采集完成为硬前置） | 控制面任何能力；Jira 导入/回写（已裁决不做，ADR 0004） |
 
 Spike 前置任务（不可跳过）：候选工具调研与裁决已完成（docs/adr/0001-reuse-vs-build.md，无候选满足合取，自研为主 + agent-kanban-pm 为移植种子）。Spike 内实操验证收窄为：对 agent-kanban-pm 骨架做 2h 移植性验证（MCP 面能否推进状态，对应 AC1/2/3 场景，G7）。
 
@@ -355,5 +359,5 @@ M1：
 | 租约参数：lease 时长 / idle 阈值 | M0 内 | 2h / 30min |
 | Jira 导入/回写 | 已裁决（ADR 0004） | 不做（Jira 需求以链接引用登记） |
 | request_review 证据强制 | M0 内 | 已定：至少一项，缺证据拒绝（PRD 4.1 + AC17；design.md §4 同步） |
-| MCP HTTP 形态 | M1 开工前 | 不做 |
+| MCP HTTP 形态 | 已裁决（ADR 0005） | 做（streamable-http 挂载 FastAPI /mcp，与 stdio 并存；localhost 默认 + token 一致） |
 | 候选工具裁决 | Spike 前 | 已裁决：自研 + agent-kanban-pm 移植种子（ADR 0001） |
