@@ -1,5 +1,9 @@
 """DB 基础设施：engine、connect 事件（FK/WAL/busy_timeout）、BEGIN IMMEDIATE、
-0600 权限、seq 计数器、事务执行器（写失败重试 3 次 -> db_busy）。"""
+0600 权限、seq 计数器、事务执行器（写失败重试 3 次 -> db_busy）。
+
+读写拆分（G8 P2-5）：写引擎保留 begin 事件 BEGIN IMMEDIATE（PRD 3.3 写锁先行）；
+读引擎 deferred 事务（WAL 快照，不抢写锁）。run_op 按 is_write 选工厂。
+"""
 
 from __future__ import annotations
 
@@ -44,7 +48,7 @@ def _chmod_0600(db_path: Path) -> None:
             pass
 
 
-def make_engine(db_path: Path) -> AsyncEngine:
+def _make_engine(db_path: Path, *, immediate: bool) -> AsyncEngine:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_async_engine(
@@ -62,48 +66,73 @@ def make_engine(db_path: Path) -> AsyncEngine:
         cursor.close()
         _chmod_0600(db_path)
 
-    @event.listens_for(engine.sync_engine, "begin")
-    def _begin_immediate(conn):
-        # 写锁先行（PRD 3.3）：所有事务以 BEGIN IMMEDIATE 开启，单写者保证
-        # 校验与写入同提交点、seq 签发唯一。
-        conn.exec_driver_sql("BEGIN IMMEDIATE")
+    if immediate:
+        @event.listens_for(engine.sync_engine, "begin")
+        def _begin_immediate(conn):
+            # 写锁先行（PRD 3.3）：写事务以 BEGIN IMMEDIATE 开启，单写者保证
+            # 校验与写入同提交点、seq 签发唯一。读引擎不挂此事件（WAL 快照）。
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
 
     return engine
 
 
 class _Runtime:
-    engine: AsyncEngine | None = None
+    write_engine: AsyncEngine | None = None
+    read_engine: AsyncEngine | None = None
     factory: async_sessionmaker[AsyncSession] | None = None
+    read_factory: async_sessionmaker[AsyncSession] | None = None
     schema_ready: bool = False
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    """进程级单例 session factory（读 AGENT_KANBAN_DB）。"""
+    """写工厂（BEGIN IMMEDIATE）。进程级单例（读 AGENT_KANBAN_DB）。"""
     if _Runtime.factory is None:
-        _Runtime.engine = make_engine(Path(DEFAULT_DB))
-        _Runtime.factory = async_sessionmaker(_Runtime.engine, expire_on_commit=False)
+        _Runtime.write_engine = _make_engine(Path(DEFAULT_DB), immediate=True)
+        _Runtime.factory = async_sessionmaker(_Runtime.write_engine, expire_on_commit=False)
     assert _Runtime.factory is not None
     return _Runtime.factory
 
 
-async def ensure_schema(factory: async_sessionmaker[AsyncSession]) -> None:
-    """幂等建表 + seq 计数器种子。并发安全：先查 sqlite_master 再 create_all。"""
+def get_read_session_factory() -> async_sessionmaker[AsyncSession]:
+    """读工厂（deferred 事务，WAL 快照不抢写锁）。"""
+    if _Runtime.read_factory is None:
+        _Runtime.read_engine = _make_engine(Path(DEFAULT_DB), immediate=False)
+        _Runtime.read_factory = async_sessionmaker(_Runtime.read_engine, expire_on_commit=False)
+    assert _Runtime.read_factory is not None
+    return _Runtime.read_factory
+
+
+async def ensure_schema() -> None:
+    """幂等建表 + seq 计数器种子。并发安全：先查 sqlite_master 再 create_all；
+    仅缺失时才写（读路径在持锁场景下不触发写）。只读检查走读引擎（deferred，
+    不抢写锁），建表/种子走写引擎。"""
     if _Runtime.schema_ready:
         return
     from .models import Base
 
-    engine = _Runtime.engine
-    assert engine is not None
-    async with engine.connect() as conn:
+    read_eng = _Runtime.read_engine
+    if read_eng is None:
+        get_read_session_factory()
+        read_eng = _Runtime.read_engine
+    assert read_eng is not None
+    async with read_eng.connect() as conn:
         names = set(
             (await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).scalars().all()
         )
     if not {"requirements", "seq_counter"}.issubset(names):
-        async with engine.begin() as conn:
+        write_eng = _Runtime.write_engine
+        if write_eng is None:
+            get_session_factory()
+            write_eng = _Runtime.write_engine
+        assert write_eng is not None
+        async with write_eng.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-    async with factory() as session:
-        await session.execute(text("INSERT OR IGNORE INTO seq_counter (id, value) VALUES (1, 0)"))
-        await session.commit()
+    async with read_eng.connect() as conn:
+        has_seq = (await conn.execute(text("SELECT COUNT(*) FROM seq_counter WHERE id=1"))).scalar_one()
+    if not has_seq:
+        async with get_session_factory()() as session:
+            await session.execute(text("INSERT OR IGNORE INTO seq_counter (id, value) VALUES (1, 0)"))
+            await session.commit()
     _Runtime.schema_ready = True
 
 
@@ -125,18 +154,19 @@ async def run_op(
     is_write: bool = True,
     **kwargs: Any,
 ) -> Any:
-    """单事务执行 op(session, ...)，BEGIN IMMEDIATE 自动生效；
-    写失败（locked/busy）重试 3 次后抛 db_busy（PRD 7.3 #4）。"""
-    await ensure_schema(factory)
+    """单事务执行 op(session, ...)。写：BEGIN IMMEDIATE（写锁先行）；读：deferred（WAL 快照）。
+    失败（locked/busy）重试 3 次后抛 db_busy（PRD 7.3 #4；读路径同样映射，不裸抛）。"""
+    await ensure_schema()
+    target = factory if is_write else get_read_session_factory()
     for attempt in range(WRITE_RETRIES + 1):
         try:
-            async with factory() as session:
+            async with target() as session:
                 result = await op(session, *args, **kwargs)
                 await session.commit()
                 return result
         except OperationalError as exc:
             if _is_locked(exc) and attempt < WRITE_RETRIES:
                 continue
-            if is_write and _is_locked(exc):
-                raise BusinessError("db_busy", "sqlite write failed after 3 retries", None) from exc
+            if _is_locked(exc):
+                raise BusinessError("db_busy", "sqlite database is locked after retries", None) from exc
             raise
