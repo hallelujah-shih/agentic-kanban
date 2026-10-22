@@ -1,5 +1,6 @@
 # git worktree（正典目录纪律）
 .worktree/
+_vendor/
 
 # Python / uv
 .venv/

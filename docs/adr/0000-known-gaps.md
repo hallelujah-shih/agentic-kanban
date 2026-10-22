@@ -9,7 +9,7 @@
 | G1 | 本机 shell 可直接写 SQLite，污染审计链 | ② | 文档声明边界；未来 DB 文件只读 + 单写进程 | 文档生效起 |
 | G2 | 偏离/验收自评的真实性不可完全验证（agent 造假） | ② | 结构强制（decision 必含 alternatives、验收自评表）+ 派生偏离信号（不依赖自愿登记）+ 人抽查 | PRD v3.2 生效起 |
 | G3 | 痛点基线未采集 | ③ | M0 前一周手工日志；M1 试用协议硬前置 | 采集完成起 |
-| G4 | MCP SDK 2.x 选型（版本锁定、stdio、鉴权模型）未登记 ADR | ② | 登记 ADR 0002 | 登记完成起 |
+| G4 | MCP SDK 2.x 选型（版本锁定、stdio、鉴权模型）未登记 ADR | ② | 已闭合：登记 docs/adr/0002-mcp-sdk.md（mcp>=2.3,<3、MCPServer 替代 fastmcp、stdio、无 token 鉴权模型） | 2026-10-22 闭合 |
 | G5 | 性能目标无基准 | ③ | M1 跑基准测试 | 基准跑完起 |
 | G6 | 候选工具未调研，自研依据未闭合 | ② | 已裁决：无候选满足合取，自研为主 + agent-kanban-pm 为移植种子（docs/adr/0001-reuse-vs-build.md） | ADR 0001 生效起（已闭合） |
 | G7 | agent-kanban-pm 骨架（认领/租约/角色门控 MCP/append-only）移植性未经真机验证 | ② | 已闭合：Spike 真机验证（2026-10-22），命中 3/4 偏差触发（认领非 DB 排他 / claim 非单事务 / agent 面可释放置终态）；移植边界收窄并登记于 docs/adr/0001-reuse-vs-build.md「G7 Spike 验证」，证据 docs/ops/spike-g7.md | 2026-10-22 闭合 |
