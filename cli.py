@@ -1,5 +1,6 @@
 """agent-kanban CLI（人面，PRD 4.2）。子命令：mcp / new / set_expectations / approve /
-release / renew / note / abandon / export。agent 面工具仅经 MCP 暴露，CLI 不提供（PRD 4.1）。"""
+release / renew / note / abandon / reopen / export / view。agent 面工具仅经 MCP 暴露，
+CLI 不提供（PRD 4.1）。"""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import sys
 from agent_kanban.db import get_session_factory, run_op
 from agent_kanban.errors import BusinessError
 from agent_kanban.services import operations as ops
+from agent_kanban.services import view
 from agent_kanban.services.identity import cli_actor
 
 
@@ -60,6 +62,8 @@ def _cmd_approve(args: argparse.Namespace) -> int:
 
 
 def _cmd_release(args: argparse.Namespace) -> int:
+    if args.all_stale:
+        return _invoke("release_all_stale")
     return _invoke("release", requirement_id=args.requirement_id, reason=args.reason)
 
 
@@ -75,8 +79,52 @@ def _cmd_abandon(args: argparse.Namespace) -> int:
     return _invoke("abandon", requirement_id=args.requirement_id, to_state=args.to_state)
 
 
+def _cmd_reopen(args: argparse.Namespace) -> int:
+    return _invoke("reopen", requirement_id=args.requirement_id, continue_=args.continue_)
+
+
 def _cmd_export(args: argparse.Namespace) -> int:
-    return _invoke("export_data", is_write=False, requirement_id=args.requirement_id)
+    if args.format == "markdown":
+        surface, conn = cli_actor()
+        try:
+            result = asyncio.run(
+                run_op(
+                    get_session_factory(), ops.export_data, is_write=False,
+                    requirement_id=args.requirement_id, fmt="markdown",
+                    actor_surface=surface, actor_conn=conn,
+                )
+            )
+        except BusinessError as exc:
+            print(f"{exc.code}: {exc.message}", file=sys.stderr)
+            return 1
+        print(result)
+        return 0
+    return _invoke("export_data", is_write=False, requirement_id=args.requirement_id, fmt="json")
+
+
+def _cmd_view(args: argparse.Namespace) -> int:
+    surface, conn = cli_actor()
+    try:
+        if args.mode == "summary":
+            result = asyncio.run(
+                run_op(
+                    get_session_factory(), view.summary, is_write=False,
+                    requirement_id=args.requirement_id, actor_surface=surface, actor_conn=conn,
+                )
+            )
+            print(view.render_summary_text(result))
+        else:
+            result = asyncio.run(
+                run_op(
+                    get_session_factory(), view.detail, is_write=False,
+                    requirement_id=args.requirement_id, actor_surface=surface, actor_conn=conn,
+                )
+            )
+            print(view.render_detail_text(result))
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -104,9 +152,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--requirement-id", required=True)
     p.set_defaults(handler=_cmd_approve)
 
-    p = sub.add_parser("release", help="释放认领（唯一释放路径，人面）")
-    p.add_argument("--requirement-id", required=True)
-    p.add_argument("--reason", required=True)
+    p = sub.add_parser("release", help="释放认领（唯一释放路径，人面）；--all-stale 批量释放 STALE")
+    p.add_argument("--requirement-id")
+    p.add_argument("--reason")
+    p.add_argument("--all-stale", action="store_true")
     p.set_defaults(handler=_cmd_release)
 
     p = sub.add_parser("renew", help="续租")
@@ -118,14 +167,25 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--content", required=True)
     p.set_defaults(handler=_cmd_note)
 
-    p = sub.add_parser("abandon", help="REJECTED / CANCELLED")
+    p = sub.add_parser("abandon", help="REJECTED / CANCELLED（同事务处置认领）")
     p.add_argument("--requirement-id", required=True)
     p.add_argument("--to-state", required=True, choices=["REJECTED", "CANCELLED"])
     p.set_defaults(handler=_cmd_abandon)
 
-    p = sub.add_parser("export", help="JSON 全量导出")
+    p = sub.add_parser("reopen", help="DONE->REOPEN；--continue REOPEN->OPEN（回到可认领）")
+    p.add_argument("--requirement-id", required=True)
+    p.add_argument("--continue", dest="continue_", action="store_true")
+    p.set_defaults(handler=_cmd_reopen)
+
+    p = sub.add_parser("export", help="全量导出（JSON/Markdown，无 LIMIT）")
     p.add_argument("--requirement-id")
+    p.add_argument("--format", choices=["json", "markdown"], default="json")
     p.set_defaults(handler=_cmd_export)
+
+    p = sub.add_parser("view", help="视图：summary（摘要）/ detail（深潜）")
+    p.add_argument("mode", choices=["summary", "detail"])
+    p.add_argument("--requirement-id", required=True)
+    p.set_defaults(handler=_cmd_view)
 
     return parser
 
