@@ -20,7 +20,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db import now_utc
+from ..db import idle_seconds, now_utc
 from ..models import Claim, Event, Milestone, Requirement, Subtask
 from . import lease as lease_svc
 from .ids import norm_id as _nid
@@ -126,7 +126,10 @@ async def summary(
         "abandoned": sum(1 for s in states if s == "abandoned"),
     }
 
-    needs_attention = _derived_signals(subtasks, milestones, events, milestone_rows)
+    needs_attention = _derived_signals(
+        subtasks, milestones, events, milestone_rows,
+        claim=claim, state=req.state, awaiting_human=req.awaiting_human, now=now,
+    )
 
     return {
         "requirement_id": _nid(req.id),
@@ -181,8 +184,14 @@ def _derived_signals(
     milestones: list[Milestone],
     events: list[Event],
     milestone_rows: list[dict],
+    *,
+    claim: Claim | None = None,
+    state: str | None = None,
+    awaiting_human: dict | None = None,
+    now: datetime | None = None,
 ) -> list[dict]:
-    """派生偏离信号（系统推导，不依赖 agent 自愿登记，PRD 5.3）。"""
+    """派生偏离信号（系统推导，不依赖 agent 自愿登记，PRD 5.3）+ reconcile 产物
+    （审#8：ORPHANED/drift 入需要关注区，观测在视图时点仍成立才显示）。"""
     out: list[dict] = []
     subtask_ids = {_nid(s.id) for s in subtasks}
     explained: set[str] = set()
@@ -207,7 +216,45 @@ def _derived_signals(
     for iv in _claimed_intervals(events):
         if iv["decompositions"] > 0 and iv["explanations"] == 0:
             out.append({"type": "decomposition_added", "count": iv["decompositions"]})
+    _append_reconcile_signals(out, events, claim, state, awaiting_human, now)
     return out
+
+
+def _append_reconcile_signals(
+    out: list[dict], events: list[Event], claim: Claim | None, state: str | None,
+    awaiting_human: dict | None, now: datetime | None,
+) -> None:
+    """reconcile 产物入需要关注区：ORPHANED + claim-state drift。只读最新一条
+    reconcile 事件；观测在视图时点仍成立才显示（claim 释放/恢复活动/状态修复后
+    自愈，不残留陈旧信号）。"""
+    now = now or now_utc()
+    rec = [e for e in events if e.kind == "reconcile"]
+    if not rec:
+        return
+    payload = rec[-1].payload or {}
+    findings = payload.get("findings") or []
+    if findings and findings[0].get("signal") == "orphaned":
+        cid = findings[0].get("claim_id")
+        if claim is not None and claim.id == cid and not awaiting_human \
+                and now <= claim.lease_expires_at \
+                and (now - claim.last_activity_at).total_seconds() > idle_seconds():
+            out.append({"type": "orphaned_claim", "claim_id": _nid(cid), "title": claim.agent_name})
+    for d in payload.get("drift") or []:
+        if _drift_holds(d, claim, state):
+            out.append({
+                "type": "claim_state_drift", "title": d.get("type"), "state": d.get("state"),
+                "claim_id": _nid(d["claim_id"]) if d.get("claim_id") else None,
+            })
+
+
+def _drift_holds(d: dict, claim: Claim | None, state: str | None) -> bool:
+    """drift 在视图时点是否仍成立（BLOCKED 有 claim 合法，不报 claim_without_claimed）。"""
+    t = d.get("type")
+    if t == "claim_without_claimed":
+        return claim is not None and state not in ("CLAIMED", "BLOCKED")
+    if t == "claimed_without_claim":
+        return claim is None and state == "CLAIMED"
+    return False
 
 
 def _requirement_state_changes(events: list[Event]) -> list[Event]:

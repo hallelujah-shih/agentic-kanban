@@ -10,8 +10,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .. import config
-from ..db import ensure_schema
+from ..db import ensure_schema, get_session_factory, run_op
 from ..errors import BusinessError
+from ..services import reconcile as reconcile_svc
 from .requirements import router
 
 logger = logging.getLogger("agent_kanban.api")
@@ -38,6 +39,9 @@ async def lifespan(app: FastAPI):
         logger.warning("refusing to start: non-localhost bind (%s) requires AGENT_KANBAN_TOKEN", bind)
         raise RuntimeError(f"non-localhost bind ({bind}) requires AGENT_KANBAN_TOKEN")
     await ensure_schema()
+    # 审#10：FastAPI lifespan 触发对账（重启对账，PRD 3.2/§6）；MCP server 启动不跑
+    # （避免多进程事件噪音）。读扫描（WAL 快照）不抢写锁；有 finding/drift 才写事件。
+    await run_op(get_session_factory(), reconcile_svc.reconcile, is_write=False)
     yield
 
 

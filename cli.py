@@ -12,7 +12,7 @@ import sys
 from agent_kanban.db import get_session_factory, run_op
 from agent_kanban.errors import BusinessError
 from agent_kanban.services import operations as ops
-from agent_kanban.services import view
+from agent_kanban.services import reconcile, view
 from agent_kanban.services.identity import cli_actor
 
 
@@ -127,6 +127,19 @@ def _cmd_view(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_reconcile(args: argparse.Namespace) -> int:
+    """对账（PRD 3.2 服务重启对账 / §6 可靠性）：只标记不删除；事件 actor=system。"""
+    try:
+        result = asyncio.run(
+            run_op(get_session_factory(), reconcile.reconcile, is_write=False)
+        )
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-kanban",
@@ -186,6 +199,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("mode", choices=["summary", "detail"])
     p.add_argument("--requirement-id", required=True)
     p.set_defaults(handler=_cmd_view)
+
+    p = sub.add_parser("reconcile", help="对账：扫描未结束认领 + claim-state drift（只标记不删除）")
+    p.set_defaults(handler=_cmd_reconcile)
 
     return parser
 
