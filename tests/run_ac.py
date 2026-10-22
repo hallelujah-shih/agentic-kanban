@@ -14,6 +14,7 @@ from ac_cases_b import ac6, ac7, ac8, ac9, ac16, extras, matrix
 from ac_cases_c import ac11, ac12, ac13, ac15, ac17, cli_m0, payload, readlock, rest_api, security
 from ac_cases_d import p1_id_normalization, p2_decomposition_signal, p2_payload_8kb
 from ac_cases_e import ac10, reconcile_ac
+from ac_cases_f import http_mcp, http_mcp_equiv, http_mcp_sec
 
 TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
@@ -24,6 +25,7 @@ TESTS: dict[str, object] = {
     "matrix": matrix, "extras": extras,
     "p1_ids": p1_id_normalization, "p2_payload": p2_payload_8kb, "p2_decomp": p2_decomposition_signal,
     "reconcile": reconcile_ac,
+    "http_mcp": http_mcp, "http_mcp_sec": http_mcp_sec, "http_mcp_equiv": http_mcp_equiv,
 }
 
 
