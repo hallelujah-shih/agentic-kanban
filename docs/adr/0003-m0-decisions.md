@@ -8,7 +8,7 @@
 
 - **心跳模型（§11 死期 M0 开工前）**: 默认 = 外部进程（心跳 = MCP 活动频率）。`last_activity_at` 由 agent 面写操作在写事务内更新（lease.touch_activity）；无独立心跳进程，不与进程存活挂钩。与 reconcile 观测源（claims 表 last_activity_at）同源一致。
 - **租约参数（§11 死期 M0 内）**: lease 时长 2h / idle 阈值 30min，env 可覆盖（`AGENT_KANBAN_LEASE_SECONDS` / `AGENT_KANBAN_IDLE_SECONDS`）。M0-1 已实现，本 ADR 确认。
-- **MCP HTTP 形态（§11 死期 M1 开工前）**: 不做（M1 未决默认）。
+- **MCP HTTP 形态（§11 死期 M1 开工前）**: 不做（M1 未决默认）——**已被 ADR 0005 反转（做）**，见 docs/adr/0005-m1-direction.md。
 - **REST 归属（PRD 5.1 枚举无 rest）**: REST 面 `surface='cli'`（人面语义）+ `conn='rest:<短随机>'`（服务端派生，用 conn 区分传输，不接受调用方传入）。
 - **ORPHANED 语义（审#8）**: 只属 reconcile 产物（报告 + 事件）。`claim_view.signal` 保持 PRD 推导序（ended/waiting/stale/suspect/active），view.py 现状不动。ORPHANED = 连接失活（last_activity_at 超 idle）且租约未过期且无 awaiting_human —— 即 SUSPECT 区间在 reconcile 时点的显式化；**等待中优先于 ORPHANED**（不因连接失活盖过「等待人裁决」）。drift/ORPHANED 入摘要「需要关注区」。
 - **reconcile 观测源（审#1）**: claims 表（agent_conn + last_activity_at，共享 DB），**无进程内 conn registry**（跨进程各自 registry 会互相误标 ORPHANED）。agent_conn 为观测/审计记录，存活判定 = last_activity_at 超 idle。
@@ -57,4 +57,4 @@ PRD 3.2「该 claim 的 agent 面任何写操作 + MCP 调用」计活动 vs 实
 ## 生效与后续
 
 - 生效点: 本 ADR 登记即 G8 闭合标注 + G9/G10 登记（docs/adr/0000-known-gaps.md 同步）。
-- 后续: G9 两项在 M1 裁决；G10 读计活动的连接级模型在 M1 定；MCP HTTP 若 M1 推翻默认需回本 ADR 增补传输小节。
+- 后续: G9 两项在 M1 裁决；G10 读计活动的连接级模型在 M1 定；MCP HTTP 已由 ADR 0005 反转（做），本 ADR 的传输小节不再增补。
