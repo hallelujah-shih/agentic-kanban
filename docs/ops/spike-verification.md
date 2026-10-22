@@ -57,6 +57,14 @@ FastAPI/REST（M0）、Alembic（M0，create_all 占位）、reconcile 对账（
 5. 读事务也开 BEGIN IMMEDIATE（读持写锁，锁竞争下读抛裸 OperationalError -> MCP 面非结构化错误）——【登记】单用户低风险，M0 评估（读不强制 BEGIN IMMEDIATE 或读锁失败转结构化码）。
 6. 代码卫生：rand_id() 死代码【已删】；_claim_hook 60s sleep 在 env 门控生产路径【登记】M0 建议移入测试专属模块。
 
+## 判别力盲区（结果盲审声明，M0 规划价值）
+
+- 并发交错未穷举（>3 写进程、混合工具类型、锁序异常死锁）——BEGIN IMMEDIATE 单写者已结构性消除大部分。
+- harness 用 raw newline JSON-RPC 客户端，非官方 MCP client SDK——opencode/Claude Code 真实客户端下的协议兼容与 sessionID 归因路径（`_meta["ai.opencode/sessionID"]`）未验证，M0 需真机验证（对应 G2 之外的 agent 协同面）。
+- 仅 Linux 验证（WAL/文件锁/路径语义）。
+- REOPEN 转移行为未测（无接口可达，仅 raw SQL 播种）。
+- 红证据为整体 stub（ImportError/EOFError）全红，非逐断言变异红；断言本身为 PRD 字面且读真实行为，判别力是结构性的。
+
 ## 基线
 
 - 本批 commit: 6beb539（T2.1）、fcefb75（T2.2-2.7）、a9dcb21（T2.8+红绿留档）
