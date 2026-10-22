@@ -1,0 +1,12 @@
+# git worktree（正典目录纪律）
+.worktree/
+
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+
+# 本地数据（SQLite 运行时产物，不入库）
+*.db
+*.db-wal
+*.db-shm
