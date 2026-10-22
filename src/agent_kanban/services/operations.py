@@ -15,6 +15,7 @@ from ..db import MAX_ACTIVE_CLAIMS, idle_seconds, lease_seconds, now_utc
 from ..errors import BusinessError
 from ..models import Claim, Event, Milestone, Requirement, Subtask, new_id
 from . import lease as lease_svc
+from .ids import norm_id
 from .operations_util import add_event, normalize_anchors, normalize_title
 from .state_machine import transition
 from .write_guard import count_active_claims, get_active_claim, require_requirement
@@ -36,6 +37,14 @@ def _check_payload_size(requirement_id: str, *objects: Any) -> None:
             raise BusinessError(
                 "invalid_record", f"payload exceeds {MAX_PAYLOAD_BYTES} bytes", requirement_id
             )
+
+
+def _claim_view(claim: Claim | None, awaiting_human: dict | None, now: datetime) -> dict | None:
+    """认领视图（响应边界）：claim_id 归一 32-hex（与 view._claim_view 同口径）。"""
+    v = lease_svc.claim_view(claim, awaiting_human, now)
+    if v is not None:
+        v["claim_id"] = norm_id(v["claim_id"])
+    return v
 
 
 def _validate_decision_payload(payload: Any) -> None:
@@ -201,7 +210,7 @@ async def release(
         title="released", payload={"reason": reason, "agent_name": claim.agent_name},
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
-    return {"requirement_id": requirement_id, "state": "OPEN", "claim_id": claim.id}
+    return {"requirement_id": requirement_id, "state": "OPEN", "claim_id": norm_id(claim.id)}
 
 
 async def release_all_stale(
@@ -280,6 +289,7 @@ async def note(
 ) -> dict:
     now = now or now_utc()
     await require_requirement(session, requirement_id)
+    _check_payload_size(requirement_id, {"content": content}, content)  # PRD §6：单事件 payload < 8KB
     await add_event(
         session, requirement_id=requirement_id, kind="note", severity="info",
         title="note", content=content, payload={"content": content},
@@ -604,6 +614,7 @@ async def update_progress(
 ) -> dict:
     now = now or now_utc()
     claim = await get_active_claim(session, requirement_id)
+    _check_payload_size(requirement_id, {"note": note}, note)  # PRD §6：单事件 payload < 8KB
     await add_event(
         session, requirement_id=requirement_id, kind="progress_note", severity="info",
         title="progress", content=note, payload={"note": note},
@@ -738,11 +749,11 @@ async def list_tasks(
         )
         tasks.append(
             {
-                "requirement_id": r.id,
+                "requirement_id": norm_id(r.id),
                 "title": r.title,
                 "state": r.state,
                 "awaiting_human": r.awaiting_human,
-                "claim": lease_svc.claim_view(claim, r.awaiting_human, now),
+                "claim": _claim_view(claim, r.awaiting_human, now),
             }
         )
     return {"tasks": tasks}
@@ -772,7 +783,7 @@ async def _requirement_detail(
         stmt = stmt.limit(event_limit)
     events = (await session.scalars(stmt)).all()
     return {
-        "requirement_id": req.id,
+        "requirement_id": norm_id(req.id),
         "title": req.title,
         "description": req.description,
         "source": req.source,
@@ -780,9 +791,9 @@ async def _requirement_detail(
         "state": req.state,
         "acceptance": req.acceptance,
         "awaiting_human": req.awaiting_human,
-        "claim": lease_svc.claim_view(claim, req.awaiting_human, now),
+        "claim": _claim_view(claim, req.awaiting_human, now),
         "claims": [
-            {k: v for k, v in (lease_svc.claim_view(c, None, now) or {}).items()}
+            {k: v for k, v in (_claim_view(c, None, now) or {}).items()}
             for c in (
                 await session.scalars(
                     select(Claim).where(Claim.requirement_id == requirement_id).order_by(Claim.started_at)
@@ -791,15 +802,15 @@ async def _requirement_detail(
         ],
         "subtasks": [
             {
-                "subtask_id": s.id, "ordinal": s.ordinal, "title": s.title, "state": s.state,
-                "acceptance": s.acceptance, "milestone_id": s.milestone_id,
+                "subtask_id": norm_id(s.id), "ordinal": s.ordinal, "title": s.title, "state": s.state,
+                "acceptance": s.acceptance, "milestone_id": norm_id(s.milestone_id) if s.milestone_id else None,
                 "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat(),
             }
             for s in subtasks
         ],
         "milestones": [
             {
-                "milestone_id": m.id, "title": m.title, "state": m.state,
+                "milestone_id": norm_id(m.id), "title": m.title, "state": m.state,
                 "planned_at": m.planned_at.isoformat() if m.planned_at else None,
                 "actual_at": m.actual_at.isoformat() if m.actual_at else None,
             }
@@ -810,7 +821,7 @@ async def _requirement_detail(
                 "seq": e.seq, "kind": e.kind, "severity": e.severity, "title": e.title,
                 "content": e.content, "payload": e.payload,
                 "actor_surface": e.actor_surface, "actor_conn": e.actor_conn,
-                "claim_id": e.claim_id, "ts": e.ts.isoformat(),
+                "claim_id": norm_id(e.claim_id) if e.claim_id else None, "ts": e.ts.isoformat(),
             }
             for e in events
         ],
@@ -851,12 +862,12 @@ async def list_awaiting(
         waiting = (now - since).total_seconds() if since else None
         out.append(
             {
-                "requirement_id": r.id,
+                "requirement_id": norm_id(r.id),
                 "title": r.title,
                 "state": r.state,
                 "awaiting_human": r.awaiting_human,
                 "waiting_seconds": waiting,
-                "claim": lease_svc.claim_view(claim, r.awaiting_human, now),
+                "claim": _claim_view(claim, r.awaiting_human, now),
             }
         )
     return {"awaiting": out}

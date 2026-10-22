@@ -16,7 +16,6 @@ from __future__ import annotations
 import html
 import json
 from datetime import datetime
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,13 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import now_utc
 from ..models import Claim, Event, Milestone, Requirement, Subtask
 from . import lease as lease_svc
+from .ids import norm_id as _nid
 from .write_guard import require_requirement
-
-
-def _nid(value: Any) -> str:
-    """id 归一为 32-hex 无连字符（与 create 响应/DB 存储一致；Uuid(as_uuid=False)
-    读回 36-char 带连字符，API 面归一避免与 payload 引用（32-hex）失配）。"""
-    return str(value).replace("-", "")
 
 
 # ---------------------------------------------------------------- 摘要
@@ -240,7 +234,9 @@ def _claimed_intervals(events: list[Event]) -> list[dict]:
     for e in events:
         for iv in intervals:
             if iv["start"] <= e.seq and (iv["end"] is None or e.seq <= iv["end"]):
-                if e.kind == "decomposition":
+                # 拆解新增只计 add_subtask 的 decomposition（payload 含 subtask_id）；
+                # add_milestone 也写 decomposition（payload 仅 milestone_id），不构成拆解新增
+                if e.kind == "decomposition" and (e.payload or {}).get("subtask_id"):
                     iv["decompositions"] += 1
                 elif e.kind in ("decision", "deviation"):
                     iv["explanations"] += 1
@@ -333,7 +329,7 @@ async def detail(
                 "seq": e.seq, "kind": e.kind, "severity": e.severity, "title": e.title,
                 "content": e.content, "payload": e.payload,
                 "actor_surface": e.actor_surface, "actor_conn": e.actor_conn,
-                "claim_id": e.claim_id, "ts": e.ts.isoformat(),
+                "claim_id": _nid(e.claim_id) if e.claim_id else None, "ts": e.ts.isoformat(),
                 "state_at_event": states.get(e.seq),
             }
             for e in events
