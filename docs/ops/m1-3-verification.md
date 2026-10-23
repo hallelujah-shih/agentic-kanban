@@ -69,6 +69,15 @@ uv run python tests/bench.py                         # G5 基准（覆写 docs/o
 - prune: 八路径全过——终态全窗外整删（链不半断）且 detail 零事件 + history_note（CLI/REST）；跨窗/recent 全留（state_at_event=CLAIMED 链重建正确 + decomposition_added 保留）；确认门 'n'/EOF 不删非零退出无 traceback、'y' 删；导出先行（全量 events + 0600）+ 默认 export-path 生成与打印；僵尸需求（非终态）不删。
 - G5/4b: summary/write 达标 PRD §6；board 最坏 11542 ms 触发 4b，批查询优化后 538.7 ms 达标，同一 DB 优化前后 board dict 全等（口径不变）；green-full-6.log 337/337 零回归。
 
+## 结果盲审 P2 折入（2026-10-23，verdict APPROVE）
+
+- P2-2 CLI --months 校验: `--months < 1` 干净报错返回 1（非 traceback）；`_months_ago` 极端溢出（year 越界）catch ValueError 干净报错。
+- P2-3 过期路径无 renew 事件断言: 负租约 env（AGENT_KANBAN_LEASE_SECONDS=-1）下 renew -> lease_expired 且 events 表无 kind='renew' 行。
+- P2-4 导出失败 (ix) 用例: --export-path 指向目录 -> open 抛 IsADirectoryError -> 非零退出、不删（清理前必须导出）、stderr 含 export write failed、无 traceback。
+- P2-5 stderr 断言: 确认门 'n'/EOF 路径断言 stderr 含 "aborted: nothing deleted"（判据原文）。
+- P2-6 known-gaps G5 行闭合标注（2026-10-23，bench 落地）。
+- P2-1/P2-7 证据措辞（不涉代码）: bench 数字以 docs/ops/bench-results.md 为准（commit message 为早期运行值，run-to-run 方差）；board 等价断言实际为「确定性种子重建的等同 DB」字节全等（一次性工具，未入库，已由盲审独立复核）。
+
 ## 盲区登记
 
 1. **bench 为测量非断言门**（plan 明示）：bench-results.md 是记录制证据，不参与 run_ac 门禁；数字依赖本机环境（python/sqlalchemy/sqlite/磁盘），换机重跑可能漂移；4b 等价断言依赖 /tmp 一次性工具，结果已固化于本文件。

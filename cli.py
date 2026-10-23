@@ -149,7 +149,14 @@ def _cmd_prune(args: argparse.Namespace) -> int:
     非零退出，确认期间不持写事务）-> prune_events 单事务删除。"""
     surface, conn = cli_actor()
     now = now_utc()
-    cutoff = _months_ago(now, args.months)
+    if args.months < 1:
+        print("--months must be >= 1", file=sys.stderr)
+        return 1
+    try:
+        cutoff = _months_ago(now, args.months)
+    except ValueError as exc:  # 极端月数溢出日历范围（审#P2-2）
+        print(f"invalid --months: {exc}", file=sys.stderr)
+        return 1
     export_path = Path(args.export_path) if args.export_path else \
         Path("exports") / f"kanban-export-{now.strftime('%Y%m%dT%H%M%S%f')}.json"
     try:

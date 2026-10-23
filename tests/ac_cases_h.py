@@ -115,6 +115,16 @@ def renew_events():
     ok("renew: 无认领 renew -> not_found", code3 == "not_found", code3)
     ok("renew: 无认领 renew 不写事件", _renew_events(db3, r3) == [], str(_renew_events(db3, r3)))
 
+    # 过期租约 renew -> lease_expired 不写事件（审#P2-3：过期路径 events 无 renew 行）
+    db4 = new_db()
+    r4 = seed_req(db4, "renew-expired")
+    m4 = MCP(db4, extra={"AGENT_KANBAN_LEASE_SECONDS": "-1"}).start()
+    m4.call_ok("claim_task", {"requirement_id": r4, "agent_name": "d"})
+    m4.close()
+    code4, _ = cli_err(db4, "renew", "--requirement-id", r4, extra={"AGENT_KANBAN_LEASE_SECONDS": "-1"})
+    ok("renew: 过期租约 renew -> lease_expired", code4 == "lease_expired", code4)
+    ok("renew: 过期租约 renew 不写事件", _renew_events(db4, r4) == [], str(_renew_events(db4, r4)))
+
 
 def prune_terminal():
     print("== M1-3.3 (i): 终态全窗外需求整删 + 整删后 detail 零事件 + history_note")
@@ -221,6 +231,8 @@ def prune_confirm():
     ok("prune(iv): stdin 'n' -> 不删（events 保留）", _count(db, r1) == before, f"n={_count(db, r1)}")
     ok("prune(iv): stdin 'n' -> 无 traceback", "Traceback" not in res.stderr and "Traceback" not in res.stdout,
        res.stderr[-200:])
+    ok("prune(iv): stdin 'n' -> stderr 含 aborted 消息（审#P2-5）",
+       "aborted: nothing deleted" in res.stderr, res.stderr[-200:])
     # EOF（空 stdin）
     db2 = new_db()
     r2 = seed_req(db2, "confirm-eof")
@@ -236,6 +248,8 @@ def prune_confirm():
     ok("prune(iv): EOF -> 不删", _count(db2, r2) == before2, f"n={_count(db2, r2)}")
     ok("prune(iv): EOF -> 无 traceback", "Traceback" not in res2.stderr and "Traceback" not in res2.stdout,
        res2.stderr[-200:])
+    ok("prune(iv): EOF -> stderr 含 aborted 消息（审#P2-5）",
+       "aborted: nothing deleted" in res2.stderr, res2.stderr[-200:])
     # 确认 y 继续删除（positive 分支）
     db3 = new_db()
     r3 = seed_req(db3, "confirm-y")
@@ -303,6 +317,26 @@ def prune_export():
     ok("prune(vi): CLI 打印导出文件路径（相对 cwd 解析即生成文件）",
        body3.get("export_path") and Path(cwd) / body3.get("export_path") == exp3,
        f"printed={body3.get('export_path')}")
+
+
+def prune_export_fail():
+    print("== M1-3.3 (ix): 导出失败中止（清理前必须导出）——不删、非零退出、无 traceback（审#P2-4）")
+    db = new_db()
+    r1 = seed_req(db, "export-fail")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})
+    m.close()
+    cli_ok(db, "approve", "--requirement-id", r1)
+    _backdate(db, r1)
+    before = _count(db, r1)
+    # export-path 指向一个已存在目录 -> open("w") 抛 IsADirectoryError（OSError 子类）-> 中止
+    d = Path(tempfile.mkdtemp(prefix="ak-prune-fail-"))
+    res = _run_cli(db, ["prune", "--months", "12", "--yes", "--export-path", str(d)])
+    ok("prune(ix): 导出失败 -> 非零退出", res.returncode != 0, f"rc={res.returncode}")
+    ok("prune(ix): 导出失败 -> 不删（清理前必须导出）", _count(db, r1) == before, f"n={_count(db, r1)}")
+    ok("prune(ix): 导出失败 -> stderr 含 export write failed", "export write failed" in res.stderr, res.stderr[-200:])
+    ok("prune(ix): 导出失败 -> 无 traceback", "Traceback" not in res.stderr and "Traceback" not in res.stdout,
+       res.stderr[-200:])
 
 
 def prune_zombie():
