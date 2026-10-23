@@ -11,6 +11,7 @@ AI 时代的看板：不是任务状态跟踪，而是**大黑箱（AI 自动化
 | `docs/mcp-config.md` | MCP 接入配置说明（opencode v2 / Claude Code / 通用客户端） |
 | `skills/agent-kanban/` | 协同技能：告诉其他 agent 如何通过 MCP 认领/拆解/记录/交接 |
 | `docs/adr/` | 决策与残余登记 |
+| `docs/research/browser-login.md` | 调研：headless 下 agent 登录内网 SSO 抓认证页面（含 3 个实测踩坑）；参考实现 `tools/intranet_fetch.py` |
 
 ## 一句话
 
