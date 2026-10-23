@@ -9,7 +9,7 @@ BCD: docs/business-contracts/g9b-retry-limit.md（7 节齐；判定源 user 裁�
 ## 契约三锚
 
 1. 规范逐字原文: PRD §3.2「不自动重试：重试对象是子任务（agent 侧），每次重试记录成本（token/时长），同一需求累计重试超 2 次进入"等你决策"清单（实现：系统判定超限后写一条 risk(severity=attention) 事件，入摘要"需要关注"区）」。BCD §1 解读 A+D（系统派生 + 需求级累计 + 严格超 2）+ user 裁决（2026-10-23 系统派生计数，幂等一次，成本留 agent note + SKILL 指引，不建 retry_cost 字段）。
-2. 代码锚点: operations.py update_subtask（state_change 事件 payload={subtask_id, from, to}，无迁移守卫，SUBTAST_STATES 全集）；view.py _derived_signals（派生信号列表）+ summary/board 同源；models.py Event（kind/severity/payload/claim_id）。
+2. 代码锚点: operations.py update_subtask（state_change 事件 payload={subtask_id, from, to}，无迁移守卫，SUBTASK_STATES 全集）；view.py _derived_signals（派生信号列表）+ summary/board 同源；models.py Event（kind/severity/payload/claim_id）。
 3. 逐例期望: 子任务第 3 次重入 in_progress（首入除外）-> 同事务写 risk(attention) 事件（payload.retry_limit=true, count=3, actor_surface=system）+ needs_attention 含 retry_limit + risks 列表含该事件；2 次重试不触发；跨子任务累计；幂等（只写一次，信号保持）；首入与 no-op 不计；任何非 in_progress 重入都计（done 重开 + todo 退回再进，user 裁决）；里程碑 in_progress 不计；agent 伪造 marker 不抑制告警；跨 claim 周期累计延续。
 
 ## 影响面
@@ -25,7 +25,7 @@ BCD: docs/business-contracts/g9b-retry-limit.md（7 节齐；判定源 user 裁�
 - **计数谓词（subtask 作用域，审#P1-3）**：加载该需求 state_change 事件，只计 `payload.subtask_id` 非空且 `payload.milestone_id` 为空且 `to=="in_progress"` 且 `from!="in_progress"` 的重入；per-subtask 计 n 次重入，retries = sum(max(0, n-1))（首入除外）。里程碑 in_progress 迁移（payload.milestone_id）不污染计数。
 - **重试范围（user 裁决，审#P1-2）**：**任何非 in_progress 状态重入 in_progress 都计**——含 done 重开、todo 退回再进、blocked/abandoned 再开工；首入除外；from==in_progress 的 no-op 不计。
 - **幂等 + 反伪造（审#P1-1）**：retries >= 3 且无既有 marker -> 写一次；marker 事件 `actor_surface="system"`（先例 reconcile RECONCILE_SURFACE）；幂等谓词与信号谓词**同一** = `kind=risk AND severity>=attention AND payload.retry_limit=true AND actor_surface=system`。agent 经 add_record 伪造 marker（actor_surface=mcp）不抑制告警、不进信号。
-- **风险事件**：kind="risk", severity="attention", title="累计重试超 2 次，需要人决策", payload={"retry_limit": true, "count": N}, actor_surface="system", claim_id=活跃认领。同事务。count = 触发时点快照（后续重试不更新，P2-1 记录制）。
+- **风险事件**：kind="risk", severity="attention", title="累计重试超 2 次，需要人决策", payload={"retry_limit": true, "count": N}, actor_surface="system", actor_conn="system"（对齐 reconcile RECONCILE_CONN 先例，risks 列表可区分系统判定 vs agent 自报，P3-3）, claim_id=活跃认领。同事务。count = 触发时点快照（后续重试不更新，P2-1 记录制）。
 - **派生信号**（BCD §2 What 2）：view._derived_signals 按统一谓词检查（含 actor_surface=system）-> append {"type": "retry_limit", "count": N}——入摘要需要关注区（PRD 逐字）+ board 徽标 + 详情（同源）。
 - **只标记不干预**（BCD §7 强不变量 1）：不自动重试/释放/阻断，无状态迁移。
 - **成本**（BCD §1 待澄清/§5 差异表）：不建 retry_cost 字段；SKILL.md 报告纪律补 agent 重试成本自报指引（note 报 token/时长）。
@@ -36,9 +36,9 @@ BCD: docs/business-contracts/g9b-retry-limit.md（7 节齐；判定源 user 裁�
 | # | 任务 | 验证 | 期望 |
 |---|---|---|---|
 | M1-4.1 | docs（先于代码）：PRD §3.2 实现注记（判定源语义钉死：系统派生/需求级累计/严格超 2/幂等/成本留 agent note）+ spec 元数据追加 BCD 路径（docs/business-contracts/g9b-retry-limit.md）；known-gaps G9-b 行闭合标注；SKILL.md 认领纪律补重试成本自报指引（重试时 note 报 token/时长，让人看到重试代价） | git ls-files tracked | 规格先行 + BCD 引用 |
-| M1-4.2 | 实现：operations.update_subtask 重入 in_progress 计数（_count_retries(events) helper，subtask 作用域谓词）+ 幂等写 risk 事件（_maybe_write_retry_limit，同事务，marker actor_surface=system，幂等/信号谓词同一）；view._derived_signals 加 retry_limit 信号（统一谓词含 actor_surface=system，同源 summary/board） | tier-0 + harness 绿 | 判定/幂等/信号正确 |
-| M1-4.3 | harness（tests/ac_cases_i.py + run_ac 注册）：BCD §4/§5 全场景——S1 阈值触发（第 3 次重入 -> risk 事件 + needs_attention retry_limit + risks 列表）；S2 2 次重试不触发；S3 跨子任务累计（A 1 + B 2 = 3 -> B 第 2 次重入时触发）；边缘 1 幂等（触发后 3 次重入事件数保持 1 + 信号保持）；边缘 2 首入与 no-op 不计；边缘 3 done 重开 + todo 退回再进各计重试；边缘 4 里程碑 in_progress 迁移不计（负例）；边缘 5 agent 伪造 marker（add_record kind=risk payload.retry_limit=true）不抑制告警（第 3 次重入仍写真实 system 事件）+ 伪造事件不进信号；例 5 跨 claim 周期累计延续（release 后重新 claim，周期 2 第 1 次重入时触发）；board==summary 一致（retry_limit 同源）；事件归属（marker actor_surface=system + claim_id 关联）。红绿留档（red-7 -> green-7）；回归全绿 | `uv run python tests/run_ac.py` 全绿 | 全绿 + 回归零 |
-| M1-4.4 | docs：m1-4-verification.md（判据/红绿/BCD 映射/盲区：阈值常量钉死无配置变更面、幂等二次告警为 M2 记录、reopen 极端计数归零为已知限制） | git ls-files tracked | 文档对齐 |
+| M1-4.2 | 实现：operations.update_subtask 重入 in_progress 计数（_count_retries(events) helper，subtask 作用域谓词）+ 幂等写 risk 事件（_maybe_write_retry_limit，同事务，marker actor_surface=system/actor_conn=system，幂等/信号谓词同一且提取单一谓词常量 RETRY_LIMIT_EVENT 匹配器两处共用，P3-4 纵深防御）；view._derived_signals 加 retry_limit 信号（同一谓词常量，同源 summary/board） | tier-0 + harness 绿 | 判定/幂等/信号正确 |
+| M1-4.3 | harness（tests/ac_cases_i.py + run_ac 注册）：BCD §4/§5 全场景——S1 阈值触发（第 3 次重入 -> risk 事件 + needs_attention retry_limit + risks 列表）；S2 2 次重试不触发；S3 跨子任务累计（A 1 + B 2 = 3 -> B 第 2 次重入时触发）；边缘 1 幂等（触发后 3 次重入事件数保持 1 + 信号保持 + payload.count 仍 = 3 快照断言，P3-1）；边缘 2 首入与 no-op 不计；边缘 3 done 重开 + todo 退回再进各计重试；边缘 4 里程碑 in_progress 迁移**>= 3 次**不计（负例判别力：误计将达 retries>=3 触发，断言"无 risk 事件 + 无信号 + 事件数 0"，新 P2-1）；边缘 5 agent 伪造 marker（add_record kind=risk payload.retry_limit=true）不抑制告警（第 3 次重入仍写真实 system 事件）+ 伪造事件不进信号；例 5 跨 claim 周期累计延续（release 后重新 claim，周期 2 第 1 次重入时触发）；board==summary 一致（retry_limit 同源）；事件归属（marker actor_surface=system + actor_conn=system + claim_id 关联）。红绿留档（red-7 -> green-7）；回归全绿 | `uv run python tests/run_ac.py` 全绿 | 全绿 + 回归零 |
+| M1-4.4 | docs：m1-4-verification.md（判据/红绿/BCD 映射/盲区：阈值常量钉死无配置变更面、幂等二次告警为 M2 记录、reopen 极端计数归零为已知限制、count 为触发时点快照不随后续重试更新 P3-1） | git ls-files tracked | 文档对齐 |
 
 ## oracle 纪律
 

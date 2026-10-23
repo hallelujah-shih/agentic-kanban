@@ -116,7 +116,7 @@ user 已于 2026-10-23 裁决：系统派生计数（A），选项描述含"bloc
 ### 边缘场景 1（幂等）
 - Given: 需求已触发过 retry_limit（存在 marker 风险事件）
 - When: agent 继续重入 in_progress 多次（第 4、5、6 次）
-- Then: 不再写新风险事件（事件数保持 1）；retry_limit 信号保持
+- Then: 不再写新风险事件（事件数保持 1）；retry_limit 信号保持；payload.count 保持 3（触发时点快照，不随后续重试更新，P3-1）
 
 ### 边缘场景 2（首入不计 + no-op 不计）
 - Given: 需求有子任务刚 add（todo）
