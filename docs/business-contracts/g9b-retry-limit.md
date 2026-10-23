@@ -29,11 +29,11 @@
 
 user 已于 2026-10-23 裁决：系统派生计数（A），选项描述含"blocked/abandoned 后再开工，每子任务首次除外 + 需求级累计达到第 3 次 + 幂等 + 成本留 agent note + 不建 retry_cost 字段"。D（严格超 2）为字面直读。
 
-### 待澄清项（不允许假装知道）
+### 待澄清项（已裁决，2026-10-23 user 三项均按推荐）
 
-1. **done -> in_progress（子任务重开）是否计重试**：字面"重新进入 in_progress"含 done 重开（任何状态回到 in_progress 的重入都算）。BCD 默认解读 = 计入（语义 = "再次开工"，无论从 blocked/abandoned/done 回来）。若 user 认为只有失败态（blocked/abandoned）回来才算，需复核。
-2. **幂等永久性**：超限后只写一次事件；人决策（note/approve）后 agent 继续重试不再二次告警。BCD 默认 = 一次（历史记录可查，note 时间线有决策上下文）。若 user 期望"人决策后又超限再告警"，需复核。
-3. **双展示位**：risk(attention) 事件进 risks 列表（决策/风险/偏离列表，severity>=attention 既有口径）+ 派生信号 `retry_limit` 进 needs_attention（摘要"需要关注"区，板徽标 + 详情区）。BCD 默认 = 双展示（PRD 逐字"入摘要需要关注区" + §0 反淹没"风险"也是关键节点）。若 user 认为冗余要单选，需复核。
+1. **重试判定范围**：**任何非 in_progress 状态重入 in_progress 都计一次重试**——含 done 重开（子任务重开）与 todo 退回再进。统一规则最简单，且最贴合反黑箱目标（防任何形式的重开/折腾 churn）；信号是提示非阻断，误标可由 agent 用 deviation/note 解释。
+2. **幂等永久性**：超限触发后**只写一次** risk 事件，信号保持；人决策（note/approve）后 agent 继续重试不再二次告警（历史记录可查，note 时间线承载决策上下文）。二次告警 = M2 增强（已记录）。
+3. **双展示位**：risk(attention) 事件进 risks 列表（决策/风险/偏离列表）+ 派生信号 `retry_limit` 进 needs_attention（摘要"需要关注"区，板徽标 + 详情区）——双展示，忠实 PRD 逐字"入摘要需要关注区" + §0 反淹没"风险"也是关键节点。
 
 ---
 
@@ -88,8 +88,8 @@ user 已于 2026-10-23 裁决：系统派生计数（A），选项描述含"bloc
 
 1. 计数时点 = 子任务重入 in_progress 的迁移事件（只在该时点评估，不扫描全表定时跑）。
 2. 首入除外（每子任务第一次 in_progress 是初始尝试，非重试）。
-3. `from == "in_progress"` 的 no-op 迁移不计（未离开 in_progress 不算重入）。
-4. **隐含 Policy：幂等**——已有 retry_limit 风险事件则不再写（历史记录保持，人决策上下文不丢失）。
+3. **计数作用域 = 子任务（审#P1-3）**：只计 `kind=state_change` 且 `payload.subtask_id` 非空、`payload.milestone_id` 为空、`to=="in_progress"`、`from!="in_progress"` 的事件——里程碑进入 in_progress（MILESTONE_STATES 含 in_progress，payload 是 milestone_id）不污染计数。
+4. **隐含 Policy：幂等 + 反伪造（审#P1-1）**——marker 事件 `actor_surface="system"`（先例：reconcile 产物 RECONCILE_SURFACE="system"）；幂等谓词与信号谓词**同一**，钉死为 `kind=risk AND severity>=attention AND payload.retry_limit=true AND actor_surface=system`。agent 经 add_record 伪造 payload.retry_limit 的 risk 事件（actor_surface=mcp）不抑制告警、不进信号（威胁模型 B：agent 内容不可信，可伪造 marker 恰好刺穿系统派生的信任根基）。触发 agent 的审计轨迹留在同事务相邻的 state_change 事件（actor 服务端派生不可伪造），不丢回溯判据 3。
 5. **隐含 Policy：计数来源 = events 链，不建独立计数器表**——避免双写漂移（PRD 单一事件源原则）。
 6. **隐含 Policy：活动需求链完整性由 M1-3 prune 终态需求级原子窗口保障**——只有终态全窗外需求整删，活动需求 state_change 链完整，计数可靠。
 7. **隐含 Policy：阈值常量钉死 2**——本批不配置化（PRD 未要求可配）。
@@ -123,10 +123,20 @@ user 已于 2026-10-23 裁决：系统派生计数（A），选项描述含"bloc
 - When: agent 首次 update_subtask 到 in_progress；随后连续两次 in_progress->in_progress no-op
 - Then: 重试计 0，永不触发（首入 + no-op 均不计数）
 
-### 边缘场景 3（done 重开计重试）
-- Given: 需求子任务已 done（首入已发生）
-- When: agent 使该子任务 done -> in_progress（重开）
-- Then: 计一次重试（"重新进入 in_progress"含 done 重开，BCD §1 待澄清 1 默认解读）
+### 边缘场景 3（done 重开 / todo 退回再进计重试——user 已裁决"任何非 in_progress 重入都计"）
+- Given: 需求子任务已 done（首入已发生）；另一子任务已退回 todo（ip->todo）
+- When: agent 使 done 子任务 done -> in_progress（重开）；使 todo 子任务 todo -> in_progress（退回再进）
+- Then: 两者各计一次重试（"任何非 in_progress 状态重入 in_progress"均计，BCD §1 待澄清 1 已裁决）
+
+### 边缘场景 4（里程碑 in_progress 不计——审#P1-3 subtask 作用域）
+- Given: 需求有一个里程碑，状态进入 in_progress（payload.milestone_id 非空，无 subtask_id）
+- When: 里程碑反复在 milestone_states 间迁移（含 in_progress 进出）
+- Then: 重试计 0（计数只认 payload.subtask_id 非空 + milestone_id 空的 state_change 事件），不污染计数
+
+### 边缘场景 5（agent 伪造 marker 不抑制告警——审#P1-1 反伪造）
+- Given: agent 用 add_record(kind=risk, severity=attention, payload={"retry_limit": true, "count": 0}) 预写伪造 marker
+- When: 真实重入达到第 3 次（重试 3）
+- Then: 系统仍写真实 risk 事件（actor_surface=system，幂等谓词排除伪造 marker）；伪造事件不进 needs_attention 的 retry_limit 信号（信号谓词含 actor_surface=system）；伪造事件仍作为普通 risk 记录显示在 risks 列表（agent 自报风险，允许）
 
 ### 配置变更时场景（必写）
 - Given: 阈值钉死为常量 2（本批无配置项），存量需求状态各异
@@ -203,8 +213,8 @@ user 已于 2026-10-23 裁决：系统派生计数（A），选项描述含"bloc
 
 1. **系统只标记不干预**——重试超限只写风险事件 + 信号，绝不自动重试/自动释放/自动阻断 agent（PRD 3.2「不自动重试」核心语义）。违反后果：agent 自主性被破坏，看板从记录面变控制面（PRD 明确定位）。
 2. **计数来源 = events 链（state_change 重入推导），不建独立计数器表**（单一事件源原则）。违反后果：双写漂移，审计链与计数不一致，回溯判据失真。
-3. **幂等：同一需求超限只写一次 risk 事件**（marker payload.retry_limit=true 去重）。违反后果：重复骚扰人，事件流被刷屏，需要关注区噪声。
-4. **首次 in_progress 永不计数；from==in_progress 的 no-op 永不计数**（重试 = 重入，非进入）。违反后果：初始尝试/无操作被误标，误报破坏信号可信度。
+3. **幂等 + 反伪造：同一需求超限只写一次 risk 事件，marker 事件 actor_surface=system，幂等/信号谓词同一（kind=risk AND severity>=attention AND payload.retry_limit=true AND actor_surface=system）**（审#P1-1）。违反后果：重复骚扰人 / agent 伪造 marker 抑制告警，威胁模型 B 的信任根基被刺穿（系统派生的唯一依据是 agent 内容不可信）。
+4. **首次 in_progress 永不计数；from==in_progress 的 no-op 永不计数；计数只认 subtask 作用域（milestone_id 空）**（重试 = 重入，非进入；审#P1-3）。违反后果：初始尝试/无操作/里程碑迁移被误标，误报破坏信号可信度。
 5. **重试计数按需求级跨子任务累计**（非子任务级独立）。违反后果：单子任务反复失败被漏报（若子任务级）或整体折腾被漏报（若需求级口径漂移），"等你决策"清单失真。
 
 ### 软约束（违反可容忍）
@@ -218,3 +228,4 @@ user 已于 2026-10-23 裁决：系统派生计数（A），选项描述含"bloc
 ## 修订记录
 
 - 2026-10-23 创建（主循环）。判定源裁决来源：user 选项「系统派生计数（推荐）」。
+- 2026-10-23 审#1 折入（plan 盲审 APPROVE-WITH-FIXES，3 P1 + 4 P2）：P1-1 marker 反伪造（actor_surface=system + 幂等/信号谓词统一）；P1-2 待澄清 1 重试范围 user 裁决 = 任何非 in_progress 重入都计（含 done 重开 + todo 退回再进）；P1-3 计数 subtask 作用域（milestone 不计）；P2-1 count 为触发时点快照（后续重试不更新，信号保持，记录制）；P2-2 ip->todo->ip 语义并入裁决（退回再进计重试）+ harness 补例；P2-3 待澄清 2/3 user 裁决 = 幂等只写一次 + 双展示；P2-4 措辞（SUBTASK_STATES 拼写、reopen 归零引用以 M1-3 prune 语义为准）。
