@@ -91,6 +91,8 @@ status、未登录报错、过期后两条路径的报错信息——全部符�
   （覆盖 `*.intra.example.com`、`*.intra.example.com` 等所有内网域），站点专属
   `AGENT_<SITE>_PW` 可覆盖；不进命令行参数（避免 shell 历史）、不进 git、
   不进看板事件流、不进日志输出
+- 非交互 shell（agent 的 Bash 工具）不 source `.bashrc`，工具兜底读
+  `~/.agent-browsers/credentials.env`（0600，KEY=VALUE 一行一条，真环境变量优先）
 - **state.json 是会话凭证**：0600、不进 git（目录在 `~/.agent-browsers/`，仓外）、
   不进看板；泄露 = 会话被冒用，过期即失效（SSO 策略决定窗口）
 - 抓取输出（页面正文）可能含敏感内容：进看板时遵守"来源指针 + 摘要"纪律，

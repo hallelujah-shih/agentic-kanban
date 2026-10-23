@@ -39,7 +39,18 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 BASE_DIR = Path(os.environ.get("AGENT_BROWSER_HOME", str(Path.home() / ".agent-browsers")))
+CRED_FILE = BASE_DIR / "credentials.env"
 LOGIN_HINTS = ("login", "signin", "sign-in", "sso", "/auth", "cas/")
+
+
+def load_cred_defaults():
+    """非交互 shell 不 source .bashrc，兜底读 credentials.env（真环境变量优先）。"""
+    if CRED_FILE.exists():
+        for line in CRED_FILE.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
 
 
 def state_path(site: str) -> Path:
@@ -84,6 +95,7 @@ def looks_like_login(url: str) -> bool:
 
 
 def cmd_login(args: argparse.Namespace) -> int:
+    load_cred_defaults()
     pw_env = args.password_env or f"AGENT_{args.site.upper()}_PW"
     password = os.environ.get(pw_env) or os.environ.get("AGENT_INTRA_PASSWORD", "")
     username = args.username or os.environ.get("AGENT_INTRA_USER", "")
