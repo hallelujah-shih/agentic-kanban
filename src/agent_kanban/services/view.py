@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import csv
 import html
+import io
 import json
 from collections import defaultdict
 from datetime import datetime
@@ -660,3 +662,45 @@ def render_export_markdown(data: dict) -> str:
                 parts.append(f"  payload: {json.dumps(e['payload'], ensure_ascii=False)}")
         parts.append("")
     return "\n".join(parts)
+
+
+CSV_RECORD_FIELDS: dict[str, list[str]] = {
+    "requirement": ["requirement_id", "title", "description", "source", "source_ref", "state",
+                    "acceptance", "awaiting_human", "claim", "claims"],
+    "subtask": ["subtask_id", "ordinal", "title", "state", "acceptance", "milestone_id",
+                "created_at", "updated_at"],
+    "milestone": ["milestone_id", "title", "state", "planned_at", "actual_at"],
+    "event": ["seq", "kind", "severity", "title", "content", "payload", "actor_surface",
+              "actor_conn", "claim_id", "ts"],
+}
+
+
+def _csv_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def render_export_csv(data: dict) -> str:
+    """导出 CSV：单张宽表，每条记录一行，列 = record_type + JSON 导出字段名并集；
+    嵌套结构（acceptance/claim/claims/awaiting_human/payload）JSON 序列化进同名单列。"""
+    items = [data["requirement"]] if "requirement" in data else (data.get("requirements") or [])
+    header = ["record_type"]
+    for fields in CSV_RECORD_FIELDS.values():
+        for f in fields:
+            if f not in header:
+                header.append(f)
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(header)
+    for r in items:
+        rows: list[tuple[str, dict]] = [("requirement", r)]
+        rows += [("subtask", s) for s in (r.get("subtasks") or [])]
+        rows += [("milestone", m) for m in (r.get("milestones") or [])]
+        rows += [("event", e) for e in (r.get("events") or [])]
+        for rtype, rec in rows:
+            vals = {f: _csv_value(rec.get(f)) for f in CSV_RECORD_FIELDS[rtype]}
+            writer.writerow([rtype] + [vals.get(f, "") for f in header[1:]])
+    return buf.getvalue()

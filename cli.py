@@ -88,20 +88,24 @@ def _cmd_reopen(args: argparse.Namespace) -> int:
 
 
 def _cmd_export(args: argparse.Namespace) -> int:
-    if args.format == "markdown":
+    if args.format in ("markdown", "csv"):
         surface, conn = cli_actor()
         try:
             result = asyncio.run(
                 run_op(
                     get_session_factory(), ops.export_data, is_write=False,
-                    requirement_id=args.requirement_id, fmt="markdown",
+                    requirement_id=args.requirement_id, fmt=args.format,
                     actor_surface=surface, actor_conn=conn,
                 )
             )
         except BusinessError as exc:
             print(f"{exc.code}: {exc.message}", file=sys.stderr)
             return 1
-        print(result)
+        if args.format == "csv":
+            # render 产物自带末行换行，print 会多追加一个导致末尾空行
+            sys.stdout.write(result)
+        else:
+            print(result)
         return 0
     return _invoke("export_data", is_write=False, requirement_id=args.requirement_id, fmt="json")
 
@@ -267,9 +271,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--continue", dest="continue_", action="store_true")
     p.set_defaults(handler=_cmd_reopen)
 
-    p = sub.add_parser("export", help="全量导出（JSON/Markdown，无 LIMIT）")
+    p = sub.add_parser("export", help="全量导出（JSON/Markdown/CSV，无 LIMIT）")
     p.add_argument("--requirement-id")
-    p.add_argument("--format", choices=["json", "markdown"], default="json")
+    p.add_argument("--format", choices=["json", "markdown", "csv"], default="json")
     p.set_defaults(handler=_cmd_export)
 
     p = sub.add_parser("view", help="视图：summary（摘要）/ detail（深潜）")

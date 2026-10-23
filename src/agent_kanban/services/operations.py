@@ -911,7 +911,7 @@ async def list_awaiting(
     return {"awaiting": out}
 
 
-# ---------------------------------------------------------------- 导出（JSON/Markdown 全量，无 LIMIT）
+# ---------------------------------------------------------------- 导出（JSON/Markdown/CSV 全量，无 LIMIT）
 async def export_data(
     session: AsyncSession,
     *,
@@ -921,9 +921,9 @@ async def export_data(
     actor_conn: str,
     now: datetime | None = None,
 ) -> dict | str:
-    """PRD 4.2 export：JSON / Markdown 全量导出（G8 P2-4：独立全量查询，无 LIMIT）。"""
+    """PRD 4.2 export：JSON / Markdown / CSV 全量导出（G8 P2-4：独立全量查询，无 LIMIT）。"""
     now = now or now_utc()
-    if fmt not in ("json", "markdown"):
+    if fmt not in ("json", "markdown", "csv"):
         raise BusinessError("invalid_record", f"invalid export format: {fmt}", None)
     if requirement_id:
         data = {
@@ -942,6 +942,10 @@ async def export_data(
         from .view import render_export_markdown
 
         return render_export_markdown(data)
+    if fmt == "csv":
+        from .view import render_export_csv
+
+        return render_export_csv(data)
     return data
 
 
