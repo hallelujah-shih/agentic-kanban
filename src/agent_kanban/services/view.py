@@ -7,6 +7,8 @@
 - 进度派生值：done/total；blocked=进行中（计分母不计 done）；abandoned 不计分母。
 - 拆解新增：进入 CLAIMED 后有 add_subtask（decomposition）且该 CLAIMED 期间无 decision/deviation 解释。
 - 未解释放弃：abandoned 子任务无同 subtask_id 的 deviation/note 事件（payload.subtask_id 关联）。
+- retry_limit：G9-b 系统 marker（kind=risk + severity>=attention + payload.retry_limit + actor_surface=system，
+  幂等/信号谓词同一，BCD g9b-retry-limit）-> {"type": "retry_limit", "count": N} 入需要关注区。
 - 深潜状态重建：按 seq 回放 state_change 链到目标 ts。
 - AC13 禁止面：摘要不含 progress_note content 全文/事件长 content/run_logs。
 """
@@ -25,6 +27,7 @@ from ..db import idle_seconds, now_utc
 from ..models import Claim, Event, Milestone, Requirement, Subtask
 from . import lease as lease_svc
 from .ids import norm_id as _nid
+from .retry_limit import is_retry_limit_event
 from .write_guard import require_requirement
 
 # 审#P2-A：整删需求（零事件且非 OPEN）深潜视图的历史注记——链已被保留窗口清理，
@@ -313,8 +316,19 @@ def _derived_signals(
     for iv in _claimed_intervals(events):
         if iv["decompositions"] > 0 and iv["explanations"] == 0:
             out.append({"type": "decomposition_added", "count": iv["decompositions"]})
+    _append_retry_limit_signal(out, events)
     _append_reconcile_signals(out, events, claim, state, awaiting_human, now)
     return out
+
+
+def _append_retry_limit_signal(out: list[dict], events: list[Event]) -> None:
+    """G9-b retry_limit 派生信号（BCD §2/§5）：与幂等谓词同一（含 actor_surface=system，
+    审#P1-1/P3-4）检查 marker；幂等只出一次，count=marker 触发时点快照。入 needs_attention
+    （摘要/看板/详情同源，PRD §3.2「入摘要需要关注区」）。"""
+    for e in events:
+        if is_retry_limit_event(e):
+            out.append({"type": "retry_limit", "count": (e.payload or {}).get("count")})
+            return
 
 
 def _append_reconcile_signals(

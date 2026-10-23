@@ -17,6 +17,14 @@ from ..models import Claim, Event, Milestone, Requirement, Subtask, new_id
 from . import lease as lease_svc
 from .ids import norm_id
 from .operations_util import add_event, normalize_anchors, normalize_title
+from .retry_limit import (
+    RETRY_LIMIT_CONN,
+    RETRY_LIMIT_SURFACE,
+    RETRY_LIMIT_THRESHOLD,
+    RETRY_LIMIT_TITLE,
+    count_retries,
+    is_retry_limit_event,
+)
 from .state_machine import transition
 from .write_guard import count_active_claims, get_active_claim, require_requirement
 
@@ -510,8 +518,31 @@ async def update_subtask(
         title=f"subtask {old} -> {state}", payload={"subtask_id": subtask_id, "from": old, "to": state},
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, subtask_id=subtask_id, now=now,
     )
+    if state == "in_progress" and old != "in_progress":
+        await _maybe_write_retry_limit(session, requirement_id=requirement_id, claim_id=claim.id, now=now)
     await lease_svc.touch_activity(session, requirement_id, now)
     return {"requirement_id": requirement_id, "subtask_id": subtask_id, "state": state}
+
+
+async def _maybe_write_retry_limit(
+    session: AsyncSession, *, requirement_id: str, claim_id: str, now: datetime,
+) -> None:
+    """G9-b（BCD §4 S1/边缘 1/§7 强不变量 1,3）：子任务重入 in_progress 时评估需求级
+    累计重试（含本次，事件链单一事件源）；累计严格超 2 且无既有 marker -> 同事务写
+    risk(attention) 事件，幂等只写一次，count=触发时点快照。只标记不干预（无状态迁移）。"""
+    events = (await session.scalars(
+        select(Event).where(Event.requirement_id == requirement_id).order_by(Event.seq)
+    )).all()
+    retries = count_retries(events)
+    if retries < RETRY_LIMIT_THRESHOLD:
+        return
+    if any(is_retry_limit_event(e) for e in events):
+        return
+    await add_event(
+        session, requirement_id=requirement_id, kind="risk", severity="attention",
+        title=RETRY_LIMIT_TITLE, payload={"retry_limit": True, "count": retries},
+        actor_surface=RETRY_LIMIT_SURFACE, actor_conn=RETRY_LIMIT_CONN, claim_id=claim_id, now=now,
+    )
 
 
 async def add_milestone(
