@@ -5,6 +5,7 @@
 定位: AI 时代的看板——不是任务状态跟踪，而是**大黑箱（AI 自动化执行）的关键节点暴露窗口 + 可回溯审计资产**
 读者: 实现者、后续维护者、评审者
 关联: docs/design.md（设计理由）、docs/adr/（决策与残余登记）
+BCD 引用: docs/business-contracts/g9b-retry-limit.md（G9-b 重试成本超限判定，判定源 user 裁决 = 系统派生计数，M1-4 前置产出）
 
 ---
 
@@ -108,6 +109,7 @@ OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN。
 - activity 口径（写口径，ADR 0006 裁决）：`last_activity_at` = claim 最近活跃时间戳，agent 面写操作在写事务内更新；读操作（list_tasks/get_task_detail 等）不 touch——agent 只读不写被标 SUSPECT 属意图内（无写 = 无进展证据），等待场景由 awaiting_human 豁免；例外：人面 renew 同事务更新 `last_activity_at`（人续租证明）。
 - 参数：lease 时长默认 2h，idle 阈值默认 30min，均可配置；默认值入 11 未决表 M0 内裁决。
 - 不自动重试：重试对象是子任务（agent 侧），每次重试记录成本（token/时长），同一需求累计重试超 2 次进入"等你决策"清单（实现：系统判定超限后写一条 risk(severity=attention) 事件，入摘要"需要关注"区）。
+  - 实现注记（M1-4，G9-b，判定源 user 裁决 = 系统派生计数）：判定源 = 系统从 `update_subtask` 状态迁移推导（非 agent 显式登记，威胁模型 B 下 agent 自报不可审计）；重试 = 子任务从**任何非 in_progress 状态重入 in_progress**（首入除外；from==in_progress 的 no-op 不计；含 done 重开、todo 退回再进、blocked/abandoned 再开工）；同一需求**跨子任务累计**（跨认领周期延续）；累计**严格超 2 次**（第 3 次重入）时写一条 risk(severity=attention) 事件，**幂等只写一次**（payload={retry_limit: true, count: N}，count = 触发时点快照，不随后续重试更新；marker 事件 actor_surface=system，幂等/信号谓词同一，agent 伪造 marker 不抑制告警不进信号）；计数来源 = events 链（state_change 重入推导，不建独立计数器表）；重试成本（token/时长）不建结构化字段，由 agent 在重试时用 note 自报（SKILL 指引），人读 note 感知代价。
 - 服务重启对账：遍历未结束 claim，agent 连接不在 -> 标 STALE/ORPHANED，只标记不删除；并检测 claim-state 失配（有 claim 无 CLAIMED 或反之），报告 drift。
 
 ### 3.3 写保护
