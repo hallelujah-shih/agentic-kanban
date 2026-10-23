@@ -1,6 +1,6 @@
 # Agentic Kanban - 产品需求文档 (PRD v3.2)
 
-状态: 草案。v3.1 经双轴复审（需求轴 APPROVE-WITH-FIXES / 契约轴 REJECT 续审），本版折入全部 P1/P2（release 人面独占、approve 按状态判定、写锁先行、AC 错位、覆盖下界语义）
+状态: 草案。v3.1 经双轴复审（需求轴 APPROVE-WITH-FIXES / 契约轴 REJECT 续审），本版折入全部 P1/P2（release 人面独占、approve 按状态判定、写锁先行、AC 错位、覆盖下界语义）；M1-3 折入：G10 裁决（ADR 0006——维持写口径 + 静默读意图内 + 连接级模型不引入）、§2 事件 kind 补 renew、§3.2 activity 行澄清（写口径 + renew 例外）、§4.2 prune 命令、§6 数据保留改终态需求级原子窗口
 里程碑: M0 完成（2026-10-22，AC10-13/15/17 + Spike AC1-9/16 + 9 码矩阵 + 补充全绿，验证见 docs/ops/m0-verification.md）；M1 未开工
 定位: AI 时代的看板——不是任务状态跟踪，而是**大黑箱（AI 自动化执行）的关键节点暴露窗口 + 可回溯审计资产**
 读者: 实现者、后续维护者、评审者
@@ -44,7 +44,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 - C4 认领可排他：一个需求同时只被一个 agent 认领，抢占被拒并返回持有者。
 - C5 状态不占死：任何占用有租约与到期信号；等待人裁决的任务与死掉的 agent 在视图上可区分。
 - C6 终态可信：DONE 只能由人确认，不来自 agent 声明。
-- C7 记录可回溯：5 条回溯判据（见 5.4）在保留窗口内全部可回答。
+- C7 记录可回溯：5 条回溯判据（见 5.4）对未清理的完整事件链全部可回答；清理（prune，见 6）按终态需求级原子窗口整删，整删需求的历史以导出归档为准。
 
 ---
 
@@ -65,7 +65,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 - `UNIQUE (requirement_id, seq)` on events；seq 全局单调递增，服务端签发
 - `ts` 由服务端在写入时签发，不接受调用方传入
 
-事件 kind：`decision` / `risk` / `deviation` / `decomposition` / `progress_note` / `state_change` / `review_request` / `approval` / `release` / `note` / `reconcile`（对账事件，系统对账写事件，PRD §6 可观测）。
+事件 kind：`decision` / `risk` / `deviation` / `decomposition` / `progress_note` / `state_change` / `review_request` / `approval` / `release` / `renew`（人面续租写事件，可回溯谁续了租约）/ `note` / `reconcile`（对账事件，系统对账写事件，PRD §6 可观测）。
 事件 severity：`info` / `attention` / `critical`。**deviation 的 severity 强制 >= attention**（不允许压级逃逸，见 5.3）。
 
 `awaiting_human` 是 requirements 上的 JSON 列，不是状态：
@@ -105,7 +105,7 @@ OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN。
   - `now - last_activity_at > idle 且无 awaiting_human -> SUSPECT`
   - 否则 `ACTIVE`
 - **租约过期不自动释放、不自动重开**。过期只改变信号。释放的唯一路径是人的操作。
-- activity 口径：该 claim 的 agent 面任何写操作 + MCP 调用；`last_activity_at` 在写事务内更新。
+- activity 口径（写口径，ADR 0006 裁决）：`last_activity_at` = claim 最近活跃时间戳，agent 面写操作在写事务内更新；读操作（list_tasks/get_task_detail 等）不 touch——agent 只读不写被标 SUSPECT 属意图内（无写 = 无进展证据），等待场景由 awaiting_human 豁免；例外：人面 renew 同事务更新 `last_activity_at`（人续租证明）。
 - 参数：lease 时长默认 2h，idle 阈值默认 30min，均可配置；默认值入 11 未决表 M0 内裁决。
 - 不自动重试：重试对象是子任务（agent 侧），每次重试记录成本（token/时长），同一需求累计重试超 2 次进入"等你决策"清单（实现：系统判定超限后写一条 risk(severity=attention) 事件，入摘要"需要关注"区）。
 - 服务重启对账：遍历未结束 claim，agent 连接不在 -> 标 STALE/ORPHANED，只标记不删除；并检测 claim-state 失配（有 claim 无 CLAIMED 或反之），报告 drift。
@@ -169,6 +169,7 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 - `note`：人追加更正/质疑（写入 note 事件）。
 - `export`：JSON / Markdown 全量导出。
 - `abandon`：REJECTED / CANCELLED。
+- `prune`：数据保留清理（§6）——`--months N`（默认 12，日历月 + 月末回绕 clamp）、`--export-path`（默认 `./exports/kanban-export-<ts>.json`）、`--yes` 跳过确认；流程 = 强制全量导出（timestamped JSON 0600，导出失败中止清理）-> 确认门（stdin `y/N`，EOF/拒绝/非 y 中止不删、非零退出）-> 按终态需求级原子窗口删除 events（仅 DONE/REJECTED/CANCELLED 且全部事件早于窗口的需求整删，链永不半断）。
 
 **Web 窗口（M1，人面）**：
 
@@ -252,7 +253,7 @@ MCP `is_error` + structured content（`{code, message, task_id}`），无 HTTP �
 | 数据量级 | < 5k 需求、< 100k events、单事件 payload < 8 KB | 事件无上限 -> SQLite 膨胀 |
 | 性能 | 摘要视图 < 200 ms（5k 需求）；状态/记录写 < 50 ms | 无界 -> 窗口不可用 |
 | 安全 | 默认绑定 127.0.0.1；非 localhost 绑定必须带 token 并启动告警；DB 文件 0600 | 本机任意进程可污染审计链 |
-| 数据保留 | events 保留 12 个月；清理由显式命令执行，清理前必须导出；导出文件为审计资产最终载体 | 无限保留 -> 隐私与备份风险；回溯承诺（C7）限于保留窗口 |
+| 数据保留 | events 保留 12 个月；清理由显式命令 `prune` 执行（--months N 默认 12，日历月）；**终态需求级原子窗口**：仅 DONE/REJECTED/CANCELLED 且全部事件早于窗口的需求整删（链永不半断），非终态（含僵尸/STALE）全留 = 活审计主体；清理前强制导出（timestamped JSON 0600，导出失败中止清理），导出文件为审计资产最终载体；数据量级主要由活跃需求数决定（prune 只释放终态/僵尸） | 无限保留 -> 隐私与备份风险；回溯承诺（C7）限于保留窗口，整删需求以导出归档为准 |
 | 可观测 | 每次转移/交接/对账写事件；`/healthz`；埋点：等你决策清单等待时长（ts(清除) - ts(设置)）、STALE 率、偏离登记率、覆盖缺口数 | 反黑箱目标无法度量 |
 | 可靠性 | 重启后未结束认领与真实连接对账 + claim-state 失配检测；不一致标 drift，不自动删除 | 静默丢失占用状态 |
 | 退役 | 6 个月内 events < 100 则归档并说明替代方案 | 僵尸项目 |
