@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | G1 | 本机 shell 可直接写 SQLite，污染审计链 | ② | 文档声明边界；未来 DB 文件只读 + 单写进程 | 文档生效起 |
 | G2 | 偏离/验收自评的真实性不可完全验证（agent 造假） | ② | 结构强制（decision 必含 alternatives、验收自评表）+ 派生偏离信号（不依赖自愿登记）+ 人抽查 | PRD v3.2 生效起 |
-| G3 | 痛点基线未采集 | ③ | M0 前一周手工日志；M1 试用协议硬前置 | 采集完成起 |
+| G3 | 痛点基线未采集 | ③ | 试用包已备好（docs/ops/g3-trial/：协议 + 基线周日志模板 + 试用周记分卡 + 周中检查点）；待 user 跑第 0 周（基线）+ 第 1 周（N>=5 真实需求三问打分），基线回来定反淹没阈值 + AC14 判定 | 采集完成起 |
 | G4 | MCP SDK 2.x 选型（版本锁定、stdio、鉴权模型）未登记 ADR | ② | 已闭合：登记 docs/adr/0002-mcp-sdk.md（mcp>=2.3,<3、MCPServer 替代 fastmcp、stdio、无 token 鉴权模型） | 2026-10-22 闭合 |
 | G5 | 性能目标无基准 | ③ | 已闭合：tests/bench.py 基准落地（5k 库测 summary/write/board，PRD §6 summary<200ms/write<50ms 达标；board 超预算后批查询优化 ~20x 达标），结果 docs/ops/bench-results.md | 2026-10-23 闭合 |
 | G6 | 候选工具未调研，自研依据未闭合 | ② | 已裁决：无候选满足合取，自研为主 + agent-kanban-pm 为移植种子（docs/adr/0001-reuse-vs-build.md） | ADR 0001 生效起（已闭合） |
