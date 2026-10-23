@@ -17,5 +17,6 @@
 | G8 | Spike 结果盲审登记的 M0 缺口：REOPEN 边无接口可达（PRD 3.1 vs 4.2）；abandon 于 CLAIMED 的认领处置未规定；读事务 BEGIN IMMEDIATE 锁竞争下非结构化读错；export LIMIT 200 截断 | ② | 已闭合：P2-2 reopen 命令+端点、P2-3 abandon 同事务置 ended_at、P2-4 export 全量无 LIMIT、P2-5 读写 sessionmaker 拆分，均在 M0-1 完成（裁决登记 docs/adr/0003-m0-decisions.md「G8 闭合」） | 2026-10-22 闭合 |
 | G9 | 数据保留清理命令（12 个月窗口 + 清理前导出）+ 重试成本超限判定（PRD 3.2「累计重试超 2 次等你决策」语义需澄清） | ② | G9-a（清理命令）已闭合：M1-3.3 prune CLI（终态需求级原子窗口，docs/adr/0006-m1-3-decisions.md）；G9-b（重试超限判定）已闭合：M1-4 实现（系统派生计数 + 需求级跨子任务累计 + 幂等 risk 事件 + retry_limit 派生信号，判定源 user 裁决，BCD docs/business-contracts/g9b-retry-limit.md，验证 docs/ops/m1-4-verification.md） | G9-a 2026-10-23 闭合；G9-b 2026-10-23 闭合（M1-4） |
 | G10 | activity 口径既有偏差：PRD 3.2「读写任一计活动」vs 实现仅写操作更新 last_activity_at（读工具不 touch） | ② | 已裁决：维持写口径 + 静默读意图内声明 + 连接级模型不引入（docs/adr/0006-m1-3-decisions.md；PRD §3.2 activity 行澄清 + renew 触活例外） | 2026-10-23 闭合 |
+| G11 | `agent-kanban` 入口快照陈旧：cli.py 经 force-include 以快照复制进 site-packages（editable 只覆盖 agent_kanban 包），改 cli.py 后 `uv sync` 不刷新快照，入口脚本继续跑旧代码（harness 走 `python cli.py` 文件直跑，结构性测不到） | ② | 2026-10-23 dogfood 验收命中并当场处置（`uv sync --reinstall-package agent-kanban` 刷新，411/411 复验）；纪律：凡合并涉及 cli.py 的变更，合入后必须跑该命令刷新；升级路径：harness 增加入口脚本冒烟用例，或打包改为 cli 可编辑 | 2026-10-23 登记 |
 
 登记规则：新增残余必须同时写明档位与生效点；档位 ③ 冒充 ① 或 ② 视为虚标，审查照报。
