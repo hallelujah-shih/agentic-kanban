@@ -188,6 +188,21 @@ def _acceptance_table(anchors: list, subtasks: list[Subtask]) -> list[dict]:
     return table
 
 
+TERMINAL_STATES = ("DONE", "REJECTED", "CANCELLED")
+
+
+def _terminal_entry_ts(events: list[Event]) -> str | None:
+    """最近一次需求级进入终态的 ts（判别口径与 reconstruct_states 一致：
+    state_change 且 payload 无 subtask_id/milestone_id）；未入终态为 None。"""
+    ts = None
+    for e in events:
+        p = e.payload or {}
+        if e.kind == "state_change" and not p.get("subtask_id") and not p.get("milestone_id") \
+                and p.get("to") in TERMINAL_STATES:
+            ts = e.ts
+    return ts.isoformat() if ts is not None else None
+
+
 async def board(
     session: AsyncSession,
     *,
@@ -256,6 +271,11 @@ async def board(
             "progress": _progress_dict([s.state for s in r_subtasks]),
             "needs_attention": needs_attention,
             "risks": _risk_rows(r_events),
+            # 回溯要点（已完成视图用）：全部从既有事件流派生
+            "decision_count": sum(1 for e in r_events if e.kind == "decision"),
+            "deviation_count": sum(1 for e in r_events if e.kind == "deviation"),
+            "reviewed": any(e.kind == "review_request" for e in r_events),
+            "finished_at": _terminal_entry_ts(r_events),
         })
     attention_ids = [t["requirement_id"] for t in tasks if t["needs_attention"]]
     return {"tasks": tasks, "attention_ids": attention_ids}

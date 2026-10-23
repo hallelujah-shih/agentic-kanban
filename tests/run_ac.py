@@ -15,7 +15,7 @@ from ac_cases_c import ac11, ac12, ac13, ac15, ac17, cli_m0, payload, readlock, 
 from ac_cases_d import p1_id_normalization, p2_decomposition_signal, p2_payload_8kb
 from ac_cases_e import ac10, reconcile_ac
 from ac_cases_f import http_mcp, http_mcp_equiv, http_mcp_sec
-from ac_cases_g import board_view, sse_stream, web_shell
+from ac_cases_g import board_terminal_fields, board_view, sse_stream, web_shell
 from ac_cases_h import (months_ago, prune_confirm, prune_cross, prune_export, prune_export_fail,
                         prune_terminal, prune_zombie, renew_events)
 from ac_cases_i import (retry_board, retry_cross_window, retry_edge1, retry_edge2, retry_edge3,
@@ -32,7 +32,7 @@ TESTS: dict[str, object] = {
     "p1_ids": p1_id_normalization, "p2_payload": p2_payload_8kb, "p2_decomp": p2_decomposition_signal,
     "reconcile": reconcile_ac,
     "http_mcp": http_mcp, "http_mcp_sec": http_mcp_sec, "http_mcp_equiv": http_mcp_equiv,
-    "board": board_view, "sse": sse_stream, "web": web_shell,
+    "board": board_view, "board_term": board_terminal_fields, "sse": sse_stream, "web": web_shell,
     "renew": renew_events,
     "prune_terminal": prune_terminal, "prune_cross": prune_cross,
     "prune_confirm": prune_confirm, "prune_export": prune_export,

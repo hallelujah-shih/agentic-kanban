@@ -230,6 +230,49 @@ def board_view():
         rest.stop()
 
 
+def board_terminal_fields():
+    print("== board 终态回溯字段：finished_at/decision_count/deviation_count/reviewed + 默认板排除终态")
+
+    db = new_db()
+    m = MCP(db).start()
+    # r1: 干净 DONE——1 条 decision + 评审交接 -> reviewed True, finished_at 非空
+    r1 = seed_req(db, "term-done")
+    m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})
+    s1 = m.call_ok("add_subtask", {"requirement_id": r1, "title": "st1", "ordinal": 1})
+    m.call_ok("add_record", {"requirement_id": r1, "kind": "decision", "title": "选型",
+                             "payload": {"choice": "A", "rationale": "快",
+                                         "alternatives": [{"option": "B", "rejected_reason": "慢"}]}})
+    m.call_ok("request_review", {"requirement_id": r1, "evidence": {"test_summary": "全绿"},
+                                 "assessments": [{"subtask_id": s1["subtask_id"],
+                                                   "items": [{"item": "i1", "state": "met"}]}]})
+    # r2: 直接 CANCELLED，无评审交接 -> reviewed False
+    r2 = seed_req(db, "term-cancel")
+    m.close()
+    cli_ok(db, "approve", "--requirement-id", r1)
+    cli_ok(db, "abandon", "--requirement-id", r2, "--to-state", "CANCELLED")
+
+    rest = REST(db, token="sekret").start()
+    try:
+        code, data = rest.req("GET", "/board", token="sekret")
+        ok("board_term: 默认板排除终态需求",
+           all(t["requirement_id"] not in (r1, r2) for t in data["tasks"]),
+           str([t["requirement_id"] for t in data["tasks"]]))
+        code, d1 = rest.req("GET", "/board", params={"status": "DONE"}, token="sekret")
+        t1 = {t["requirement_id"]: t for t in d1["tasks"]}[r1]
+        ok("board_term: DONE 行 finished_at 非空（ISO）", bool(t1["finished_at"]), str(t1["finished_at"]))
+        ok("board_term: DONE 行 decision_count=1 / deviation_count=0",
+           t1["decision_count"] == 1 and t1["deviation_count"] == 0,
+           f"dec={t1['decision_count']} dev={t1['deviation_count']}")
+        ok("board_term: DONE 行 reviewed=True（有评审交接）", t1["reviewed"] is True, str(t1["reviewed"]))
+        code, d2 = rest.req("GET", "/board", params={"status": "CANCELLED"}, token="sekret")
+        t2 = {t["requirement_id"]: t for t in d2["tasks"]}[r2]
+        ok("board_term: CANCELLED 行 reviewed=False 且 finished_at 非空",
+           t2["reviewed"] is False and bool(t2["finished_at"]),
+           f"reviewed={t2['reviewed']} fin={t2['finished_at']}")
+    finally:
+        rest.stop()
+
+
 def web_shell():
     print("== M1-2.4: / 看板壳 + 内容协商壳 + 反淹没无原始输出 + 缺省 Accept JSON 回归 + 401")
 

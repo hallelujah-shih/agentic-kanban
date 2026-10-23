@@ -34,6 +34,9 @@ h1{font-size:1.25rem;margin:0}
 .pill.CLAIMED{background:rgba(63,185,80,.15);color:var(--green)}
 .pill.BLOCKED{background:rgba(248,81,73,.15);color:var(--red)}
 .pill.REOPEN{background:rgba(188,140,255,.15);color:var(--purple)}
+.pill.DONE{background:rgba(63,185,80,.15);color:var(--green)}
+.pill.REJECTED{background:rgba(248,81,73,.15);color:var(--red)}
+.pill.CANCELLED{background:rgba(91,102,114,.25);color:var(--muted)}
 .pill.todo{background:rgba(139,152,165,.15);color:var(--muted)}
 .pill.in_progress{background:rgba(63,185,80,.15);color:var(--green)}
 .pill.done{background:rgba(139,152,165,.15);color:var(--muted)}
@@ -92,6 +95,11 @@ def board_shell() -> str:
 <title>agent-kanban 看板</title>
 <style>
 """ + _THEME + """
+.tabs{display:flex;gap:4px;padding:12px 20px 0}
+.tab{background:transparent;border:1px solid transparent;color:var(--muted);padding:5px 14px;
+  border-radius:8px 8px 0 0;font-size:.85rem;cursor:pointer}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--text);background:var(--panel);border-color:var(--border)}
 .cols{display:grid;grid-template-columns:repeat(4,minmax(250px,1fr));gap:12px;padding:16px 20px;align-items:start}
 @media (max-width:1000px){.cols{grid-template-columns:repeat(2,minmax(240px,1fr))}}
 @media (max-width:560px){.cols{grid-template-columns:1fr}}
@@ -117,12 +125,22 @@ def board_shell() -> str:
 .card .wait{margin-top:7px;font-size:.75rem;color:var(--amber);background:rgba(210,153,34,.1);
   border-radius:5px;padding:3px 8px}
 .empty{color:var(--faint);font-size:.78rem;text-align:center;padding:14px 0}
+.done-list{padding:14px 20px 40px;display:flex;flex-direction:column;gap:7px;max-width:1200px}
+.done-row{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--border);
+  border-radius:8px;padding:9px 12px;flex-wrap:wrap}
+.done-row:hover{background:var(--card-hi);text-decoration:none}
+.done-row .dt{font-weight:600;color:var(--text);font-size:.88rem}
+.done-row .grow{flex:1}
 </style></head>
 <body>
 <div class="topbar">
   <span class="title">agent-kanban</span>
   <span class="meta" id="top-count"></span>
   <div class="live" id="live"><div class="dot"></div><span>连接中</span></div>
+</div>
+<div class="tabs">
+  <button class="tab active" data-tab="active">在板</button>
+  <button class="tab" data-tab="done">已完成</button>
 </div>
 <div id="board-root"><p class="meta" style="padding:24px">加载中…</p></div>
 <script>
@@ -151,7 +169,7 @@ function cardHTML(t){
     + (p.total ? "<div class='meta'>进度 " + p.done + "/" + p.total + "</div>" : "")
     + ((attn || risks) ? "<div class='badges'>" + attn + risks + "</div>" : "") + who + wait + "</a>";
 }
-function render(data){
+function renderActive(data){
   var attn = {};
   (data.attention_ids || []).forEach(function(id){ attn[id] = true; });
   var byCol = {};
@@ -167,14 +185,61 @@ function render(data){
   document.getElementById("board-root").innerHTML = "<div class='cols'>" + html + "</div>";
   document.getElementById("top-count").textContent = data.tasks.length + " 个在板需求";
 }
+var DONE_ZH = {DONE:"已完成", CANCELLED:"已取消", REJECTED:"已拒绝"};
+var TAB = "active";
+function renderDone(tasks){
+  tasks.sort(function(a, b){
+    var fa = a.finished_at || "", fb = b.finished_at || "";
+    return fa < fb ? 1 : (fa > fb ? -1 : 0);
+  });
+  var rows = tasks.map(function(t){
+    var flag = t.reviewed ? "" : "<span class='badge attn'>无评审交接</span>";
+    return "<a class='done-row' href='/requirements/" + encodeURIComponent(t.requirement_id) + "'>"
+      + "<span class='pill " + esc(t.state) + "'>" + esc(DONE_ZH[t.state] || t.state) + "</span>"
+      + "<span class='dt'>" + esc(t.title) + "</span><span class='grow'></span>"
+      + "<span class='meta'>完成 " + (esc(fmtTs(t.finished_at)) || "-") + "</span>"
+      + "<span class='meta'>决策 " + (t.decision_count || 0) + " · 偏离 " + (t.deviation_count || 0) + "</span>"
+      + flag + "</a>";
+  }).join("");
+  document.getElementById("board-root").innerHTML = "<div class='done-list'>"
+    + (rows || "<div class='empty'>（无已完成需求）</div>") + "</div>";
+  document.getElementById("top-count").textContent = tasks.length + " 个已完成";
+}
 async function loadBoard(){
   var root = document.getElementById("board-root");
+  function fail(msg){ root.innerHTML = "<p class='meta' style='padding:24px'>" + esc(msg) + "</p>"; }
   try {
-    var resp = await fetch("/board", {headers: hdr()});
-    if (!resp.ok) { root.innerHTML = "<p class='meta'>加载失败: " + esc(resp.status) + "</p>"; return; }
-    render(await resp.json());
-  } catch (e) { root.innerHTML = "<p class='meta'>加载失败: " + esc(String(e)) + "</p>"; }
+    if (TAB === "active") {
+      var resp = await fetch("/board", {headers: hdr()});
+      if (!resp.ok) { fail("加载失败: " + resp.status); return; }
+      renderActive(await resp.json());
+    } else {
+      var sts = ["DONE", "CANCELLED", "REJECTED"];
+      var resps = [];
+      for (var i = 0; i < sts.length; i++) {
+        resps.push(await fetch("/board?status=" + sts[i], {headers: hdr()}));
+      }
+      for (var j = 0; j < resps.length; j++) {
+        if (!resps[j].ok) { fail("加载失败: " + resps[j].status); return; }
+      }
+      var all = [];
+      for (var k = 0; k < resps.length; k++) {
+        (await resps[k].json()).tasks.forEach(function(t){ all.push(t); });
+      }
+      renderDone(all);
+    }
+  } catch (e) { fail("加载失败: " + String(e)); }
 }
+Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
+  b.onclick = function(){
+    if (b.getAttribute("data-tab") === TAB) return;
+    TAB = b.getAttribute("data-tab");
+    Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(x){
+      x.className = "tab" + (x === b ? " active" : "");
+    });
+    loadBoard();
+  };
+});
 loadBoard();
 var es = setupSSE();
 es.onmessage = loadBoard;
