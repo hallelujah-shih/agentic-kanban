@@ -36,7 +36,7 @@
 | Playwright MCP（microsoft/playwright-mcp） | agent 直接操控浏览器（persistent/isolated/extension 三种 profile 模式）。适合"页面交互多、需要人看着 agent 点来点去"；本场景 90% 是"取内容"，MCP 的 token 成本与不确定性不划算。可作为交互增强二期 |
 | browser-use / 通用 AI 浏览器库 | 自带视觉/决策循环，与"agent 自己就是大脑"重叠；引入额外模型调用，不采用 |
 | Selenium | 能力等同 Playwright，但等待/状态导出 API 不如 Playwright 现代（storageState/persistent context 是一等公民） |
-| 人肉从日常浏览器拷 cookie | 不可自动化，agent 无法闭环；只作应急 |
+| 人肉从日常浏览器拷 cookie | **browser_cookie3 路线**（collab2markdown 已验证走通）：直接读本机 Chrome 的 cookie 库，登录由人的日常行为完成，agent 零登录动作。桌面 + 有登录态 Chrome 的场景首推；纯 headless 服务器无 Chrome 则不可用 |
 
 ## 4. 实测踩坑（文档里读不到，全部本机复现）
 
@@ -114,7 +114,21 @@ status、未登录报错、过期后两条路径的报错信息——全部符�
 - 反爬/指纹检测：内网 SSO 通常无此问题；若目标有，headless 指纹可被识别，
   需要 headed 或指纹伪装（超出本调研范围）
 
-## 9. 参考来源
+## 9. 真实环境验证（2026-10-23，jira.intra.example.com）
+
+- 目标: JIRA 7.1.7（原生登录，非外部 SSO）
+- 浏览器路径实测通过: headless 填表（`os_username`/`os_password`，提交 `#login-form-submit`）
+  -> 登录成功 -> 导出 2 个会话 cookie -> 纯 HTTP 取 browse 页 HTML 与 REST
+  `/rest/api/2/issue/<KEY>` 均 200 真实内容
+- 表单里 `atl_token` 隐藏字段由 JS 注入——curl 直接 POST 登录失败，浏览器路径自动处理。
+  这正是"需要浏览器"的具象案例：**登录页的 CSRF/JS 依赖使纯 HTTP 登录不可靠，
+  但登录成功后的取页可以纯 HTTP**。
+- 该实例 REST API 支持 Basic auth（账号+密码直连）——此 Jira 无 SSO 锁，
+  最简路径是 Basic auth + REST，浏览器方案在此环境是备选而非必需。
+- 选择器因站点而异：工具默认 `input[name=username]` 不匹配 Jira 的 `os_username`，
+  首登时侦察表单字段（curl 看登录页源码即可）是标定步骤的一部分。
+
+## 10. 参考来源
 
 - Playwright 官方 auth 文档（storageState / persistent context 两种模式）
 - microsoft/playwright-mcp（profile 模式表：persistent/isolated/extension）
