@@ -18,6 +18,8 @@ from ac_cases_f import http_mcp, http_mcp_equiv, http_mcp_sec
 from ac_cases_g import board_view, sse_stream, web_shell
 from ac_cases_h import (months_ago, prune_confirm, prune_cross, prune_export, prune_export_fail,
                         prune_terminal, prune_zombie, renew_events)
+from ac_cases_i import (retry_board, retry_edge1, retry_edge2, retry_edge3, retry_edge4,
+                        retry_edge5, retry_ex5, retry_s1, retry_s2, retry_s3)
 
 TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
@@ -35,6 +37,10 @@ TESTS: dict[str, object] = {
     "prune_confirm": prune_confirm, "prune_export": prune_export,
     "prune_export_fail": prune_export_fail,
     "prune_zombie": prune_zombie, "months_ago": months_ago,
+    "retry_s1": retry_s1, "retry_s2": retry_s2, "retry_s3": retry_s3,
+    "retry_edge1": retry_edge1, "retry_edge2": retry_edge2, "retry_edge3": retry_edge3,
+    "retry_edge4": retry_edge4, "retry_edge5": retry_edge5,
+    "retry_ex5": retry_ex5, "retry_board": retry_board,
 }
 
 
