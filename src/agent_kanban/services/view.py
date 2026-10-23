@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import html
 import json
+from collections import defaultdict
 from datetime import datetime
 
 from sqlalchemy import select
@@ -192,7 +193,12 @@ async def board(
 ) -> dict:
     """看板默认列表（PRD 5.3 + 审#P1-2）：非终态默认过滤 + status 过滤；
     每需求 needs_attention = _derived_signals 全口径（与 summary 同源，零假阴性）；
-    progress/milestone delay/coverage/risk 口径与 summary 同源（审#P2-1/P2-2）。"""
+    progress/milestone delay/coverage/risk 口径与 summary 同源（审#P2-1/P2-2）。
+
+    M1-3.4b（G5）：claims/subtasks/milestones/events 按 rids 分组批量查询 + Python
+    内存分组（order_by 与逐需求查询相同，逐需求相对顺序/过滤/排序不变），替代 N+1
+    逐需求查询。审#P2-5：同一 DB 优化前后 board dict 全等已用确定性种子验证
+    （docs/ops/m1-3-verification.md）。"""
     now = now or now_utc()
     stmt = select(Requirement)
     if status:
@@ -200,34 +206,51 @@ async def board(
     else:
         stmt = stmt.where(Requirement.state.not_in(["DONE", "REJECTED", "CANCELLED"]))
     rows = (await session.scalars(stmt.order_by(Requirement.created_at))).all()
+    if not rows:
+        return {"tasks": [], "attention_ids": []}
+    rids = [r.id for r in rows]
+    active_claims = (await session.scalars(
+        select(Claim).where(Claim.requirement_id.in_(rids), Claim.ended_at.is_(None))
+    )).all()
+    subtasks = (await session.scalars(
+        select(Subtask).where(Subtask.requirement_id.in_(rids)).order_by(Subtask.ordinal)
+    )).all()
+    milestones = (await session.scalars(
+        select(Milestone).where(Milestone.requirement_id.in_(rids)).order_by(Milestone.created_at)
+    )).all()
+    events = (await session.scalars(
+        select(Event).where(Event.requirement_id.in_(rids)).order_by(Event.seq)
+    )).all()
+    claim_by_rid = {c.requirement_id: c for c in active_claims}
+    subtasks_by_rid: dict[str, list[Subtask]] = defaultdict(list)
+    for s in subtasks:
+        subtasks_by_rid[s.requirement_id].append(s)
+    milestones_by_rid: dict[str, list[Milestone]] = defaultdict(list)
+    for m in milestones:
+        milestones_by_rid[m.requirement_id].append(m)
+    events_by_rid: dict[str, list[Event]] = defaultdict(list)
+    for e in events:
+        events_by_rid[e.requirement_id].append(e)
     tasks = []
     for r in rows:
-        claim = await session.scalar(
-            select(Claim).where(Claim.requirement_id == r.id, Claim.ended_at.is_(None))
-        )
-        subtasks = (await session.scalars(
-            select(Subtask).where(Subtask.requirement_id == r.id).order_by(Subtask.ordinal)
-        )).all()
-        milestones = (await session.scalars(
-            select(Milestone).where(Milestone.requirement_id == r.id).order_by(Milestone.created_at)
-        )).all()
-        events = (await session.scalars(
-            select(Event).where(Event.requirement_id == r.id).order_by(Event.seq)
-        )).all()
-        milestone_rows = [_milestone_row(m, now) for m in milestones]
+        r_claim = claim_by_rid.get(r.id)
+        r_subtasks = subtasks_by_rid.get(r.id, [])
+        r_milestones = milestones_by_rid.get(r.id, [])
+        r_events = events_by_rid.get(r.id, [])
+        milestone_rows = [_milestone_row(m, now) for m in r_milestones]
         needs_attention = _derived_signals(
-            subtasks, milestones, events, milestone_rows,
-            claim=claim, state=r.state, awaiting_human=r.awaiting_human, now=now,
+            r_subtasks, r_milestones, r_events, milestone_rows,
+            claim=r_claim, state=r.state, awaiting_human=r.awaiting_human, now=now,
         )
         tasks.append({
             "requirement_id": _nid(r.id),
             "title": r.title,
             "state": r.state,
             "awaiting_human": r.awaiting_human,
-            "claim": _claim_view(claim, r.awaiting_human, now),
-            "progress": _progress_dict([s.state for s in subtasks]),
+            "claim": _claim_view(r_claim, r.awaiting_human, now),
+            "progress": _progress_dict([s.state for s in r_subtasks]),
             "needs_attention": needs_attention,
-            "risks": _risk_rows(events),
+            "risks": _risk_rows(r_events),
         })
     attention_ids = [t["requirement_id"] for t in tasks if t["needs_attention"]]
     return {"tasks": tasks, "attention_ids": attention_ids}
