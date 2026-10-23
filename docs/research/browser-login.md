@@ -87,8 +87,10 @@ status、未登录报错、过期后两条路径的报错信息——全部符�
 
 ## 6. 安全边界
 
-- **密码**只从环境变量读（`AGENT_<SITE>_PW`），不进命令行参数（避免 shell 历史）、
-  不进 git、不进看板事件流、不进日志输出
+- **密码**只从环境变量读：内网通用账号用 `AGENT_INTRA_USER` / `AGENT_INTRA_PASSWORD`
+  （覆盖 `*.intra.example.com`、`*.intra.example.com` 等所有内网域），站点专属
+  `AGENT_<SITE>_PW` 可覆盖；不进命令行参数（避免 shell 历史）、不进 git、
+  不进看板事件流、不进日志输出
 - **state.json 是会话凭证**：0600、不进 git（目录在 `~/.agent-browsers/`，仓外）、
   不进看板；泄露 = 会话被冒用，过期即失效（SSO 策略决定窗口）
 - 抓取输出（页面正文）可能含敏感内容：进看板时遵守"来源指针 + 摘要"纪律，

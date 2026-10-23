@@ -16,10 +16,11 @@
 - 2FA：login 加 --headed，在有显示的终端手动完成，脚本等成功后导出。
 
 用法：
-  AGENT_JIRA_PW='...' intranet_fetch.py login --site jira \
-      --url https://jira.intra/secure/Dashboard!draftboard.jsp --success-url jira.intra
-  intranet_fetch.py fetch --site jira --url https://jira.intra/browse/PROJ-1 [--browser]
+  export AGENT_INTRA_USER='shih' AGENT_INTRA_PASSWORD='...'   # 内网通用账号（*.intra.* 域）
+  intranet_fetch.py login --site jira --url <登录页> --success-url <登录后URL特征串>
+  intranet_fetch.py fetch --site jira --url https://jira.intra.example.com/browse/PROJ-1 [--browser]
   intranet_fetch.py status --site jira
+站点专属密码变量 AGENT_<SITE>_PW 优先于 AGENT_INTRA_PASSWORD。
 
 安全：密码只从环境变量读（不进命令行历史）；state.json 是会话凭证，0600，
 不进 git、不进看板事件流、不进任何日志输出。
@@ -84,9 +85,12 @@ def looks_like_login(url: str) -> bool:
 
 def cmd_login(args: argparse.Namespace) -> int:
     pw_env = args.password_env or f"AGENT_{args.site.upper()}_PW"
-    password = os.environ.get(pw_env, "")
+    password = os.environ.get(pw_env) or os.environ.get("AGENT_INTRA_PASSWORD", "")
+    username = args.username or os.environ.get("AGENT_INTRA_USER", "")
     if not password and not args.headed:
-        sys.exit(f"headless 登录需要密码：export {pw_env}='...' 后重跑（或 --headed 手动登录）")
+        sys.exit(f"headless 登录需要密码：export {pw_env} 或 AGENT_INTRA_PASSWORD 后重跑（或 --headed 手动登录）")
+    if not username and not args.headed:
+        sys.exit("headless 登录需要账号：export AGENT_INTRA_USER 或传 --username（或 --headed 手动登录）")
 
     from playwright.sync_api import sync_playwright
 
@@ -100,19 +104,16 @@ def cmd_login(args: argparse.Namespace) -> int:
             print(f"headed 模式：请在浏览器窗口手动完成登录（含 2FA）；"
                   f"成功后脚本自动导出（超时 {args.timeout}s）", flush=True)
         else:
-            page.fill(args.username_selector, args.username)
+            page.fill(args.username_selector, username)
             page.fill(args.password_selector, password)
             page.click(args.submit_selector)
         deadline = time.monotonic() + args.timeout
         ok = False
         while time.monotonic() < deadline:
-            if args.success_url:
-                if args.success_url in page.url:
+            if page.url != login_url and not looks_like_login(page.url):
+                if not args.success_url or args.success_url in page.url:
                     ok = True
                     break
-            elif page.url != login_url and not looks_like_login(page.url):
-                ok = True
-                break
             time.sleep(0.5)
         if not ok:
             sys.exit(f"登录未成功（{args.timeout}s 内未到达成功 URL）：当前 {page.url}\n"
