@@ -15,8 +15,12 @@ sqlite3 直查（读数据非读实现代码）。禁 sleep。
 from __future__ import annotations
 
 import json
+import sqlite3
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from ac_lib import MCP, REST, cli_ok, new_db, ok, query, seed_req
+from ac_lib import MCP, REST, cli, cli_ok, new_db, ok, query, seed_req
 
 RETRY_LIMIT_TITLE = "累计重试超 2 次，需要人决策"
 
@@ -319,6 +323,53 @@ def retry_ex5():
        len(evs) == 1 and (_first(evs).get("payload") or {}).get("count") == 3, str(evs))
     ok("ex5: 真实 marker claim_id 关联周期 2 活跃认领",
        _first(evs).get("claim_id") == claim2, f"{_first(evs).get('claim_id')} vs {claim2}")
+
+
+def _backdate(db, rid: str, days: int = 400) -> None:
+    conn = sqlite3.connect(str(db))
+    conn.execute("UPDATE events SET ts = datetime('now', ?) WHERE requirement_id=?", (f"-{days} days", rid))
+    conn.commit()
+    conn.close()
+
+
+def retry_cross_window():
+    print("== M1-4 边缘 6: 跨窗 prune 交互（BCD §4 跨时段场景 + plan 任务映射：backdate 重入长链 -> prune 不删活动需求 -> 链累计计数仍正确）")
+    db = new_db()
+    rid = seed_req(db, "cross-window")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    st = m.call_ok("add_subtask", {"requirement_id": rid, "title": "cw", "ordinal": 1})["subtask_id"]
+    _to_ip(m, rid, st)                # 首入（不计）
+    _cycle_in_progress(m, rid, st, 2)  # 重试 1、2（未超）
+    m.close()
+    before = query(db, "SELECT COUNT(*) AS n FROM events WHERE requirement_id=?", (rid,))[0]["n"]
+    _backdate(db, rid)
+    old_max = query(db, "SELECT MAX(ts) AS t FROM events WHERE requirement_id=?", (rid,))[0]["t"]
+    floor = (datetime.now(timezone.utc) - timedelta(days=365)).strftime("%Y-%m-%d %H:%M:%S")
+    ok("cw: backdate 生效（全部事件早于 12 个月窗口下限）", old_max is not None and old_max < floor, f"old_max={old_max} floor={floor}")
+    exp = Path(tempfile.mkdtemp(prefix="ak-cw-")) / "cw-export.json"
+    res = cli(db, "prune", "--months", "12", "--yes", "--export-path", str(exp))
+    out = json.loads(res.stdout) if res.returncode == 0 else {}
+    ok("cw: prune 退出 0（确认门 --yes 跳过）", res.returncode == 0, f"rc={res.returncode} stderr={res.stderr[-200:]}")
+    ok("cw: 活动需求（CLAIMED 非终态）未被整删（deleted=0，M1-3 终态需求级原子谓词）",
+       out.get("deleted") == 0, str(out))
+    after = query(db, "SELECT COUNT(*) AS n FROM events WHERE requirement_id=?", (rid,))[0]["n"]
+    ok("cw: 事件链完整未截断（backdate 长链全留）", after == before, f"before={before} after={after}")
+    m2 = MCP(db).start()
+    m2.call_ok("update_subtask", {"requirement_id": rid, "subtask_id": st, "state": "blocked"})
+    m2.call_ok("update_subtask", {"requirement_id": rid, "subtask_id": st, "state": "in_progress"})  # 第 3 次重入（新 ts）
+    m2.close()
+    evs = _system_retry_events(db, rid)
+    ok("cw: 跨窗链累计计数正确——第 3 次重入触发且 count=3（旧链 2 次 + 新 1 次，若链被截断则 n=1 不触发）",
+       len(evs) == 1 and (_first(evs).get("payload") or {}).get("count") == 3, str(evs))
+    rest = REST(db).start()
+    try:
+        code, s = rest.req("GET", f"/requirements/{rid}/summary")
+        sig = _retry_signal(s.get("needs_attention"))
+        ok("cw: needs_attention retry_limit 信号 count=3（跨窗链同源）",
+           code == 200 and sig is not None and sig.get("count") == 3, str(sig))
+    finally:
+        rest.stop()
 
 
 def retry_board():

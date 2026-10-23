@@ -74,6 +74,13 @@ uv run python tests/run_ac.py                        # tier-1（全 AC，需 ~5-
 - 视图同源: retry_limit 信号入 needs_attention（摘要/看板/详情同一 _derived_signals + 同一谓词），board==summary 全口径一致 + risks 同源。
 - 回归: green-full-7.log 382/382（345 既有零回归 + 37 新增）。
 
+## 结果盲审 P2 折入（2026-10-23，verdict APPROVE-WITH-FIXES）
+
+- P2-1 跨时段 prune-reopen harness 缺失（plan:7 任务映射承诺未兑现，M1-4.3 原子任务行漏列致 plan 内部不一致）：按审者修法选项 (a) 补用例——tests/ac_cases_i.py 新增 `retry_cross_window`（6 断言：backdate 生效（全事件早于窗口下限）-> prune rc=0 + deleted=0（活动需求非终态不被整删，M1-3 谓词）+ 事件链完整（before==after）-> 第 3 次重入触发且 payload.count=3（跨窗链累计：旧链 2 次 + 新 1 次）+ needs_attention retry_limit 信号 count=3）。判别力：若链被 prune 截断则新入为 n=1 不触发，count=3 断言必红——prune 谓词与计数的交互路径直接断言，非组合覆盖论证。plan M1-4.3 任务行补列边缘 6（消除内部不一致）。
+- 盲审独立验证面（记录）：red 重跑（base src 解包 + 新 harness，17/37 逐断言 diff 与 red-7.log 一致）；全量绿重跑 382/382 序列一致；基线纯净（plan commits 仅 2 docs 文件，实现 diff 12 文件全在批内）；actor_surface 不可伪造面（全仓 system 面仅 reconcile + retry marker 两个服务端点）；计数公式六场景代码级推导（含 no-op 守卫、里程碑/需求级 state_change 无 subtask_id 不入谓词）。
+- P3 簿记项（不阻塞，记录）：plan M1-4.2「单一谓词常量 RETRY_LIMIT_EVENT」实现为函数 `is_retry_limit_event`（意图满足，operations + view 两处消费）；plan 产物清单漏列新模块 src/agent_kanban/services/retry_limit.py（本节补记）；edge4 plan 写「>= 3 次」实际 5 次（满足且判别力更强，口径一致为 5）；「345 既有」基线溯源属 M1-3 侧留档习惯（green-full-6.log 337/337 为 m1-3.7 前快照，345 出自 m1-3.7 commit 消息），域外不影响本批。
+- 折入后复验: tier-0 compileall 退出 0；tier-1 `uv run python tests/run_ac.py` -> 388/388（382 既有零回归 + 6 新增 retry_cross_window）。
+
 ## 盲区登记
 
 1. **阈值常量钉死，无配置变更面**（BCD §3 Policy 7 / §4 配置变更时场景）: 阈值 2 为常量（RETRY_LIMIT_THRESHOLD=3），本批无配置项；若未来 M2 配置化，需单独评审「存量已触发 vs 新阈值」的再触发语义（BCD 已记录）。
