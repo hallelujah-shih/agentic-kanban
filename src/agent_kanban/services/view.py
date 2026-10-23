@@ -26,6 +26,10 @@ from . import lease as lease_svc
 from .ids import norm_id as _nid
 from .write_guard import require_requirement
 
+# 审#P2-A：整删需求（零事件且非 OPEN）深潜视图的历史注记——链已被保留窗口清理，
+# 完整历史见导出归档（PRD §6 回溯承诺限于保留窗口 + C7 措辞对齐）。
+HISTORY_NOTE = "该需求事件已按保留窗口清理，完整历史见导出归档"
+
 
 # ---------------------------------------------------------------- 摘要
 async def summary(
@@ -421,6 +425,7 @@ async def detail(
         "source": req.source,
         "source_ref": req.source_ref,
         "state": req.state,
+        "history_note": HISTORY_NOTE if not all_events and req.state != "OPEN" else None,
         "acceptance": req.acceptance,
         "awaiting_human": req.awaiting_human,
         "claim": _claim_view(claim, req.awaiting_human, now),
@@ -513,6 +518,8 @@ def render_detail_text(detail_dict: dict) -> str:
     L: list[str] = []
     L.append(f"# {detail_dict['title']}  [{detail_dict['state']}]")
     L.append(f"id: {detail_dict['requirement_id']}")
+    if detail_dict.get("history_note"):
+        L.append(f"历史注记: {detail_dict['history_note']}")
     L.append("")
     L.append("## 子任务")
     for s in detail_dict["subtasks"]:

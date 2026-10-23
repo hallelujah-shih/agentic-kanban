@@ -78,7 +78,8 @@ def renew_events():
     m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})
     claim1 = _active_claim_id(db, r1)
     m.close()
-    cli_ok(db, "renew", "--requirement-id", r1)
+    renew_resp = cli_ok(db, "renew", "--requirement-id", r1)
+    ok("renew: CLI renew 响应含延长后的 lease_expires_at", "lease_expires_at" in renew_resp and bool(renew_resp["lease_expires_at"]), str(renew_resp))
     ev1 = _renew_events(db, r1)
     ok("renew: CLI 写 kind=renew 事件（severity=info, title='lease renewed'）",
        len(ev1) == 1 and ev1[0]["kind"] == "renew" and ev1[0]["severity"] == "info"
@@ -86,7 +87,6 @@ def renew_events():
     ok("renew: CLI actor_surface='cli'（人面语义）", ev1[0]["actor_surface"] == "cli", str(ev1[0]))
     ok("renew: CLI actor_conn='cli'（CLI 判别）", ev1[0]["actor_conn"] == "cli", str(ev1[0]))
     ok("renew: claim_id 关联到活跃认领", ev1[0]["claim_id"] == claim1, f"{ev1[0]['claim_id']} vs {claim1}")
-    ok("renew: 续租后 lease_expires_at 延长（响应可见）", True, "")
 
     # REST channel：actor_surface='cli'（人面）+ actor_conn='rest:' 前缀
     db2 = new_db()
@@ -295,12 +295,14 @@ def prune_export():
     res3 = _run_cli(db3, ["prune", "--months", "12", "--yes"], cwd=cwd)
     ok("prune(vi): CLI 退出 0", res3.returncode == 0, f"rc={res3.returncode} stderr={res3.stderr[-200:]}")
     body3 = json.loads(res3.stdout)
-    exp3 = Path(body3.get("export_path") or "")
+    exp3 = Path(cwd) / (body3.get("export_path") or "")
     ok("prune(vi): 默认 export-path 文件生成（./exports/kanban-export-<ts>.json）",
        exp3.is_file() and exp3.parent.name == "exports" and exp3.name.startswith("kanban-export-") and exp3.name.endswith(".json"),
        str(exp3))
     ok("prune(vi): 默认导出文件 0600", (os.stat(exp3).st_mode & 0o777) == 0o600, oct(os.stat(exp3).st_mode & 0o777))
-    ok("prune(vi): CLI 打印导出文件路径", body3.get("export_path") == str(exp3), f"printed={body3.get('export_path')}")
+    ok("prune(vi): CLI 打印导出文件路径（相对 cwd 解析即生成文件）",
+       body3.get("export_path") and Path(cwd) / body3.get("export_path") == exp3,
+       f"printed={body3.get('export_path')}")
 
 
 def prune_zombie():
@@ -336,6 +338,8 @@ def prune_zombie():
 
 def months_ago():
     print("== M1-3.3 (viii): _months_ago 月末 clamp（fake now 直接断言，不进真实 CLI）")
+    import sys
+    sys.path.insert(0, str(REPO_ROOT))  # 从源码 cli.py 导入（site-packages 为安装时旧副本）
     from cli import _months_ago
     ok("months_ago: 3-31 减 1 月 -> 2-28（月末回绕 clamp）",
        _months_ago(datetime(2026, 3, 31), 1) == datetime(2026, 2, 28),

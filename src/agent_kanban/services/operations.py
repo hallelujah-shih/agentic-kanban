@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -274,6 +274,13 @@ async def renew(
     new_expiry = now + timedelta(seconds=lease_seconds())
     await session.execute(
         update(Claim).where(Claim.id == claim.id).values(lease_expires_at=new_expiry, last_activity_at=now)
+    )
+    # M1-3.2：renew 写事件（PRD §2 kind 全集 + §3.2 人续租证明；可回溯谁续了租约）。
+    # 无认领/已过期路径在上方已 raise，不写事件。
+    await add_event(
+        session, requirement_id=requirement_id, kind="renew", severity="info",
+        title="lease renewed",
+        actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
     return {"requirement_id": requirement_id, "lease_expires_at": new_expiry.isoformat()}
 
@@ -905,3 +912,34 @@ async def export_data(
 
         return render_export_markdown(data)
     return data
+
+
+# ---------------------------------------------------------------- 数据保留（PRD §6，G9-a 闭合）
+PRUNE_TERMINAL_STATES = ("DONE", "REJECTED", "CANCELLED")
+
+
+def _prune_targets(cutoff: datetime):
+    """终态需求级原子窗口（审#P1-2/P1-A）：终态且全部事件早于 cutoff 的需求整删，
+    非终态（含僵尸/STALE）全留 = 活审计主体。COUNT 与 DELETE 共享同一谓词表达式（审#P2-6）。"""
+    return (
+        select(Event.requirement_id)
+        .join(Requirement, Requirement.id == Event.requirement_id)
+        .where(Requirement.state.in_(PRUNE_TERMINAL_STATES))
+        .group_by(Event.requirement_id)
+        .having(func.max(Event.ts) < cutoff)
+    )
+
+
+async def count_prunable_events(session: AsyncSession, *, cutoff: datetime) -> int:
+    """将删事件数（读，与 prune_events 共享同一谓词表达式）。"""
+    subq = _prune_targets(cutoff)
+    return await session.scalar(
+        select(func.count()).select_from(Event).where(Event.requirement_id.in_(subq))
+    ) or 0
+
+
+async def prune_events(session: AsyncSession, *, cutoff: datetime) -> int:
+    """单事务按终态需求级原子谓词删除并返回删除数（PRD §6 数据保留；清理前导出由 CLI 保证）。"""
+    subq = _prune_targets(cutoff)
+    res = await session.execute(delete(Event).where(Event.requirement_id.in_(subq)))
+    return res.rowcount or 0

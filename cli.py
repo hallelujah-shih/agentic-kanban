@@ -7,9 +7,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
+from datetime import datetime, timedelta
+from pathlib import Path
 
-from agent_kanban.db import get_session_factory, run_op
+from agent_kanban.db import get_session_factory, now_utc, run_op
 from agent_kanban.errors import BusinessError
 from agent_kanban.services import operations as ops
 from agent_kanban.services import reconcile, view
@@ -128,6 +131,70 @@ def _cmd_view(args: argparse.Namespace) -> int:
     return 0
 
 
+def _months_ago(now: datetime, n: int) -> datetime:
+    """now 减 n 自然月（审#P2-B/G）：月末日回绕 clamp 到目标月最后一天（3-31 减 1 月 ->
+    2-28/29），纯算术无新依赖；tzinfo 随输入保留（CLI 用 now_utc()，harness 注入 fake now）。"""
+    month_index = now.year * 12 + (now.month - 1) - n
+    year, month_1based = divmod(month_index, 12)
+    month = month_1based + 1
+    next_first = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
+    last_day = (next_first - timedelta(days=1)).day
+    return datetime(year, month, min(now.day, last_day), now.hour, now.minute, now.second,
+                    now.microsecond, tzinfo=now.tzinfo)
+
+
+def _cmd_prune(args: argparse.Namespace) -> int:
+    """数据保留清理（PRD §6 + G9-a，审#P1-2/P1-A/P2-6）：强制导出（0600，导出失败中止）
+    -> COUNT 将删（读，与 DELETE 共享谓词）-> 确认门（stdin y/N，EOF/拒绝/非 y abort 不删
+    非零退出，确认期间不持写事务）-> prune_events 单事务删除。"""
+    surface, conn = cli_actor()
+    now = now_utc()
+    cutoff = _months_ago(now, args.months)
+    export_path = Path(args.export_path) if args.export_path else \
+        Path("exports") / f"kanban-export-{now.strftime('%Y%m%dT%H%M%S%f')}.json"
+    try:
+        # 1. 全量导出（读，无 LIMIT；G8 P2-4 全量语义）
+        data = asyncio.run(run_op(
+            get_session_factory(), ops.export_data, is_write=False,
+            fmt="json", actor_surface=surface, actor_conn=conn,
+        ))
+        # 2. 写文件 0600（mkdir）；导出失败中止（清理前必须导出）
+        try:
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            with export_path.open("w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.chmod(export_path, 0o600)
+        except OSError as exc:
+            print(f"export write failed: {exc}", file=sys.stderr)
+            return 1
+        # 3. COUNT 将删（读）
+        count = asyncio.run(run_op(
+            get_session_factory(), ops.count_prunable_events, is_write=False, cutoff=cutoff,
+        ))
+        # 4. 确认门（不持写事务）
+        if not args.yes:
+            sys.stdout.write(
+                f"将删除 {count} 条事件（终态需求级原子窗口：仅 DONE/REJECTED/CANCELLED "
+                f"且全部事件早于 {cutoff.isoformat()} 的需求整删）。继续？[y/N] "
+            )
+            sys.stdout.flush()
+            if sys.stdin.readline().strip().lower() != "y":
+                print("aborted: nothing deleted", file=sys.stderr)
+                return 1
+        # 5. 单事务删除（写）
+        deleted = asyncio.run(run_op(
+            get_session_factory(), ops.prune_events, is_write=True, cutoff=cutoff,
+        ))
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    print(json.dumps(
+        {"export_path": str(export_path), "counted": count, "deleted": deleted},
+        ensure_ascii=False, indent=2,
+    ))
+    return 0
+
+
 def _cmd_reconcile(args: argparse.Namespace) -> int:
     """对账（PRD 3.2 服务重启对账 / §6 可靠性）：只标记不删除；事件 actor=system。"""
     try:
@@ -205,6 +272,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("reconcile", help="对账：扫描未结束认领 + claim-state drift（只标记不删除）")
     p.set_defaults(handler=_cmd_reconcile)
+
+    p = sub.add_parser("prune", help="数据保留清理（§6）：强制导出 -> 确认门 -> 终态需求级原子窗口删除 events")
+    p.add_argument("--months", type=int, default=12, help="保留月数（默认 12，日历月 + 月末 clamp）")
+    p.add_argument("--export-path", help="导出文件路径（默认 ./exports/kanban-export-<ts>.json）")
+    p.add_argument("--yes", action="store_true", help="跳过确认门")
+    p.set_defaults(handler=_cmd_prune)
 
     return parser
 

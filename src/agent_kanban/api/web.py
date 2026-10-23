@@ -125,6 +125,7 @@ function attnTags(list){
 function render(d, s){
   var html = "<h1>" + esc(s.title) + " <span class='tag state'>" + esc(s.state) + "</span></h1>";
   html += "<p class='meta'>id: " + esc(s.requirement_id) + "</p>";
+  if (d.history_note) html += "<p class='meta'>" + esc(d.history_note) + "</p>";
   if (s.awaiting_human) html += "<p>等待人: kind=" + esc(s.awaiting_human.kind) + " reason=" + esc(s.awaiting_human.reason || "") + "</p>";
   var c = s.claim;
   if (c) html += "<p class='meta'>认领: " + esc(c.agent_name) + " conn=" + esc(c.agent_conn) + " signal=" + esc(c.signal) + " 租约到期=" + esc(c.lease_expires_at) + "</p>";
@@ -149,7 +150,7 @@ function render(d, s){
   s.deviations.forEach(function(x){ html += "<li>偏离 [" + esc(x.severity) + "]: " + esc(x.title) + "</li>"; });
   html += "</ul><h2>需要关注</h2><p>" + (attnTags(s.needs_attention) || "无") + "</p>";
   html += "<h2>事件流</h2><div>过滤 kind: <select id='ev-kind'><option value=''>全部</option>";
-  ["decision","risk","deviation","decomposition","progress_note","state_change","review_request","approval","release","note","reconcile"].forEach(function(k){
+  ["decision","risk","deviation","decomposition","progress_note","state_change","review_request","approval","release","renew","note","reconcile"].forEach(function(k){
     html += "<option value='" + k + "'>" + k + "</option>";
   });
   html += "</select> severity: <select id='ev-sev'><option value=''>全部</option>";
