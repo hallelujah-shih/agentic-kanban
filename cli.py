@@ -219,7 +219,7 @@ def _cmd_prune(args: argparse.Namespace) -> int:
         # 4. 确认门（不持写事务）
         if not args.yes:
             sys.stdout.write(
-                f"将删除 {count} 条事件（终态需求级原子窗口：仅 DONE/REJECTED/CANCELLED "
+                f"将删除 {count} 条事件（终态需求级原子窗口：仅 DONE/REJECTED/CANCELLED/ARCHIVED "
                 f"且全部事件早于 {cutoff.isoformat()} 的需求整删）。继续？[y/N] "
             )
             sys.stdout.flush()

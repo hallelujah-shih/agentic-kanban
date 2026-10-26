@@ -2,7 +2,7 @@
 
 状态: 草案。v3.1 经双轴复审（需求轴 APPROVE-WITH-FIXES / 契约轴 REJECT 续审），本版折入全部 P1/P2（release 人面独占、approve 按状态判定、写锁先行、AC 错位、覆盖下界语义）；M1-3 折入：G10 裁决（ADR 0006——维持写口径 + 静默读意图内 + 连接级模型不引入）、§2 事件 kind 补 renew、§3.2 activity 行澄清（写口径 + renew 例外）、§4.2 prune 命令、§6 数据保留改终态需求级原子窗口
 里程碑: M0 完成（2026-10-22，AC10-13/15/17 + Spike AC1-9/16 + 9 码矩阵 + 补充全绿，验证见 docs/ops/m0-verification.md）；M1 未开工
-定位: AI 时代的看板——不是任务状态跟踪，而是**大黑箱（AI 自动化执行）的关键节点暴露窗口 + 可回溯审计资产**
+定位: AI 时代的看板——不是任务状态跟踪，而是**大黑箱（AI 自动化执行）的关键节点暴露窗口 + 可回溯审计资产 + AI 与人对称交换关键信息的场所 + 关键决策的记录点/审计点**。看板不承担共识达成逻辑：子任务/里程碑的共识在 AI 会话内（in-band）达成，看板只展现结果；决策记录两类来源——人在 AI 中做出的决策（agent 以既有 decision/note 事件记录，带 actor provenance）与 AI 自主的决策（decision 事件）
 读者: 实现者、后续维护者、评审者
 关联: docs/design.md（设计理由）、docs/adr/（决策与残余登记）
 BCD 引用: docs/business-contracts/g9b-retry-limit.md（G9-b 重试成本超限判定，判定源 user 裁决 = 系统派生计数，M1-4 前置产出）
@@ -21,9 +21,9 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 
 **单一事件源（指引优先）**：完整内容留在其源头（Jira 详情、代码、会话原文），看板只存指针（链接/引用）+ 摘要。登记是 URL+摘要 还是完整详情并不重要，**做好指引更重要**；需要完整内容时由 agent 从源头获取。与反淹没互补：反淹没 = 不默认展示，本原则 = 不留存、只指引。
 
-**报告纪律（agent 侧）**：写给人看的每一段文字（验收自评、decision rationale、deviation 原因、交接说明）必须**简约、大白话、无黑话**，尊重人脑带宽；报告里程碑与关键事件（节点），不报过程流水账。与反淹没互补：反淹没管视图展示什么，本纪律管 agent 写进记录的是什么。
+**报告纪律（agent 侧）**：写给人看的每一段文字（验收自评、decision rationale、deviation 原因、交接说明）必须**简约、大白话、无黑话**，尊重人脑带宽；报告里程碑与关键事件（节点），不报过程流水账。与反淹没互补：反淹没管视图展示什么，本纪律管 agent 写进记录的是什么。in-band 人的决策（人在 AI 会话中做出的决策）由 agent 以 decision/note 事件记录（带 actor provenance）= 预期模式，非可选行为。
 
-职责边界：看板是记录面 + 协作窗口，不是控制面。它不管理 worktree、不执行合入、不隔离执行。
+职责边界：看板是记录面 + 关键决策的记录点/审计点，不是控制面，不是共识达成场所。它不管理 worktree、不执行合入、不隔离执行。人面 surface 划分：Web = 只读视图 + task 生命周期（create/archive/delete）；决策操作（approve/release/renew/reopen/note/abandon/set_expectations）= CLI/REST-only（Web 无入口）。
 
 ### 0.1 全局不做清单
 
@@ -80,7 +80,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 
 ### 3.1 状态与边
 
-OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN。
+OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN；终态 DONE / REJECTED / CANCELLED / ARCHIVED。
 
 | from | to | 触发者 | 前置 |
 |---|---|---|---|
@@ -94,6 +94,7 @@ OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN。
 | REOPEN | OPEN | 人 | 重开回到可认领（避免死端） |
 | REOPEN | CANCELLED | 人 | - |
 | 任一 | REJECTED | 人 | 转移时清除 awaiting_human |
+| 任一 | ARCHIVED | 人 | 终态，无出边（无 unarchive）；转移时清除 awaiting_human；同事务结束未结束认领（release_reason=archive） |
 
 ### 3.2 认领与租约
 
@@ -131,6 +132,7 @@ OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN。
 | CLAIMED | review（或无 marker） | 确认 DONE | CLAIMED -> DONE | ended_at 置位 | approval + state_change，清 marker |
 | BLOCKED | blocked | 解除阻塞 | BLOCKED -> CLAIMED | 不变（仍活跃） | state_change，清 marker |
 | OPEN/DONE/REOPEN/REJECTED/CANCELLED | 任意 | 拒绝 | 无 | 无 | illegal_state |
+| ARCHIVED | 任意 | 拒绝 | 无 | 无 | illegal_state |
 
   BLOCKED + kind=review 组合不可达：request_review 前置要求 state=CLAIMED（4.1）。
 - DONE 后追加更正：写保护要求未结束认领，因此更正需人面操作（CLI `note`）或 REOPEN 后由 agent 继续——两条路径都明确，不冲突。
@@ -171,7 +173,9 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 - `note`：人追加更正/质疑（写入 note 事件）。
 - `export`：JSON / Markdown 全量导出。
 - `abandon`：REJECTED / CANCELLED。
-- `prune`：数据保留清理（§6）——`--months N`（默认 12，日历月 + 月末回绕 clamp）、`--export-path`（默认 `./exports/kanban-export-<ts>.json`）、`--yes` 跳过确认；流程 = 强制全量导出（timestamped JSON 0600，导出失败中止清理）-> 确认门（stdin `y/N`，EOF/拒绝/非 y 中止不删、非零退出）-> 按终态需求级原子窗口删除 events（仅 DONE/REJECTED/CANCELLED 且全部事件早于窗口的需求整删，链永不半断）。
+- `archive`：归档（任一状态 -> ARCHIVED 终态，同事务结束未结束认领 release_reason=archive）；语义 = 移出活跃视野，**无工作判断**（区别于 abandon 的 REJECTED/CANCELLED）；无 unarchive。
+- `delete`：整需求硬删（requirement + subtasks/milestones/claims/events 单事务原子，不写事件）；任意状态可删（含活跃认领）；不受数据保留窗口约束；删除后该需求的回溯承诺作废，建议先 `export` 留档（提示不强制）；Web 上需输入标题确认。
+- `prune`：数据保留清理（§6）——`--months N`（默认 12，日历月 + 月末回绕 clamp）、`--export-path`（默认 `./exports/kanban-export-<ts>.json`）、`--yes` 跳过确认；流程 = 强制全量导出（timestamped JSON 0600，导出失败中止清理）-> 确认门（stdin `y/N`，EOF/拒绝/非 y 中止不删、非零退出）-> 按终态需求级原子窗口删除 events（仅 DONE/REJECTED/CANCELLED/ARCHIVED 且全部事件早于窗口的需求整删，链永不半断）。
 
 **Web 窗口（M1，人面）**：
 
@@ -179,8 +183,8 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 |---|---|
 | `GET /board` | 看板默认列表（反淹没）：非终态需求 + 每需求派生需要关注信号（口径同 §5.3 摘要 `_derived_signals`，全口径含 decomposition_added/unexplained/orphaned/drift），返回 `{tasks, attention_ids}` |
 | `GET /events/stream` | SSE 事件推送：全局 seq 游标、连接时刻初始化、无回填、纯触发器字段（语义见 §5.3） |
-| `GET /` | 看板 HTML 壳：内联 JS fetch `/board` 渲染 + EventSource 重拉，无原始输出 |
-| `GET /requirements/{id}` | 内容协商：Accept 含 `text/html` -> 深潜 HTML 壳（JS 渲染 + 人面操作），缺省/`*/*` -> JSON（形状不变） |
+| `GET /` | 看板 HTML 壳：内联 JS fetch `/board` 渲染（在板/已完成/已归档 三 tab）+ 新建表单 + EventSource 重拉，无原始输出 |
+| `GET /requirements/{id}` | 内容协商：Accept 含 `text/html` -> 深潜 HTML 壳（JS 渲染 + task 生命周期操作 archive/delete；决策操作 CLI/REST-only），缺省/`*/*` -> JSON（形状不变） |
 | `GET /requirements/{id}/summary.html` | M0 静态摘要 HTML（保留，不冲突） |
 | token 传播 | EventSource 无法设 header：页面从 URL `?token=` 读 token 存入 sessionStorage，全部 fetch/EventSource 附 token（localhost 默认无 token 不生效；非 localhost 单用户可接受 URL 可见 token，威胁模型 C） |
 
@@ -255,7 +259,7 @@ MCP `is_error` + structured content（`{code, message, task_id}`），无 HTTP �
 | 数据量级 | < 5k 需求、< 100k events、单事件 payload < 8 KB | 事件无上限 -> SQLite 膨胀 |
 | 性能 | 摘要视图 < 200 ms（5k 需求）；状态/记录写 < 50 ms | 无界 -> 窗口不可用 |
 | 安全 | 默认绑定 127.0.0.1；非 localhost 绑定必须带 token 并启动告警；DB 文件 0600 | 本机任意进程可污染审计链 |
-| 数据保留 | events 保留 12 个月；清理由显式命令 `prune` 执行（--months N 默认 12，日历月）；**终态需求级原子窗口**：仅 DONE/REJECTED/CANCELLED 且全部事件早于窗口的需求整删（链永不半断），非终态（含僵尸/STALE）全留 = 活审计主体；清理前强制导出（timestamped JSON 0600，导出失败中止清理），导出文件为审计资产最终载体；数据量级主要由活跃需求数决定（prune 只释放终态/僵尸） | 无限保留 -> 隐私与备份风险；回溯承诺（C7）限于保留窗口，整删需求以导出归档为准 |
+| 数据保留 | events 保留 12 个月；清理由显式命令 `prune` 执行（--months N 默认 12，日历月）；**终态需求级原子窗口**：仅 DONE/REJECTED/CANCELLED/ARCHIVED 且全部事件早于窗口的需求整删（链永不半断），非终态（含僵尸/STALE）全留 = 活审计主体；清理前强制导出（timestamped JSON 0600，导出失败中止清理），导出文件为审计资产最终载体；另有人面定点即时删除（4.2 delete）：任意状态、不强制导出、不受窗口约束、删需求行（prune 只删事件留需求行）；数据量级主要由活跃需求数决定（prune 只释放终态/僵尸） | 无限保留 -> 隐私与备份风险；回溯承诺（C7）限于保留窗口，整删需求以导出归档为准 |
 | 可观测 | 每次转移/交接/对账写事件；`/healthz`；埋点：等你决策清单等待时长（ts(清除) - ts(设置)）、STALE 率、偏离登记率、覆盖缺口数 | 反黑箱目标无法度量 |
 | 可靠性 | 重启后未结束认领与真实连接对账 + claim-state 失配检测；不一致标 drift，不自动删除 | 静默丢失占用状态 |
 | 退役 | 6 个月内 events < 100 则归档并说明替代方案 | 僵尸项目 |

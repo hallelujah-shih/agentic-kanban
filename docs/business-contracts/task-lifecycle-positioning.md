@@ -98,7 +98,9 @@ Requirement（根）：Subtask[]、Milestone[]、Claim[]、Event[]——delete �
 **S1（happy，create）**
 Given 看板页顶栏有"新建"入口
 When 人提交 title + 两行 acceptance（无 jira 链接）
-Then 看板"待认领"列出现新任务（state=OPEN），深潜页验收对照表显示两条锚（自动编号 a1/a2），SSE 推送使看板自动刷新
+Then 看板“待认领”列出现新任务（state=OPEN），深潜页验收对照表显示两条锚（自动编号 a1/a2），前端主动 loadBoard() 重拉看板（create 不写事件，无 SSE 触发器，不依赖 SSE）
+
+**修订记录**: 2026-10-26 主循环——S1 Then "SSE 推送使看板自动刷新" 子句陈旧：spec 审 P1-2 已折入（create 不写事件 -> 无 SSE 触发器，前端主动重拉），本处同步。
 
 **S2（happy，archive 活跃任务）**
 Given 一个 CLAIMED 任务（有活跃认领，无 awaiting_human）
@@ -120,7 +122,9 @@ Then requirement + 全部子行（events/subtasks/milestones/claims）原子删�
 **S5（edge，带 marker 的 archive）**
 Given 一个 BLOCKED 任务，awaiting_human(kind=blocked)
 When 人执行 archive
-Then awaiting_human 被清除（任务不再出现在"等你决策"清单/list_awaiting），claim 同事务结束，state=ARCHIVED
+Then awaiting_human 被清除（任务不再出现在“等你决策”清单/list_awaiting（可见面：detail/board 已清除；list_awaiting 的 SQL 过滤层受既有缺陷 G12 影响——对文本 "null" 泄漏，波及所有既有清 marker 路径，非本批引入，修复单独立项）），claim 同事务结束，state=ARCHIVED
+
+**修订记录**: 2026-10-26 主循环——S5 list_awaiting 排除语义在 SQL 过滤层不成立（G12，既有缺陷，approve/abandon 路径同形），本批收敛范围为可见面清除。
 
 **S6（edge，并发 delete）**
 Given agent 正在活跃写入一个任务（SQLite 并发写事务）
