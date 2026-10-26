@@ -83,6 +83,10 @@ def _cmd_abandon(args: argparse.Namespace) -> int:
     return _invoke("abandon", requirement_id=args.requirement_id, to_state=args.to_state)
 
 
+def _cmd_archive(args: argparse.Namespace) -> int:
+    return _invoke("archive_requirement", requirement_id=args.requirement_id)
+
+
 def _cmd_reopen(args: argparse.Namespace) -> int:
     return _invoke("reopen", requirement_id=args.requirement_id, continue_=args.continue_)
 
@@ -265,6 +269,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--requirement-id", required=True)
     p.add_argument("--to-state", required=True, choices=["REJECTED", "CANCELLED"])
     p.set_defaults(handler=_cmd_abandon)
+
+    p = sub.add_parser("archive", help="归档（任一状态 -> ARCHIVED 终态；同事务结束未结束认领）")
+    p.add_argument("--requirement-id", required=True)
+    p.set_defaults(handler=_cmd_archive)
 
     p = sub.add_parser("reopen", help="DONE->REOPEN；--continue REOPEN->OPEN（回到可认领）")
     p.add_argument("--requirement-id", required=True)

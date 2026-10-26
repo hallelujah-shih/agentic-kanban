@@ -376,6 +376,32 @@ async def abandon(
     return {"requirement_id": requirement_id, "state": to_state}
 
 
+async def archive_requirement(
+    session: AsyncSession,
+    *,
+    requirement_id: str,
+    actor_surface: str,
+    actor_conn: str,
+    now: datetime | None = None,
+) -> dict:
+    now = now or now_utc()
+    await require_requirement(session, requirement_id)
+    claim = await session.scalar(
+        select(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None))
+    )
+    claim_id = claim.id if claim is not None else None
+    await transition(
+        session, requirement_id=requirement_id, from_state=None, to_state="ARCHIVED",
+        actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim_id, now=now,
+    )
+    # 同事务结束未结束认领（abandon 模式，operations.py:371-375）；清 marker 由 transition 通规完成
+    if claim is not None:
+        await session.execute(
+            update(Claim).where(Claim.id == claim.id).values(ended_at=now, release_reason="archive")
+        )
+    return {"requirement_id": requirement_id, "state": "ARCHIVED"}
+
+
 # ---------------------------------------------------------------- agent 面（MCP）
 async def claim_task(
     session: AsyncSession,

@@ -113,6 +113,11 @@ async def reopen(requirement_id: str, body: ReopenIn | None = None) -> dict:
     return await _run("reopen", requirement_id=requirement_id, continue_=body.continue_)
 
 
+@router.post("/requirements/{requirement_id}/archive")
+async def archive_requirement(requirement_id: str) -> dict:
+    return await _run("archive_requirement", requirement_id=requirement_id)
+
+
 @router.get("/requirements")
 async def list_requirements() -> dict:
     return await _run("list_tasks", is_write=False)

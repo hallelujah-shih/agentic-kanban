@@ -112,3 +112,99 @@ def k_state():
        len(row_a) == 1 and row_a[0]["state"] == "ARCHIVED", str([dict(x) for x in row_a]))
     ok("k_state(iv): ARCHIVED 未出窗保留", _count(db2, b) > 0, f"n={_count(db2, b)}")
     ok("k_state(iv): 非终态保留", _count(db2, c) > 0, f"n={_count(db2, c)}")
+
+
+def k_archive():
+    print("== M1-5.2: archive 七状态矩阵 + claim 同事务结束（release_reason=archive）+ marker 清除 + 事件形态 + channel 归属 + archive 后 agent 写 no_active_claim")
+    def _seed_state(db, title, state, need_claim=False, need_blocked=False):
+        rid = seed_req(db, title)
+        if need_claim or state == "DONE":
+            m = MCP(db).start()
+            m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+            if need_blocked:
+                m.call_ok("mark_blocked", {"requirement_id": rid, "reason": "waiting input"})
+            m.close()
+        if state == "DONE":
+            cli_ok(db, "approve", "--requirement-id", rid)  # CLAIMED -> DONE（无 marker 亦合法，PRD 3.4）
+        elif state == "REOPEN":
+            seed_reopen(db, rid)
+        elif state in ("REJECTED", "CANCELLED"):
+            cli_ok(db, "abandon", "--requirement-id", rid, "--to-state", state)
+        return rid
+
+    # (i) 七状态矩阵（CLI channel：actor_surface=cli / actor_conn=cli）
+    for state, need_claim, need_blocked in [
+        ("OPEN", False, False), ("CLAIMED", True, False), ("BLOCKED", True, True),
+        ("REOPEN", False, False), ("DONE", False, False), ("REJECTED", False, False),
+        ("CANCELLED", False, False)]:
+        db = new_db()
+        rid = _seed_state(db, f"k-arch-{state}", state, need_claim, need_blocked)
+        resp = cli_ok(db, "archive", "--requirement-id", rid)
+        ok(f"k_archive({state}): CLI archive -> ARCHIVED", resp.get("state") == "ARCHIVED", str(resp))
+        row = query(db, "SELECT state, awaiting_human FROM requirements WHERE id=?", (rid,))[0]
+        ok(f"k_archive({state}): requirements.state=ARCHIVED", row["state"] == "ARCHIVED", str(dict(row)))
+        ev = query(db, "SELECT title, payload, actor_surface, actor_conn, claim_id "
+                       "FROM events WHERE requirement_id=? ORDER BY seq DESC LIMIT 1", (rid,))[0]
+        pl = json.loads(ev["payload"])
+        ok(f"k_archive({state}): 事件链尾 state_change from=None to=ARCHIVED（Q3 裁决形态）",
+           ev["title"] == "? -> ARCHIVED" and pl == {"from": None, "to": "ARCHIVED"}, str(dict(ev)))
+        ok(f"k_archive({state}): CLI 归属 surface=cli conn=cli",
+           ev["actor_surface"] == "cli" and ev["actor_conn"] == "cli", f"{ev['actor_surface']}/{ev['actor_conn']}")
+        if need_claim:
+            c = query(db, "SELECT ended_at, release_reason FROM claims WHERE requirement_id=? AND ended_at IS NOT NULL", (rid,))[0]
+            ok(f"k_archive({state}): claim 同事务 ended（release_reason=archive）",
+               c["ended_at"] is not None and c["release_reason"] == "archive", str(dict(c)))
+            cid = query(db, "SELECT id FROM claims WHERE requirement_id=?", (rid,))[0]["id"]
+            ok(f"k_archive({state}): 事件 claim_id 归属到认领", ev["claim_id"] == cid, f"{ev['claim_id']} vs {cid}")
+        if need_blocked:
+            # 裸存储双空形态：SQLAlchemy JSON 列 none_as_null=False，清 marker 存文本 "null"（非 SQL NULL，
+            # main 既有行为，approve/abandon 路径同形）；业务契约 = 无存活 marker（存活 = JSON dict 文本，仍红）。
+            # list_awaiting 过滤层对该文本的泄漏 = 既有缺陷 G12（登记 known-gaps，非本批引入，不在此 pin）。
+            ok("k_archive(BLOCKED): awaiting_human 清除（无存活 marker）",
+               row["awaiting_human"] in (None, "null"), str(row["awaiting_human"]))
+    # (ii) REST channel（surface=cli / conn=rest:* 前缀）+ 再 archive 允许 + 404
+    db2 = new_db()
+    rid2 = seed_req(db2, "k-arch-rest")
+    rest = REST(db2).start()
+    try:
+        code, body = rest.req("POST", f"/requirements/{rid2}/archive")
+        ok("k_archive: REST archive 200", code == 200 and body["state"] == "ARCHIVED", f"{code} {body}")
+        # 视图（spec case 2 / AC3）：board 默认排除 + status 过滤包含 + finished_at = archive 事件 ts
+        code, body = rest.req("GET", "/board")
+        ok("k_archive: board 默认响应不含 ARCHIVED",
+           code == 200 and rid2 not in [t["requirement_id"] for t in body["tasks"]], str([t["requirement_id"] for t in body["tasks"]]))
+        code, body = rest.req("GET", "/board", params={"status": "ARCHIVED"})
+        row_t = [t for t in body["tasks"] if t["requirement_id"] == rid2]
+        ok("k_archive: /board?status=ARCHIVED 包含", len(row_t) == 1, str(body.get("tasks")))
+        code, d = rest.req("GET", f"/requirements/{rid2}")
+        last_sc = [e for e in d["events"] if e["kind"] == "state_change"][-1]
+        ok("k_archive: finished_at = archive 事件 ts（_terminal_entry_ts 派生，零改动验证）",
+           row_t and row_t[0]["finished_at"] == last_sc["ts"],
+           f"{row_t[0]['finished_at'] if row_t else 'missing'} vs {last_sc['ts']}")
+        code, body = rest.req("POST", f"/requirements/{rid2}/archive")
+        ok("k_archive: ARCHIVED 上再 archive 允许（与 REJECTED->REJECTED 既有口径一致）",
+           code == 200 and body["state"] == "ARCHIVED", f"{code} {body}")
+        code, body = rest.req("POST", "/requirements/deadbeef/archive")
+        ok("k_archive: archive 不存在 -> 404 not_found", code == 404 and body["code"] == "not_found", f"{code} {body}")
+    finally:
+        rest.stop()
+    ev2 = query(db2, "SELECT actor_surface, actor_conn FROM events WHERE requirement_id=? "
+                      "AND kind='state_change' ORDER BY seq DESC LIMIT 1", (rid2,))[0]
+    ok("k_archive: REST 归属 surface=cli conn=rest:*",
+       ev2["actor_surface"] == "cli" and ev2["actor_conn"].startswith("rest:"),
+       f"{ev2['actor_surface']}/{ev2['actor_conn']}")
+    db3 = new_db()
+    code3, _ = cli_err(db3, "archive", "--requirement-id", "deadbeef")
+    ok("k_archive: CLI archive 不存在 -> not_found", code3 == "not_found", code3)
+    # (iii) archive 后 agent 写 -> no_active_claim（BCD I6"不可写"端到端，盲审 P2-3：
+    # claim 未同事务结束或 write guard 漏新终态，任一坏都会红）
+    db4 = new_db()
+    rid4 = seed_req(db4, "k-arch-guard")
+    m4 = MCP(db4).start()
+    m4.call_ok("claim_task", {"requirement_id": rid4, "agent_name": "a"})
+    m4.close()
+    cli_ok(db4, "archive", "--requirement-id", rid4)
+    m5 = MCP(db4).start()
+    code4, _ = m5.call_err("add_record", {"requirement_id": rid4, "kind": "note", "title": "post-archive"})
+    ok("k_archive(iii): archive 后 agent 写 -> no_active_claim（BCD I6）", code4 == "no_active_claim", code4)
+    m5.close()
