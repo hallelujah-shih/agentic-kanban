@@ -31,6 +31,7 @@ from . import lease as lease_svc
 from .ids import norm_id as _nid
 from .retry_limit import is_retry_limit_event
 from .write_guard import require_requirement
+from .operations_util import TERMINAL_STATES
 
 # 审#P2-A：整删需求（零事件且非 OPEN）深潜视图的历史注记——链已被保留窗口清理，
 # 完整历史见导出归档（PRD §6 回溯承诺限于保留窗口 + C7 措辞对齐）。
@@ -188,9 +189,6 @@ def _acceptance_table(anchors: list, subtasks: list[Subtask]) -> list[dict]:
     return table
 
 
-TERMINAL_STATES = ("DONE", "REJECTED", "CANCELLED")
-
-
 def _terminal_entry_ts(events: list[Event]) -> str | None:
     """最近一次需求级进入终态的 ts（判别口径与 reconstruct_states 一致：
     state_change 且 payload 无 subtask_id/milestone_id）；未入终态为 None。"""
@@ -224,7 +222,7 @@ async def board(
     if status:
         stmt = stmt.where(Requirement.state == status)
     else:
-        stmt = stmt.where(Requirement.state.not_in(["DONE", "REJECTED", "CANCELLED"]))
+        stmt = stmt.where(Requirement.state.not_in(TERMINAL_STATES))
     rows = (await session.scalars(stmt.order_by(Requirement.created_at))).all()
     if not rows:
         return {"tasks": [], "attention_ids": []}

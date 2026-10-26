@@ -27,6 +27,7 @@ ALLOWED_EDGES: dict[tuple[str | None, str], str] = {
     ("REOPEN", "OPEN"): HUMAN,
     ("REOPEN", "CANCELLED"): HUMAN,
     (None, "REJECTED"): HUMAN,
+    (None, "ARCHIVED"): HUMAN,
 }
 
 

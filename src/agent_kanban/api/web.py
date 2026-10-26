@@ -37,6 +37,7 @@ h1{font-size:1.25rem;margin:0}
 .pill.DONE{background:rgba(63,185,80,.15);color:var(--green)}
 .pill.REJECTED{background:rgba(248,81,73,.15);color:var(--red)}
 .pill.CANCELLED{background:rgba(91,102,114,.25);color:var(--muted)}
+.pill.ARCHIVED{background:rgba(91,102,114,.25);color:var(--muted)}
 .pill.todo{background:rgba(139,152,165,.15);color:var(--muted)}
 .pill.in_progress{background:rgba(63,185,80,.15);color:var(--green)}
 .pill.done{background:rgba(139,152,165,.15);color:var(--muted)}
@@ -60,7 +61,7 @@ _JS_COMMON = """
 var TOKEN = sessionStorage.getItem("kanban_token") || "";
 function hdr(){ return TOKEN ? {"x-agent-kanban-token": TOKEN} : {}; }
 function esc(s){ var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
-var STATE_ZH = {OPEN:"待认领", CLAIMED:"进行中", BLOCKED:"阻塞", REOPEN:"返工", DONE:"已完成", REJECTED:"已拒绝", CANCELLED:"已取消"};
+var STATE_ZH = {OPEN:"待认领", CLAIMED:"进行中", BLOCKED:"阻塞", REOPEN:"返工", DONE:"已完成", REJECTED:"已拒绝", CANCELLED:"已取消", ARCHIVED:"已归档"};
 var SIG_ZH = {blocked_subtask:"子任务阻塞", milestone_delay:"里程碑延误", abandoned_subtask:"子任务放弃",
               unexplained_abandonment:"未解释放弃", retry_limit:"重试超限", decomposition_added:"拆解变更"};
 function sigLabel(t){ return SIG_ZH[t] || t; }
@@ -131,16 +132,35 @@ def board_shell() -> str:
 .done-row:hover{background:var(--card-hi);text-decoration:none}
 .done-row .dt{font-weight:600;color:var(--text);font-size:.88rem}
 .done-row .grow{flex:1}
+input,textarea{background:var(--card);color:var(--text);border:1px solid var(--border);
+  border-radius:7px;padding:6px 8px;font-size:.82rem}
+#nf-msg.err{color:var(--red)}
+#nf-msg.ok{color:var(--green)}
 </style></head>
 <body>
 <div class="topbar">
   <span class="title">agent-kanban</span>
   <span class="meta" id="top-count"></span>
+  <button id="new-btn">新建</button>
   <div class="live" id="live"><div class="dot"></div><span>连接中</span></div>
+</div>
+<div id="new-form" style="display:none;padding:10px 20px 0;max-width:720px">
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <input id="nf-title" placeholder="标题（必填）" style="width:100%;box-sizing:border-box">
+    <textarea id="nf-desc" rows="2" placeholder="描述（可选）"></textarea>
+    <textarea id="nf-acc" rows="3" placeholder="预期验收（可选，一行一条锚）"></textarea>
+    <input id="nf-jira" placeholder="Jira 链接（可选，非空则 source=jira）" style="width:100%;box-sizing:border-box">
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="primary" onclick="submitNew()">创建</button>
+      <button onclick="document.getElementById('new-form').style.display='none'">取消</button>
+      <span id="nf-msg" style="font-size:.8rem"></span>
+    </div>
+  </div>
 </div>
 <div class="tabs">
   <button class="tab active" data-tab="active">在板</button>
   <button class="tab" data-tab="done">已完成</button>
+  <button class="tab" data-tab="archived">已归档</button>
 </div>
 <div id="board-root"><p class="meta" style="padding:24px">加载中…</p></div>
 <script>
@@ -163,7 +183,8 @@ function cardHTML(t){
     who = "<div class='who'><span class='sdot' style='background:" + ccol + "'></span>"
       + esc(c.agent_name) + " <span class='meta'>· " + esc(c.signal) + "</span></div>";
   }
-  var wait = t.awaiting_human ? "<div class='wait'>等待人: " + esc(t.awaiting_human.reason || t.awaiting_human.kind || "") + "</div>" : "";
+  var wait = t.awaiting_human ? "<div class='wait'>等待人: " + esc(t.awaiting_human.reason || t.awaiting_human.kind || "")
+    + " <span class='meta'>kanban approve " + esc(t.requirement_id) + "</span></div>" : "";
   return "<a class='card" + (t._attn ? " attn" : "") + "' href='/requirements/" + encodeURIComponent(t.requirement_id) + "'>"
     + "<div class='ct'>" + esc(t.title) + "</div>" + pbar
     + (p.total ? "<div class='meta'>进度 " + p.done + "/" + p.total + "</div>" : "")
@@ -185,9 +206,9 @@ function renderActive(data){
   document.getElementById("board-root").innerHTML = "<div class='cols'>" + html + "</div>";
   document.getElementById("top-count").textContent = data.tasks.length + " 个在板需求";
 }
-var DONE_ZH = {DONE:"已完成", CANCELLED:"已取消", REJECTED:"已拒绝"};
+var DONE_ZH = {DONE:"已完成", CANCELLED:"已取消", REJECTED:"已拒绝", ARCHIVED:"已归档"};
 var TAB = "active";
-function renderDone(tasks){
+function renderDone(tasks, label, empty){
   tasks.sort(function(a, b){
     var fa = a.finished_at || "", fb = b.finished_at || "";
     return fa < fb ? 1 : (fa > fb ? -1 : 0);
@@ -202,8 +223,8 @@ function renderDone(tasks){
       + flag + "</a>";
   }).join("");
   document.getElementById("board-root").innerHTML = "<div class='done-list'>"
-    + (rows || "<div class='empty'>（无已完成需求）</div>") + "</div>";
-  document.getElementById("top-count").textContent = tasks.length + " 个已完成";
+    + (rows || "<div class='empty'>" + empty + "</div>") + "</div>";
+  document.getElementById("top-count").textContent = tasks.length + " " + label;
 }
 async function loadBoard(){
   var root = document.getElementById("board-root");
@@ -214,7 +235,7 @@ async function loadBoard(){
       if (!resp.ok) { fail("加载失败: " + resp.status); return; }
       renderActive(await resp.json());
     } else {
-      var sts = ["DONE", "CANCELLED", "REJECTED"];
+      var sts = TAB === "archived" ? ["ARCHIVED"] : ["DONE", "CANCELLED", "REJECTED"];
       var resps = [];
       for (var i = 0; i < sts.length; i++) {
         resps.push(await fetch("/board?status=" + sts[i], {headers: hdr()}));
@@ -226,7 +247,8 @@ async function loadBoard(){
       for (var k = 0; k < resps.length; k++) {
         (await resps[k].json()).tasks.forEach(function(t){ all.push(t); });
       }
-      renderDone(all);
+      if (TAB === "archived") renderDone(all, "个已归档", "（无已归档需求）");
+      else renderDone(all, "个已完成", "（无已完成需求）");
     }
   } catch (e) { fail("加载失败: " + String(e)); }
 }
@@ -240,6 +262,35 @@ Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
     loadBoard();
   };
 });
+document.getElementById("new-btn").onclick = function(){
+  var f = document.getElementById("new-form");
+  f.style.display = f.style.display === "none" ? "block" : "none";
+};
+function nfMsg(m, isErr){
+  var el = document.getElementById("nf-msg");
+  el.textContent = m; el.className = isErr ? "err" : "ok";
+}
+async function submitNew(){
+  var title = document.getElementById("nf-title").value.trim();
+  if (!title) { nfMsg("标题必填", true); return; }
+  var body = {title: title};
+  var desc = document.getElementById("nf-desc").value.trim();
+  if (desc) body.description = desc;
+  var acc = document.getElementById("nf-acc").value.split("\n")
+    .map(function(s){ return s.trim(); }).filter(Boolean);
+  if (acc.length) body.acceptance = acc.map(function(s){ return {item: s}; });
+  var jira = document.getElementById("nf-jira").value.trim();
+  if (jira) { body.source = "jira"; body.source_ref = jira; }
+  var resp = await fetch("/requirements", {method: "POST",
+    headers: Object.assign(hdr(), {"Content-Type": "application/json"}), body: JSON.stringify(body)});
+  var txt = await resp.text(); var b = null;
+  try { b = JSON.parse(txt); } catch (e) {}
+  if (!resp.ok) { nfMsg("创建失败: " + (b && b.code ? b.code + ": " + (b.message || "") : txt), true); return; }
+  ["nf-title", "nf-desc", "nf-acc", "nf-jira"].forEach(function(id){ document.getElementById(id).value = ""; });
+  document.getElementById("new-form").style.display = "none";
+  nfMsg("已创建", false);
+  loadBoard();  // create 不写事件，SSE 无触发器——主动重拉（spec 4.1 / 审 P1-2）
+}
 loadBoard();
 var es = setupSSE();
 es.onmessage = loadBoard;
@@ -251,8 +302,7 @@ es.onmessage = loadBoard;
 def detail_shell() -> str:
     """GET /requirements/{id}（Accept 含 text/html）深潜壳：fetch detail+summary 渲染
     验收对照/子任务/里程碑/决策风险偏离/事件时间线/需要关注/认领租约/awaiting_human；
-    人面操作 approve/release(reason)/renew/note(content)/abandon(to_state)/reopen(continue)/
-    set_expectations(JSON textarea)；操作失败内联展示 body {code,message}。"""
+    人面操作 = task 生命周期（archive / delete 标题确认）；决策操作 CLI/REST-only（PRD §4.2 修订）；操作失败内联展示 body {code,message}。"""
     return """<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -318,13 +368,18 @@ async function load(){
       fetch("/requirements/" + encodeURIComponent(RID), {headers: hdr()}),
       fetch("/requirements/" + encodeURIComponent(RID) + "/summary", {headers: hdr()}),
     ]);
-    if (!dr.ok || !sr.ok) { root.innerHTML = "<p class='meta'>加载失败: " + dr.status + " / " + sr.status + "</p>"; return; }
+    if (!dr.ok || !sr.ok) {
+      var msg = dr.status === 404 ? "任务不存在（可能已被人删除）" : "加载失败: " + dr.status + " / " + sr.status;
+      root.innerHTML = "<p class='meta'>" + msg + "</p>"; return;
+    }
     render(await dr.json(), await sr.json());
   } catch (e) { root.innerHTML = "<p class='meta'>加载失败: " + esc(String(e)) + "</p>"; }
 }
 var _D = null;
+var _S = null;
 function render(d, s){
   _D = d;
+  _S = s;
   var p = s.progress || {done:0,total:0,blocked:0};
   var pct = p.total ? Math.round(p.done / p.total * 100) : 0;
   var html = "<div class='wrap'>";
@@ -332,8 +387,12 @@ function render(d, s){
     + esc(stateZh(s.state)) + "</span></div>";
   html += "<p class='meta'>id: " + esc(s.requirement_id) + "</p>";
   if (d.history_note) html += "<p class='meta'>" + esc(d.history_note) + "</p>";
-  if (s.awaiting_human) html += "<div class='wait-banner'>等待人决策: kind=" + esc(s.awaiting_human.kind)
-    + " reason=" + esc(s.awaiting_human.reason || "") + "</div>";
+  if (s.awaiting_human) {
+    var hint = s.awaiting_human.kind === "blocked" ? "解除阻塞: kanban approve " : "人面确认: kanban approve ";
+    html += "<div class='wait-banner'>等待人决策: kind=" + esc(s.awaiting_human.kind)
+      + " reason=" + esc(s.awaiting_human.reason || "")
+      + " <span class='meta'>（" + hint + esc(s.requirement_id) + "）</span></div>";
+  }
   var c = s.claim;
   if (c) {
     var ccol = c.signal === "active" ? "var(--green)" : c.signal === "suspect" ? "var(--amber)" : "var(--red)";
@@ -393,20 +452,13 @@ function render(d, s){
   ["info","attention","critical"].forEach(function(v){ html += "<option value='" + v + "'>" + v + "</option>"; });
   html += "</select></div><div id='ev-list'></div></div>";
 
-  html += "<div class='sec wide'><h2>人面操作</h2><div id='op-msg'></div>"
+  html += "<div class='sec wide'><h2>Task 生命周期</h2><div id='op-msg'></div>"
     + "<div class='ops'>"
-    + "<button class='primary' data-op='approve'>approve</button>"
-    + "<button onclick='doRelease()'>release(reason)</button>"
-    + "<button data-op='renew'>renew</button>"
-    + "<button onclick='doReopen(false)'>reopen</button>"
-    + "<button onclick='doReopen(true)'>reopen --continue</button>"
-    + "<select id='abandon-state' style='width:auto'><option value='REJECTED'>REJECTED</option><option value='CANCELLED'>CANCELLED</option></select>"
-    + "<button onclick='doAbandon()'>abandon</button>"
+    + "<button class='primary' data-op='archive'" + (s.state === "ARCHIVED" ? " disabled" : "") + ">archive</button>"
     + "</div>"
-    + "<div class='op-row'><textarea id='note-input' rows='2' placeholder='note content'></textarea>"
-    + "<button style='margin-top:6px' onclick='doNote()'>note</button></div>"
-    + "<div class='op-row'><textarea id='acc-input' rows='6' placeholder='set_expectations: JSON acceptance 数组'></textarea>"
-    + "<button style='margin-top:6px' onclick='doExpectations()'>set_expectations</button></div></div>";
+    + "<div class='op-row' style='margin-top:14px'>"
+    + "<button onclick='doDelete()'>delete</button>"
+    + "<span class='meta'>整需求硬删（不可逆，建议先 kanban export；输入标题确认）</span></div></div>";
   html += "</div>";
   document.getElementById("detail-root").innerHTML = html;
   Array.prototype.forEach.call(document.querySelectorAll("[data-op]"), function(b){
@@ -439,37 +491,13 @@ async function doOp(name){
   var resp = await fetch("/requirements/" + encodeURIComponent(RID) + "/" + name, {method: "POST", headers: hdr()});
   handleOpResult(resp);
 }
-async function doRelease(){
-  var reason = prompt("release reason");
-  if (reason === null) return;
-  var resp = await fetch("/requirements/" + encodeURIComponent(RID) + "/release",
-    {method: "POST", headers: Object.assign(hdr(), {"Content-Type": "application/json"}), body: JSON.stringify({reason: reason})});
-  handleOpResult(resp);
-}
-async function doReopen(cont){
-  var opts = {method: "POST", headers: hdr()};
-  if (cont) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify({continue: true}); }
-  var resp = await fetch("/requirements/" + encodeURIComponent(RID) + "/reopen", opts);
-  handleOpResult(resp);
-}
-async function doAbandon(){
-  var st = document.getElementById("abandon-state").value;
-  var resp = await fetch("/requirements/" + encodeURIComponent(RID) + "/abandon",
-    {method: "POST", headers: Object.assign(hdr(), {"Content-Type": "application/json"}), body: JSON.stringify({to_state: st})});
-  handleOpResult(resp);
-}
-async function doNote(){
-  var content = document.getElementById("note-input").value;
-  var resp = await fetch("/requirements/" + encodeURIComponent(RID) + "/note",
-    {method: "POST", headers: Object.assign(hdr(), {"Content-Type": "application/json"}), body: JSON.stringify({content: content})});
-  handleOpResult(resp);
-}
-async function doExpectations(){
-  var txt = document.getElementById("acc-input").value;
-  var acceptance;
-  try { acceptance = JSON.parse(txt); } catch (e) { flash("set_expectations: JSON 解析失败", true); return; }
-  var resp = await fetch("/requirements/" + encodeURIComponent(RID) + "/expectations",
-    {method: "PUT", headers: Object.assign(hdr(), {"Content-Type": "application/json"}), body: JSON.stringify({acceptance: acceptance})});
+async function doDelete(){
+  if (!_S) return;
+  var t = prompt("删除不可逆（建议先 kanban export）。当前状态: " + stateZh(_S.state)
+    + "，事件 " + _D.events.length + " 条。输入任务标题确认删除:");
+  if (t === null) return;
+  if (t.trim() !== _S.title) { flash("标题不匹配，已取消删除", true); return; }
+  var resp = await fetch("/requirements/" + encodeURIComponent(RID), {method: "DELETE", headers: hdr()});
   handleOpResult(resp);
 }
 async function handleOpResult(resp){
