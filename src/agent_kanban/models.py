@@ -50,7 +50,7 @@ class Requirement(Base):
     description: Mapped[str | None] = mapped_column(Text)
     acceptance: Mapped[list] = mapped_column(JSON, nullable=False, default=list)  # 人写预期验收锚
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="OPEN")
-    awaiting_human: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {reason, evidence, since, kind}
+    awaiting_human: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)  # {reason, evidence, since, kind}
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 

@@ -133,7 +133,24 @@ async def ensure_schema() -> None:
         async with get_session_factory()() as session:
             await session.execute(text("INSERT OR IGNORE INTO seq_counter (id, value) VALUES (1, 0)"))
             await session.commit()
+    await heal_null_text_markers()
     _Runtime.schema_ready = True
+
+
+async def heal_null_text_markers() -> int:
+    # 真实 marker 恒为 JSON 对象文本，4 字节 `null` 只可能来自旧编码清除
+    async with get_read_session_factory()() as session:
+        n = (await session.execute(
+            text("SELECT COUNT(*) FROM requirements WHERE awaiting_human = 'null'")
+        )).scalar_one()
+    if not n:
+        return 0
+    async with get_session_factory()() as session:
+        res = await session.execute(
+            text("UPDATE requirements SET awaiting_human = NULL WHERE awaiting_human = 'null'")
+        )
+        await session.commit()
+        return res.rowcount
 
 
 async def next_seq(session: AsyncSession) -> int:
