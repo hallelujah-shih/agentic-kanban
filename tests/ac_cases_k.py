@@ -208,3 +208,80 @@ def k_archive():
     code4, _ = m5.call_err("add_record", {"requirement_id": rid4, "kind": "note", "title": "post-archive"})
     ok("k_archive(iii): archive 后 agent 写 -> no_active_claim（BCD I6）", code4 == "no_active_claim", code4)
     m5.close()
+
+
+def k_delete():
+    print("== M1-5.3: delete 五表原子零残留 + REST 404/MCP not_found + agent 写 not_found + 确认门 + 写锁竞争 503")
+    def _rich(db, title):
+        """富需求：claim（已结束）+ 子任务 + 里程碑 + note 事件。"""
+        rid = seed_req(db, title)
+        m = MCP(db).start()
+        m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+        m.call_ok("add_subtask", {"requirement_id": rid, "title": "st1", "ordinal": 1})
+        m.call_ok("add_milestone", {"requirement_id": rid, "title": "ms1", "planned_at": "2026-12-31T00:00:00Z"})
+        m.call_ok("add_record", {"requirement_id": rid, "kind": "note", "title": "n1"})
+        m.close()
+        cli_ok(db, "release", "--requirement-id", rid, "--reason", "test release")
+        return rid
+
+    # (i) CLI --yes：五表零残留（含需求行本身）
+    db = new_db()
+    rid = _rich(db, "k-del-rich")
+    res = _run_cli(db, ["delete", "--requirement-id", rid, "--yes"])
+    ok("k_delete(i): CLI delete --yes 退出 0", res.returncode == 0, f"rc={res.returncode} stderr={res.stderr[-200:]}")
+    body = json.loads(res.stdout)
+    ok("k_delete(i): 响应 deleted=true", body.get("deleted") is True, str(body))
+    rows = {t: query(db, f"SELECT COUNT(*) AS n FROM {t} WHERE requirement_id=?", (rid,))[0]["n"]
+            for t in ("events", "subtasks", "milestones", "claims")}
+    req_n = query(db, "SELECT COUNT(*) AS n FROM requirements WHERE id=?", (rid,))[0]["n"]
+    ok("k_delete(i): 五表零残留（需求行本身不存在，与 prune 语义区分，审 P2-7）",
+       all(v == 0 for v in rows.values()) and req_n == 0, f"{rows} req={req_n}")
+    # (ii) REST 200 -> 404 + MCP not_found + list_tasks 排除
+    db2 = new_db()
+    rid2 = _rich(db2, "k-del-rest")
+    rest = REST(db2).start()
+    try:
+        m = MCP(db2).start()
+        code, b = rest.req("GET", f"/requirements/{rid2}")
+        ok("k_delete(ii): 删前 GET detail 200", code == 200, str(code))
+        code, b = rest.req("DELETE", f"/requirements/{rid2}")
+        ok("k_delete(ii): REST DELETE 200 deleted=true", code == 200 and b.get("deleted") is True, f"{code} {b}")
+        code, b = rest.req("GET", f"/requirements/{rid2}")
+        ok("k_delete(ii): 删后 GET detail -> 404 not_found", code == 404 and b["code"] == "not_found", f"{code} {b}")
+        code2, _ = m.call_err("get_task_detail", {"requirement_id": rid2})
+        ok("k_delete(ii): MCP get_task_detail -> not_found", code2 == "not_found", code2)
+        ids = [t["requirement_id"] for t in m.call_ok("list_tasks", {})["tasks"]]
+        ok("k_delete(ii): list_tasks 不含已删任务", rid2 not in ids, str(ids))
+        # (iii) agent 写操作 -> 结构化 not_found（非崩溃/挂起，BCD S8）
+        code3, _ = m.call_err("add_record", {"requirement_id": rid2, "kind": "note", "title": "x"})
+        ok("k_delete(iii): agent add_record 已删任务 -> not_found", code3 == "not_found", code3)
+        m.close()
+    finally:
+        rest.stop()
+    # (iv) 确认门：n / EOF / y（+--yes 已在 (i) 覆盖）
+    for label, text, expect_del in (("n", "n\n", False), ("EOF", "", False), ("y", "y\n", True)):
+        db3 = new_db()
+        rid3 = _rich(db3, f"k-del-{label}")
+        res3 = _run_cli(db3, ["delete", "--requirement-id", rid3], input_text=text)
+        req_n3 = query(db3, "SELECT COUNT(*) AS n FROM requirements WHERE id=?", (rid3,))[0]["n"]
+        ok(f"k_delete(iv): stdin '{label}' -> {'已删+退出0' if expect_del else '不删+非零退出+无traceback'}",
+           (req_n3 == 0) == expect_del and (res3.returncode == 0) == expect_del
+           and "Traceback" not in res3.stderr and "Traceback" not in res3.stdout,
+           f"rc={res3.returncode} req={req_n3}")
+        if not expect_del:
+            ok(f"k_delete(iv): stdin '{label}' -> aborted 消息（prune 确认门同口径）",
+               "aborted: nothing deleted" in res3.stderr, res3.stderr[-200:])
+    # (v) 写锁竞争 -> 503 db_busy（结构化，非 500）
+    db4 = new_db()
+    rid4 = _rich(db4, "k-del-busy")
+    rest2 = REST(db4, extra={"AGENT_KANBAN_BUSY_TIMEOUT_MS": "50"}).start()
+    holder = sqlite3.connect(str(db4))
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        code, b = rest2.req("DELETE", f"/requirements/{rid4}")
+        ok("k_delete(v): 写锁竞争 -> 503 db_busy", code == 503 and b["code"] == "db_busy", f"{code} {b}")
+        ok("k_delete(v): 竞争失败未删", query(db4, "SELECT COUNT(*) AS n FROM requirements WHERE id=?", (rid4,))[0]["n"] == 1, "deleted?")
+    finally:
+        holder.rollback()
+        holder.close()
+        rest2.stop()

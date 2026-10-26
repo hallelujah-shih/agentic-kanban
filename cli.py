@@ -87,6 +87,36 @@ def _cmd_archive(args: argparse.Namespace) -> int:
     return _invoke("archive_requirement", requirement_id=args.requirement_id)
 
 
+def _cmd_delete(args: argparse.Namespace) -> int:
+    """整需求硬删（spec 4.3）：读 preview（title/state/事件数）-> 确认门（stdin y/N，
+    EOF/拒绝/非 y 中止不删、非零退出，确认期间不持写事务；--yes 跳过）->
+    delete_requirement 单事务原子删除（不写事件）。"""
+    surface, conn = cli_actor()
+    try:
+        info = asyncio.run(run_op(
+            get_session_factory(), ops.delete_preview, is_write=False,
+            requirement_id=args.requirement_id, actor_surface=surface, actor_conn=conn,
+        ))
+        if not args.yes:
+            sys.stdout.write(
+                f"将硬删整个需求: {info['title']}（state={info['state']}，{info['event_count']} 条事件）。"
+                f"删除不可逆，建议先 `kanban export` 留档。继续？[y/N] "
+            )
+            sys.stdout.flush()
+            if sys.stdin.readline().strip().lower() != "y":
+                print("aborted: nothing deleted", file=sys.stderr)
+                return 1
+        result = asyncio.run(run_op(
+            get_session_factory(), ops.delete_requirement, is_write=True,
+            requirement_id=args.requirement_id, actor_surface=surface, actor_conn=conn,
+        ))
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _cmd_reopen(args: argparse.Namespace) -> int:
     return _invoke("reopen", requirement_id=args.requirement_id, continue_=args.continue_)
 
@@ -273,6 +303,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("archive", help="归档（任一状态 -> ARCHIVED 终态；同事务结束未结束认领）")
     p.add_argument("--requirement-id", required=True)
     p.set_defaults(handler=_cmd_archive)
+
+    p = sub.add_parser("delete", help="整需求硬删（全部子行原子删除、不写事件；--yes 跳过确认门）")
+    p.add_argument("--requirement-id", required=True)
+    p.add_argument("--yes", action="store_true", help="跳过确认门（非交互场景）")
+    p.set_defaults(handler=_cmd_delete)
 
     p = sub.add_parser("reopen", help="DONE->REOPEN；--continue REOPEN->OPEN（回到可认领）")
     p.add_argument("--requirement-id", required=True)

@@ -402,6 +402,39 @@ async def archive_requirement(
     return {"requirement_id": requirement_id, "state": "ARCHIVED"}
 
 
+async def delete_preview(
+    session: AsyncSession,
+    *,
+    requirement_id: str,
+    actor_surface: str,
+    actor_conn: str,
+) -> dict:
+    req = await require_requirement(session, requirement_id)
+    count = await session.scalar(
+        select(func.count()).select_from(Event).where(Event.requirement_id == requirement_id)
+    )
+    return {"requirement_id": requirement_id, "title": req.title, "state": req.state,
+            "event_count": count or 0}
+
+
+async def delete_requirement(
+    session: AsyncSession,
+    *,
+    requirement_id: str,
+    actor_surface: str,
+    actor_conn: str,
+) -> dict:
+    await require_requirement(session, requirement_id)
+    # FK 序：events（FK 指向 claims/subtasks/milestones）-> subtasks/milestones/claims -> requirement；
+    # 不写事件（整链随属主消失，I2：链永不半断的推广形态）
+    await session.execute(delete(Event).where(Event.requirement_id == requirement_id))
+    await session.execute(delete(Subtask).where(Subtask.requirement_id == requirement_id))
+    await session.execute(delete(Milestone).where(Milestone.requirement_id == requirement_id))
+    await session.execute(delete(Claim).where(Claim.requirement_id == requirement_id))
+    await session.execute(delete(Requirement).where(Requirement.id == requirement_id))
+    return {"requirement_id": requirement_id, "deleted": True}
+
+
 # ---------------------------------------------------------------- agent 面（MCP）
 async def claim_task(
     session: AsyncSession,

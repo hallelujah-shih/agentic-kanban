@@ -118,6 +118,11 @@ async def archive_requirement(requirement_id: str) -> dict:
     return await _run("archive_requirement", requirement_id=requirement_id)
 
 
+@router.delete("/requirements/{requirement_id}")
+async def delete_requirement(requirement_id: str) -> dict:
+    return await _run("delete_requirement", requirement_id=requirement_id)
+
+
 @router.get("/requirements")
 async def list_requirements() -> dict:
     return await _run("list_tasks", is_write=False)
