@@ -737,15 +737,18 @@ def k_web():
            "人面确认: kanban approve" in raw2 and "解除阻塞: kanban approve" in raw2, "提示缺失")
         ok("k_web: 深潜壳无原始输出（既有契约保持）", secret not in raw2, "shell leak")
         # AC1 数据路径：Web 表单映射的 payload（一行一条 -> {item}）+ jira 映射（spec case 7）
+        # token 必带（REST 以 token="sekret" 启动，中间件对全路径强制，T4 红跑实证 401）
         code, body = rest.req("POST", "/requirements", {"title": "k-create",
-                                                        "acceptance": [{"item": "吞吐 >= 5000"}, {"item": "p99 < 200ms"}]})
+                                                        "acceptance": [{"item": "吞吐 >= 5000"}, {"item": "p99 < 200ms"}]},
+                              token="sekret")
         ok("k_web(AC1): 两行锚 create 201 OPEN", code == 201 and body["state"] == "OPEN", f"{code} {body}")
         ridc = body["requirement_id"]
-        code, s = rest.req("GET", f"/requirements/{ridc}/summary")
+        code, s = rest.req("GET", f"/requirements/{ridc}/summary", token="sekret")
         a_ids = [a["anchor_id"] for a in s["acceptance_table"]]
         ok("k_web(AC1): 锚自动编号 a1/a2（normalize_anchors）", a_ids == ["a1", "a2"], str(a_ids))
         code, body = rest.req("POST", "/requirements",
-                              {"title": "k-create-jira", "source": "jira", "source_ref": "https://jira.example/X-1"})
+                              {"title": "k-create-jira", "source": "jira", "source_ref": "https://jira.example/X-1"},
+                              token="sekret")
         row_c = query(db, "SELECT source, source_ref FROM requirements WHERE id=?", (body["requirement_id"],))[0]
         ok("k_web(AC1): jira 链接 -> source=jira + source_ref 映射",
            row_c["source"] == "jira" and row_c["source_ref"] == "https://jira.example/X-1", str(dict(row_c)))
