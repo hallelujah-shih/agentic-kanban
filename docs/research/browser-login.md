@@ -118,7 +118,7 @@ status、未登录报错、过期后两条路径的报错信息——全部符�
 - 反爬/指纹检测：内网 SSO 通常无此问题；若目标有，headless 指纹可被识别，
   需要 headed 或指纹伪装（超出本调研范围）
 
-## 9. 真实环境验证（2026-10-23，jira.intra.example.com）
+## 9. 真实环境验证（2026-10-23，某 JIRA 7.1.7 内网实例）
 
 - 目标: JIRA 7.1.7（原生登录，非外部 SSO）
 - 浏览器路径实测通过: headless 填表（`os_username`/`os_password`，提交 `#login-form-submit`）

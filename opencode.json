@@ -3,7 +3,7 @@
   "mcp": {
     "kanban": {
       "type": "local",
-      "command": ["/home/user/test/AgenticKanban/.venv/bin/agent-kanban", "mcp"],
+      "command": ["./.venv/bin/agent-kanban", "mcp"],
       "enabled": true
     }
   }

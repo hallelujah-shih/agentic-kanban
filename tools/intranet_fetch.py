@@ -16,9 +16,9 @@
 - 2FA：login 加 --headed，在有显示的终端手动完成，脚本等成功后导出。
 
 用法：
-  export AGENT_INTRA_USER='shih' AGENT_INTRA_PASSWORD='...'   # 内网通用账号（*.intra.* 域）
+  export AGENT_INTRA_USER='your_username' AGENT_INTRA_PASSWORD='...'   # 内网通用账号（*.intra.* 域）
   intranet_fetch.py login --site jira --url <登录页> --success-url <登录后URL特征串>
-  intranet_fetch.py fetch --site jira --url https://jira.intra.example.com/browse/PROJ-1 [--browser]
+  intranet_fetch.py fetch --site jira --url https://jira.example.com/browse/PROJ-1 [--browser]
   intranet_fetch.py status --site jira
 站点专属密码变量 AGENT_<SITE>_PW 优先于 AGENT_INTRA_PASSWORD。
 
