@@ -299,7 +299,7 @@ git commit -m "T1: ARCHIVED 状态值 + 终态集合单一事实源 operations_u
 **BCD 五元组映射**:
 - Premortem: F1（archive/abandon 语义区分——release_reason="archive" + 独立终态是审计可区分的记录地基）、F3（marker 清除 + 认领同事务结束，归档后不留"等你决策"残影）。
 - Invariants: I1（C6 不受影响，approve 语义零改动回归既有套件）、I3（archive 事件与 abandon 事件可区分，k_archive 事件形态断言）、I6（ARCHIVED 后 agent 不可认领/不可写）。
-- BDD: S2（七状态矩阵 CLAIMED 行，k_archive(i)）、S3（DONE 行，k_archive(i)）、S5（BLOCKED marker 清除行，k_archive(i)）。
+- BDD: S2（七状态矩阵 CLAIMED 行，k_archive(i)）、S3（DONE 行，k_archive(i)）、S5（BLOCKED marker 清除行，k_archive(i)；S5 中 list_awaiting 排除语义受既有缺陷 G12 影响——SQL 过滤层对 "null" 文本泄漏，波及所有既有清 marker 路径，本批 pin 可见面（无存活 marker），G12 单独立项）。
 - Policies: P1（任意状态可达，含终态再归档）、P2（同事务结束认领 + 清 marker）。
 - SBE: E2（k_archive(i) CLI channel 直接收敛：state/claims/事件形态/归属断言）。
 
@@ -357,7 +357,11 @@ def k_archive():
             cid = query(db, "SELECT id FROM claims WHERE requirement_id=?", (rid,))[0]["id"]
             ok(f"k_archive({state}): 事件 claim_id 归属到认领", ev["claim_id"] == cid, f"{ev['claim_id']} vs {cid}")
         if need_blocked:
-            ok("k_archive(BLOCKED): awaiting_human 清除", row["awaiting_human"] is None, str(row["awaiting_human"]))
+            # 裸存储双空形态：SQLAlchemy JSON 列 none_as_null=False，清 marker 存文本 "null"（非 SQL NULL，
+            # main 既有行为，approve/abandon 路径同形）；业务契约 = 无存活 marker（存活 = JSON dict 文本，仍红）。
+            # list_awaiting 过滤层对该文本的泄漏 = 既有缺陷 G12（登记 known-gaps，非本批引入，不在此 pin）。
+            ok("k_archive(BLOCKED): awaiting_human 清除（无存活 marker）",
+               row["awaiting_human"] in (None, "null"), str(row["awaiting_human"]))
     # (ii) REST channel（surface=cli / conn=rest:* 前缀）+ 再 archive 允许 + 404
     db2 = new_db()
     rid2 = seed_req(db2, "k-arch-rest")
@@ -1065,6 +1069,7 @@ line 11：
 | R1 | agent harness 对 delete 后 not_found 的处理在本仓之外（opencode 会话层）：可能误判系统故障重试/上报 | ② | 错误码语义（not_found 含 requirement id）+ README/docs 写明"任务被删除属人面操作结果"；harness k_delete 断言 agent 面 not_found；残余接受 | 2026-10-26 登记（task-lifecycle spec §13） |
 | R3 | archive/abandon 语义区分靠使用纪律（人可能用 archive 替代 abandon 让任务消失），非结构强制 | ② | agent 面无 archive 工具（结构性半边）；PRD §0/§4.2 措辞 + UI 语义提示；人工定期观察 archive/abandon 比例（单用户规模不做自动化告警） | 2026-10-26 登记（BCD F1） |
 | R4 | 决策操作移 CLI 后 awaiting 堆积风险（人习惯点按钮，发现无入口） | ② | 深潜页/卡片等待人横幅静态 CLI 提示 + web.md 人面 surface 速查；残余：习惯迁移靠使用 | 2026-10-26 登记（BCD F3） |
+| G12 | list_awaiting 放行已清 marker 任务（**既有缺陷，非 M1-5 引入**）：`awaiting_human` JSON 列 none_as_null=False，清 marker 存文本 "null"，SQL 谓词 `IS NOT NULL`（operations.py:918）匹配该文本 -> approve/abandon/archive on BLOCKED 后任务仍出现在 list_awaiting（awaiting_human=null）；detail/board 可见面不受影响（反序列化归一 None）。复现: claim -> mark_blocked -> approve -> MCP list_awaiting。修复选项（未裁决，单独立项）: ① JSON(none_as_null=True) + 存量 "null" 行迁移；② 谓词补 `isnot("null")`（无迁移但 pin 编码） | ② | 登记 + 复现命令入库；M1-5 的 k_archive 只 pin 可见面（无存活 marker），不 pin 该过滤层 | 2026-10-26 登记（M1-5 T2 域外发现，主循环复验坐实） |
 ```
 
 - [ ] **Step 6: `docs/business-contracts/task-lifecycle-positioning.md` S1 修订记录（盲审·正典老化）**
@@ -1076,6 +1081,10 @@ Then 看板"待认领"列出现新任务（state=OPEN），深潜页验收对照
 并在 S1 场景块之后（S2 修订记录同格式）追加：
 ```
 **修订记录**: 2026-10-26 主循环——S1 Then "SSE 推送使看板自动刷新" 子句陈旧：spec 审 P1-2 已折入（create 不写事件 -> 无 SSE 触发器，前端主动重拉），本处同步。
+```
+S5 Then 子句 `任务不再出现在"等你决策"清单/list_awaiting` 追加限定：`（可见面：detail/board 已清除；list_awaiting 的 SQL 过滤层受既有缺陷 G12 影响——对文本 "null" 泄漏，波及所有既有清 marker 路径，非本批引入，修复单独立项）`，并追加修订记录：
+```
+**修订记录**: 2026-10-26 主循环——S5 list_awaiting 排除语义在 SQL 过滤层不成立（G12，既有缺陷，approve/abandon 路径同形），本批收敛范围为可见面清除。
 ```
 
 - [ ] **Step 7: `README.md` line 3 定位行**
@@ -1092,7 +1101,7 @@ AI 时代的看板：不是任务状态跟踪，而是**大黑箱（AI 自动化
 
 Run: `uv run python tests/run_ac.py` -> 全绿（prune 文案改动无断言影响，确认 `prune_confirm` 绿）。
 ```bash
-git add -A && git commit -m "T5: 文档同步（PRD §0 七处（含报告纪律预期模式）/§3.1/§3.4/§4.2/§6 定位与生命周期面、design.md §0 旧措辞、web.md /board 行 + surface 重写 + 冒烟清单、BCD S1 SSE 子句修订记录、README 定位行）+ prune 确认文案补 ARCHIVED + known-gaps 登记 R1/R3/R4 残余"
+git add -A && git commit -m "T5: 文档同步（PRD §0 七处（含报告纪律预期模式）/§3.1/§3.4/§4.2/§6 定位与生命周期面、design.md §0 旧措辞、web.md /board 行 + surface 重写 + 冒烟清单、BCD S1 SSE 子句 + S5 list_awaiting 限定修订记录、README 定位行）+ prune 确认文案补 ARCHIVED + known-gaps 登记 R1/R3/R4 残余 + G12（既有 list_awaiting null 文本泄漏，主循环复验坐实）"
 ```
 
 ---
