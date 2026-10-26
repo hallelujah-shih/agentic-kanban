@@ -108,9 +108,9 @@ docker stop ak-t1-smoke
 | node | 宿主 v24.21.0（本地 e2e / node --check）；CI 由 setup-node@v4 钉 22（防 runner 默认 node 漂移） | plan oracle 版本节；t3/r2/node-check.log "Node.js v24.21.0"；ci.yml:22 |
 | docker | 29.9.2 | plan oracle 版本节（宿主实测） |
 | uv | 宿主 0.11.12；容器内 `pip install uv` 未钉版 -> 0.13.5（pypi 轨 build 同链） | plan oracle 版本节；t1/g4.log [7/8] "Successfully installed uv-0.13.5" |
-| @playwright/test | 1.64.1（package.json `^1.64.1`，lock 钉 1.64.1，registry.npmjs.org 生成）；浏览器 chromium-1248（宿主 Fedora 走 ubuntu24.04 fallback 构建，CI ubuntu-latest = Ubuntu 24.04 原生） | t3/net-probe.log:42 "chromium-1248"；package-lock.json |
+| @playwright/test | 1.64.1（package.json `^1.64.1`，lock 钉 1.64.1，registry.npmjs.org 生成）；浏览器 chromium-1248（宿主 Fedora 走 ubuntu24.04 fallback 构建；CI 实跑 Ubuntu 26.04 启动正常） | t3/net-probe.log:42 "chromium-1248"；package-lock.json；GH run 40330909867 |
 | e2e 计时 | 12 spec / **12.7s**（workers=1）；墙钟 **13.9s**（含 webServer 起服务 + seed） | t3/g5.log:24-25；t3/g5.start / g5.end |
-| GH runner | ubuntu-latest = Ubuntu 24.04 / 4 核 / 16GB / 14GB SSD（调研 4.4，GH 官方规格） | plan oracle 版本节 |
+| GH runner | ubuntu-latest **实测 = Ubuntu 26.04**（image 20261012.163；2026-10-19 起标签迁移，调研 4.4 的 24.04 规格已过时） | GH run 40330909867 "Set up job" 段 |
 
 ## 证据索引（根目录 /home/shih/.tmp-ak-m16/ci-build/）
 
@@ -165,6 +165,7 @@ docker stop ak-t1-smoke
 1. **CI actions 以 tag 钉版**（actions/checkout@v4 / setup-node@v4 / setup-uv@v7，非全 SHA）— 单用户、无 secret 威胁模型下可接受（日志无 secret 面，仓 PUBLIC），二期再议升 SHA 钉版（plan 审 F10 补记）
 2. **本地 npm 双源** — 宿主默认 registry = npmmirror（t3/net-probe.log:3）；package-lock.json 由 registry.npmjs.org 生成（T3 纪律）。后续本地 npm 操作（装新依赖等）须显式 `--registry=https://registry.npmjs.org` 或按 lock 走 `npm ci`，防锁与源漂移
 3. **e2e 浏览器下载不加 GH 缓存** — 20-40s 在 15min timeout 预算内，缓存键维护不划算（不修清单，二期再议）
+4. **actions Node.js 20 deprecation** — checkout@v4 / setup-node@v4 当前被 GH 强制跑在 Node 24（警告不红）；强制兼容策略撤销前须 bump 版本（GH 首跑警告在案，p5-gh-run1.full.log）
 
 ## 已知局限
 
@@ -232,11 +233,15 @@ JSON
 
 （strict=false = 不要求合入前分支最新（loose）；如需 up-to-date 改 true。）
 
+## GH 首跑记录（PR #4，run 40330909867，2026-10-26，merge 前置证据）
+
+三 job 全绿：test 2m43s / e2e 41s / docker 18s（runner 实测 Ubuntu 26.04）。关键证据（p5-gh-run1.full.log，产物目录 /home/shih/.tmp-ak-m16/ci-build/）：
+- test: `== 结果: 514/514 PASS`（GH 单一 pypi venv 态首测，混合态保真缺口 0 论证 t2/s1-fidelity.md 收口）+ 壳 node --check 步在场
+- e2e: `12 passed (12.8s)`（npm ci 跨 registry 复现 + `--with-deps chromium` ubuntu apt 全通）
+- docker: pypi 轨实证（`pip install uv --index-url https://pypi.org/simple/` + export/venv/`UV_INDEX_URL=pypi uv pip install` 分支展开）= **G3b 闭合**（T1-G3 环境面阻塞双点收口完毕）
+- 观察项（非缺陷）: actions/checkout@v4 与 setup-node@v4 触发 Node.js 20 deprecation 警告（被强制跑在 Node 24）——强制兼容期内无碍，强制策略撤销前须 bump action 版本（已知实践 4）；setup-uv 并行 job cache 抢占警告一次（自动恢复）
+
 ## P5 未核区登记（交接）
 
-1. **GH runner 全链**（本地模拟只证机制，不证 runner 环境；差异在 P5 首次真实 run 收口，该 run 是 merge 前置证据）:
-   - npm ci 跨 registry 复现（lock 由 npmjs.org 生成，runner 海外直连 npmjs）
-   - `npx playwright install --with-deps chromium`（ubuntu apt 系统库，runner root）
-   - 容器内 pypi 轨真实 TLS = **G3b 闭合点**（docker job 绿 = G3 闭合）
-   - 全量套件 GH 单一 pypi venv 态首测（本地 S1 为"顶层 pypi venv + 子进程办公网 venv"混合态，保真论证 t2/s1-fidelity.md：两 venv freeze diff = IDENTICAL，缺口 = 0）
-2. **E6 单次运行无 flaky 样本**（12/12 单样本）；CI `retries:1` 已预置（playwright.config.js:13，仅 CI env 生效）+ e2e 首期非必需 check = 限险双保险
+1. ~~GH runner 全链~~ **已收口**（上节 GH 首跑记录，2026-10-26）
+2. **E6 单次运行无 flaky 样本**（12/12 单样本 + GH 首跑单样本）；CI `retries:1` 已预置（playwright.config.js:13，仅 CI env 生效）+ e2e 首期非必需 check = 限险双保险
