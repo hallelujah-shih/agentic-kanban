@@ -2,10 +2,27 @@
 
 **Goal**: 人获得 task 级生命周期管理权（Web 创建/归档/删除），新增 ARCHIVED 终态，看板 Web 瘦身为"只读 + 生命周期"，决策操作 Web 移除、REST/CLI 保留（语义零改动）。
 **Architecture**: ARCHIVED = 新终态 + 唯一人面边 `(任一 -> ARCHIVED)`；archive 复用 abandon 的"同事务结束认领"模式；delete = 整需求五表原子硬删（不写事件）；终态集合收敛为 `operations_util.TERMINAL_STATES` 单一事实源（board/list_tasks/prune 三处引用）；Web 壳移除决策按钮、加生命周期操作区与新建表单。
-**Tech Stack**: Python 3.12 / FastAPI / SQLAlchemy 2.0 async / SQLite / 自研 AC harness（非 pytest）。
+**Tech Stack**: Python 3.14（.venv 3.14.8）/ FastAPI / SQLAlchemy 2.0 async / SQLite / 自研 AC harness（非 pytest）。
 **Spec**: `docs/superpowers/specs/2026-10-26-task-lifecycle-positioning-design.md`（对抗审查 APPROVE-WITH-FIXES 已折入，报告 `-review.md` 同目录）。
 **BCD**: `docs/business-contracts/task-lifecycle-positioning.md`（user 裁决 Q1=A / Q2=方案1 / Q3=from=None 沿用 REJECTED 先例）。
 **分支/worktree**: `task-lifecycle`（`.worktree/task-lifecycle`，基于 main 8767385）。
+**批次**: M1-5（M1-1..M1-4 已合入 main；验证文档 `docs/ops/m1-5-verification.md`）。
+
+## 影响面（分级依据）
+
+- ① 外部接口面：**在**。新 REST 端点（`POST /requirements/{id}/archive`、`DELETE /requirements/{id}`）、新 CLI 子命令（`archive`/`delete`）、新 Web 面（新建表单/archive-delete 操作/3 tab）；既有契约行为变化：`list_tasks` 与 board 默认列表新排除 ARCHIVED（agent 可见）。
+- ② 新入口/信任边界：**在**。`DELETE /requirements/{id}` = 新破坏性人面入口。防护 = 仅人面（MCP 无此工具，I4）+ CLI 确认门（y/N + 导出建议）+ Web 标题输入确认（隐含 B）+ 不写事件（I2 推广形态）。
+- ③ 热路径：**不在**。archive/delete 低频操作；list_tasks/board 过滤为 O(1) 谓词常量替换。
+- ④ 业务规则变化：**在**。新终态 ARCHIVED（P1-P7 + 隐含 A/B/C）、新删除路径（I2/I5）、定位重述（I3）。Phase 0.5 已满足：BCD 7 节齐（上方路径），spec 已引用。
+- 结论：**全六门**（G1-G6 全走）。
+
+## 验证入口与 oracle（机械预检）
+
+- 验证入口（tier-1）: `uv run python tests/run_ac.py`（工作目录 = worktree 根）；新用例 `--only k_state,k_archive,k_delete,k_web` 单跑。
+- tier-0: `uv run python -m compileall -q src cli.py tests`。
+- tier-2（合并门槛）: tier-1 全绿 + `docs/ops/m1-5-verification.md` 填齐（判据/结果/红绿证据/BCD 映射/重跑规格，格式同 `m1-4-verification.md`）+ `git ls-files` 全 tracked。
+- 基线: base main 8767385（worktree 切出点）；批次首个 subagent 开工时先跑一次全量，记录基线断言数（预期 382，以 m1-4-verification.md 全量 382/382 为上界参考）写入验证文档；基线不绿 = 停，先修基线。
+- oracle 环境: python 3.14.8（.venv）；依赖版本以批次开工时 `uv pip list` 实际值为准，记入验证文档（m1-4 记录为 mcp 2.3.0 / httpx2 2.16.0 / fastapi 0.158.2 / sqlalchemy 2.1.6）。
 
 ## 全局约束
 
@@ -55,12 +72,19 @@
 - Produces: `operations_util.TERMINAL_STATES: tuple[str, ...]`（("DONE","REJECTED","CANCELLED","ARCHIVED")）；state 值 "ARCHIVED" 全链路可识别；三处默认过滤（board / list_tasks / prune）排除 ARCHIVED；`claim/approve/reopen on ARCHIVED -> illegal_state` 且零副作用。`archive_requirement` 本任务**不提供**（T2）。
 - 测试基建既有签名（ac_lib.py，勿改动）：`ok(name, cond, detail)`、`new_db() -> Path`、`seed_req(db, title) -> rid`、`seed_reopen(db, rid)`、`query(db, sql, params) -> list[sqlite3.Row]`、`cli_ok(db, *args) -> dict`、`cli_err(db, *args) -> (code, message)`、`MCP(db).start()`、`m.call_ok(tool, args) -> dict`、`m.call_err(tool, args) -> (code, task_id)`、`REST(db, extra=...).start()`、`rest.req(method, path, body=None, params=None, token=None, headers=None) -> (status, body)`。
 
+**BCD 五元组映射**（BCD = `docs/business-contracts/task-lifecycle-positioning.md`）:
+- Premortem: F2（agent 侧可见性——终态过滤是"已归档不静默回列表"的地基）、F4 前置（终态集合正确是 prune 不误删归档数据的地基）。
+- Invariants: I2（prune 整删单位不变，k_state(iv) 断言需求行保留）、I6（ARCHIVED 不可认领，k_state(ii) claim 零副作用）、I7（ARCHIVED 入 prune 终态集合，k_state(iv)）。
+- BDD: S2/S3 的地基（默认列表/板排除，本任务不含 archive 操作本身）、S7（prune 覆盖，k_state(iv) 三任务场景）。
+- Policies: P5（PRUNE_TERMINAL_STATES 收敛）、P6（claim on ARCHIVED -> illegal_state）。
+- SBE: E4（k_state(iv) 直接收敛：A 整删/B 保留/C 保留）。
+
 **Steps:**
 
 - [ ] **Step 1: 建 `tests/ac_cases_k.py`（文件头 + helpers + k_state）**
 
 ```python
-"""M1-4 task 生命周期用例（tests/ac_cases_k.py + run_ac 注册）。
+"""M1-5 task 生命周期用例（tests/ac_cases_k.py + run_ac 注册）。
 
 oracle 纪律：断言引 PRD §0（定位：记录点/审计点）/§3.1（状态机含 ARCHIVED）/§3.4
 （approve 判定表）/§4.1（list_tasks 获取未完成任务）/§6（数据保留：终态需求级原子窗口
@@ -116,7 +140,7 @@ def _backdate(db: Path, rid: str, days: int = 400) -> None:
 
 
 def k_state():
-    print("== M1-4.1: ARCHIVED 状态值 + 终态集合单一事实源（三默认列表/claim/approve/reopen/prune）")
+    print("== M1-5.1: ARCHIVED 状态值 + 终态集合单一事实源（三默认列表/claim/approve/reopen/prune）")
     # (i) SQL 置 ARCHIVED：board / list_tasks / GET /requirements 默认列表排除；status 过滤包含
     db = new_db()
     r1 = seed_req(db, "k-archived")
@@ -274,6 +298,13 @@ git commit -m "T1: ARCHIVED 状态值 + 终态集合单一事实源 operations_u
 - Produces: `ops.archive_requirement(session, *, requirement_id, actor_surface, actor_conn, now=None) -> {"requirement_id", "state": "ARCHIVED"}`（经 `run_op(is_write=True)`）；CLI `kanban archive --requirement-id <id>`；REST `POST /requirements/{id}/archive`（200 / 404 not_found）。
 - 事件形态（Q3 裁决，REJECTED 先例）：`state_change`，title `"? -> ARCHIVED"`，payload `{"from": None, "to": "ARCHIVED"}`，claim_id = 活跃认领 id（有则）。claim 处置：`ended_at` + `release_reason="archive"`（同事务）。
 
+**BCD 五元组映射**:
+- Premortem: F1（archive/abandon 语义区分——release_reason="archive" + 独立终态是审计可区分的记录地基）、F3（marker 清除 + 认领同事务结束，归档后不留"等你决策"残影）。
+- Invariants: I1（C6 不受影响，approve 语义零改动回归既有套件）、I3（archive 事件与 abandon 事件可区分，k_archive 事件形态断言）、I6（ARCHIVED 后 agent 不可认领/不可写）。
+- BDD: S2（七状态矩阵 CLAIMED 行，k_archive(i)）、S3（DONE 行，k_archive(i)）、S5（BLOCKED marker 清除行，k_archive(i)）。
+- Policies: P1（任意状态可达，含终态再归档）、P2（同事务结束认领 + 清 marker）。
+- SBE: E2（k_archive(i) CLI channel 直接收敛：state/claims/事件形态/归属断言）。
+
 **Steps:**
 
 - [ ] **Step 1: `tests/ac_cases_k.py` 追加 `k_archive`；`run_ac.py` 注册**
@@ -286,7 +317,7 @@ from ac_cases_k import k_state, k_archive   # run_ac.py 侧
 
 ```python
 def k_archive():
-    print("== M1-4.2: archive 七状态矩阵 + claim 同事务结束（release_reason=archive）+ marker 清除 + 事件形态 + channel 归属")
+    print("== M1-5.2: archive 七状态矩阵 + claim 同事务结束（release_reason=archive）+ marker 清除 + 事件形态 + channel 归属")
     def _seed_state(db, title, state, need_claim=False, need_blocked=False):
         rid = seed_req(db, title)
         if need_claim or state == "DONE":
@@ -445,13 +476,20 @@ git add -A && git commit -m "T2: archive 操作——ops.archive_requirement（(
 **Interfaces:**
 - Produces: `ops.delete_requirement(session, *, requirement_id, actor_surface, actor_conn) -> {"requirement_id", "deleted": True}`（单事务五表删除，不写事件）；`ops.delete_preview(...)`（读：title/state/event_count，CLI 确认门用）；CLI `kanban delete --requirement-id <id> [--yes]`（确认门 y/N，EOF/拒绝中止非零退出）；REST `DELETE /requirements/{id}`（200 / 404 not_found / 503 db_busy）。
 
+**BCD 五元组映射**:
+- Premortem: F2（agent 面 not_found 语义——k_delete(iii) 断言）、F4（误删防护——k_delete(iv) 确认门四路径；Web 标题确认半在 T4，手测）。
+- Invariants: I2（整需求为单位，k_delete(i) 五表扫描零残留）、I4（仅人面，MCP 面零改动由既有套件 12 工具断言回归）、I5（单事务原子——k_delete(v) 写锁竞争不半删）。
+- BDD: S4（k_delete(i)(ii) happy delete）、S6（k_delete(v) 并发写锁）、S8（k_delete(iii) agent 面感知）。
+- Policies: P3（FK 序 + 不写事件）、P4（不受保留窗口约束——与 prune 语义区分，k_delete 不 backdate 直删）、隐含 B（确认门槛）。
+- SBE: E3（harness pin CLI 侧确认门 n/EOF/y/--yes；Web 标题确认交互 = T4 壳断言 + 手测冒烟）。
+
 **Steps:**
 
 - [ ] **Step 1: `tests/ac_cases_k.py` 追加 `k_delete`；`run_ac.py` 注册**
 
 ```python
 def k_delete():
-    print("== M1-4.3: delete 五表原子零残留 + REST 404/MCP not_found + agent 写 not_found + 确认门 + 写锁竞争 503")
+    print("== M1-5.3: delete 五表原子零残留 + REST 404/MCP not_found + agent 写 not_found + 确认门 + 写锁竞争 503")
     def _rich(db, title):
         """富需求：claim（已结束）+ 子任务 + 里程碑 + note 事件。"""
         rid = seed_req(db, title)
@@ -640,13 +678,20 @@ git add -A && git commit -m "T3: delete 操作——ops.delete_requirement（单
 - Produces: 壳契约——board 壳含 3 tab（`data-tab="active|done|archived"`）、新建表单（`#new-btn` + `#nf-title/#nf-desc/#nf-acc/#nf-jira`）、卡片等待人横幅含 `kanban approve <id>` 提示；detail 壳决策操作缺席（approve/release/renew/reopen/abandon/note/set_expectations 相关标记与函数全不在）、生命周期操作在场（`data-op='archive'` + `doDelete`）、等待人横幅含 kind 级 CLI 提示（"人面确认: kanban approve" / "解除阻塞: kanban approve"）。行为契约（JS，浏览器侧，harness 不执行 JS）：新建提交后主动 `loadBoard()`（不依赖 SSE，审 P1-2）；delete 标题不匹配拒绝。
 - 现有壳契约保持：`board-root` / `detail-root` / `EventSource` / 零数据嵌入（`web` 用例回归零改动）。
 
+**BCD 五元组映射**:
+- Premortem: F3（awaiting 死路——等待人横幅静态 CLI 提示 = 直接对策，k_web 断言提示在场）、F4（delete 与 archive 视觉分离 + 标题确认交互）。
+- Invariants: I4（Web 决策按钮全移除 = 人面收窄，C6 保持由既有 CLI approve 回归守住）、I6（state=ARCHIVED 时 archive 按钮禁用）。
+- BDD: S1（create 表单数据路径，k_web AC1 块：a1/a2 锚编号 + jira 映射；JS 交互本身 = 手测）。
+- Policies: 隐含 A（静态 CLI 提示，非交互点）、隐含 B（Web 标题确认）。
+- SBE: E1（k_web AC1 数据路径收敛：POST /requirements payload 形状 + 锚编号 + source 映射）。
+
 **Steps:**
 
 - [ ] **Step 1: `tests/ac_cases_k.py` 追加 `k_web`；`run_ac.py` 注册**
 
 ```python
 def k_web():
-    print("== M1-4.4: Web 壳契约——board 3 tab + 新建表单 + 卡片等待人提示 / 深潜决策按钮缺席 + 生命周期操作 + kind 级 CLI 提示")
+    print("== M1-5.4: Web 壳契约——board 3 tab + 新建表单 + 卡片等待人提示 / 深潜决策按钮缺席 + 生命周期操作 + kind 级 CLI 提示")
     db = new_db()
     rid = seed_req(db, "k-web")
     secret = "K_WEB_SECRET_xyz"
@@ -897,6 +942,13 @@ git add -A && git commit -m "T4: Web 壳——board 新建表单（一行一条�
 
 **Interfaces:** 无代码行为变更（除 prune 确认文案，harness 无字面断言，已核实）。
 
+**BCD 五元组映射**:
+- Premortem: F1（archive/abandon 语义边界的正式文档措辞）、F2（not_found = 人面操作结果的文档说明）、F3（人面命令速查）。
+- Invariants: I3（语义区分措辞落 PRD §0/§4.2）。
+- BDD: 无（文档传播）。
+- Policies: P1/P4/P5/P7 传导到正典（PRD/design/web.md/README）。
+- SBE: "客户期望 vs 系统行为"差异表收敛——旧定位措辞（"记录面 + 协作窗口"）全仓清零，新定位（"关键决策记录点/审计点"）落四处正典。
+
 **Steps:**
 
 - [ ] **Step 1: `cli.py` prune 确认文案**
@@ -1027,7 +1079,5 @@ git add -A && git commit -m "T5: 文档同步（PRD §0/§3.1/§3.4/§4.2/§6 �
 - [ ] 全量回归：`uv run python tests/run_ac.py` 全绿。
 - [ ] 核对 spec §9 文档同步清单逐项打勾（PRD 五节 / design.md / web.md / known-gaps / README / prune 文案）。
 - [ ] 核对 spec §2 非目标未被偷渡（无 unarchive / 无 subtask 编辑 / 无新事件 kind / MCP 12 工具不变 / 无回收站）。
-- [ ] 向 user 汇报：测试结果 + 手工冒烟建议（web.md 冒烟 checklist 1-7 浏览器过一遍）+ MR 建议（分支 task-lifecycle -> main，user 裁决合入）。
-
-</content>
-</invoke>
+- [ ] tier-2：`docs/ops/m1-5-verification.md` 填齐（格式同 `m1-4-verification.md`：oracle 版本 / 判据逐字引 BCD / 结果 / 红绿证据表 / BCD 映射逐场景 / 重跑规格）；`git ls-files` 确认全 tracked。
+- [ ] 向 user 汇报：测试结果 + 手工冒烟建议（web.md 冒烟 checklist 浏览器过一遍）+ MR 建议（分支 task-lifecycle -> main，user 裁决合入）。
