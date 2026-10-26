@@ -16,7 +16,7 @@ from ..errors import BusinessError
 from ..models import Claim, Event, Milestone, Requirement, Subtask, new_id
 from . import lease as lease_svc
 from .ids import norm_id
-from .operations_util import add_event, normalize_anchors, normalize_title
+from .operations_util import TERMINAL_STATES, add_event, normalize_anchors, normalize_title
 from .retry_limit import (
     RETRY_LIMIT_CONN,
     RETRY_LIMIT_SURFACE,
@@ -778,7 +778,7 @@ async def list_tasks(
     if status:
         stmt = stmt.where(Requirement.state == status)
     else:
-        stmt = stmt.where(Requirement.state.not_in(["DONE", "REJECTED", "CANCELLED"]))
+        stmt = stmt.where(Requirement.state.not_in(TERMINAL_STATES))
     rows = (await session.scalars(stmt.order_by(Requirement.created_at))).all()
     tasks = []
     for r in rows:
@@ -950,7 +950,7 @@ async def export_data(
 
 
 # ---------------------------------------------------------------- 数据保留（PRD §6，G9-a 闭合）
-PRUNE_TERMINAL_STATES = ("DONE", "REJECTED", "CANCELLED")
+PRUNE_TERMINAL_STATES = TERMINAL_STATES
 
 
 def _prune_targets(cutoff: datetime):

@@ -65,3 +65,8 @@ def normalize_anchors(acceptance: Any, existing: list | None = None) -> list:
             item["id"] = by_item.get(str(item.get("item"))) or f"a{i + 1}"
         out.append(item)
     return out
+
+
+# 终态集合单一事实源（spec 5 / 审 P1-1）：view.board / operations.list_tasks /
+# operations.PRUNE_TERMINAL_STATES 三处引用此常量，不再各持硬编码列表
+TERMINAL_STATES = ("DONE", "REJECTED", "CANCELLED", "ARCHIVED")
