@@ -285,3 +285,55 @@ def k_delete():
         holder.rollback()
         holder.close()
         rest2.stop()
+
+
+def k_web():
+    print("== M1-5.4: Web 壳契约——board 3 tab + 新建表单 + 卡片等待人提示 / 深潜决策按钮缺席 + 生命周期操作 + kind 级 CLI 提示")
+    db = new_db()
+    rid = seed_req(db, "k-web")
+    secret = "K_WEB_SECRET_xyz"
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.call_ok("update_progress", {"requirement_id": rid, "note": secret})
+    m.close()
+    rest = REST(db, token="sekret").start()
+    try:
+        code, raw = rest.req("GET", "/", token="sekret")
+        ok("k_web: board 壳 200 + board-root/EventSource（既有契约保持）",
+           code == 200 and isinstance(raw, str) and 'id="board-root"' in raw and "EventSource" in raw, str(code))
+        ok("k_web: board 3 tab（在板/已完成/已归档）",
+           'data-tab="active"' in raw and 'data-tab="done"' in raw and 'data-tab="archived"' in raw, "tab 缺失")
+        ok("k_web: 新建表单入口 + 字段锚",
+           'id="new-btn"' in raw and 'id="nf-title"' in raw and 'id="nf-acc"' in raw and 'id="nf-jira"' in raw, "表单缺失")
+        ok("k_web: 卡片等待人横幅含 CLI 提示（BCD F3 预防）", "kanban approve" in raw, "提示缺失")
+        ok("k_web: board 壳无原始输出（既有契约保持）", secret not in raw, "shell leak")
+        code, raw2 = rest.req("GET", f"/requirements/{rid}", token="sekret",
+                              headers={"Accept": "text/html"})
+        ok("k_web: 深潜壳 200 + detail-root（既有契约保持）",
+           code == 200 and isinstance(raw2, str) and 'id="detail-root"' in raw2, str(code))
+        for gone in ("data-op='approve'", "doRelease", "doReopen", "doAbandon", "doNote",
+                     "doExpectations", "abandon-state", "note-input", "acc-input"):
+            ok(f"k_web: 深潜壳决策操作缺席（{gone}）", gone not in raw2, "仍在壳内")
+        ok("k_web: 生命周期操作在场（archive/delete）",
+           "data-op='archive'" in raw2 and "doDelete" in raw2, "生命周期缺失")
+        ok("k_web: 深潜等待人横幅 kind 级 CLI 提示",
+           "人面确认: kanban approve" in raw2 and "解除阻塞: kanban approve" in raw2, "提示缺失")
+        ok("k_web: 深潜壳无原始输出（既有契约保持）", secret not in raw2, "shell leak")
+        # AC1 数据路径：Web 表单映射的 payload（一行一条 -> {item}）+ jira 映射（spec case 7）
+        # token 必带（REST 以 token="sekret" 启动，中间件对全路径强制，T4 红跑实证 401）
+        code, body = rest.req("POST", "/requirements", {"title": "k-create",
+                                                        "acceptance": [{"item": "吞吐 >= 5000"}, {"item": "p99 < 200ms"}]},
+                              token="sekret")
+        ok("k_web(AC1): 两行锚 create 201 OPEN", code == 201 and body["state"] == "OPEN", f"{code} {body}")
+        ridc = body["requirement_id"]
+        code, s = rest.req("GET", f"/requirements/{ridc}/summary", token="sekret")
+        a_ids = [a["anchor_id"] for a in s["acceptance_table"]]
+        ok("k_web(AC1): 锚自动编号 a1/a2（normalize_anchors）", a_ids == ["a1", "a2"], str(a_ids))
+        code, body = rest.req("POST", "/requirements",
+                              {"title": "k-create-jira", "source": "jira", "source_ref": "https://jira.example/X-1"},
+                              token="sekret")
+        row_c = query(db, "SELECT source, source_ref FROM requirements WHERE id=?", (body["requirement_id"],))[0]
+        ok("k_web(AC1): jira 链接 -> source=jira + source_ref 映射",
+           row_c["source"] == "jira" and row_c["source_ref"] == "https://jira.example/X-1", str(dict(row_c)))
+    finally:
+        rest.stop()
