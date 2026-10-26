@@ -160,7 +160,7 @@ def k_archive():
         if need_blocked:
             # 裸存储双空形态：SQLAlchemy JSON 列 none_as_null=False，清 marker 存文本 "null"（非 SQL NULL，
             # main 既有行为，approve/abandon 路径同形）；业务契约 = 无存活 marker（存活 = JSON dict 文本，仍红）。
-            # list_awaiting 过滤层对该文本的泄漏 = 既有缺陷 G12（登记 known-gaps，非本批引入，不在此 pin）。
+            # list_awaiting 过滤层对该文本的泄漏 = 既有缺陷 G12（非本批引入），已修复并 pin 于 k_g12。
             ok("k_archive(BLOCKED): awaiting_human 清除（无存活 marker）",
                row["awaiting_human"] in (None, "null"), str(row["awaiting_human"]))
     # (ii) REST channel（surface=cli / conn=rest:* 前缀）+ 再 archive 允许 + 404
@@ -372,3 +372,76 @@ def k_web():
            row_c["source"] == "jira" and row_c["source_ref"] == "https://jira.example/X-1", str(dict(row_c)))
     finally:
         rest.stop()
+
+
+def k_g12():
+    print("== G12: list_awaiting 不再泄漏已清 marker 任务（null 文本）")
+    # (1) a1 字面：claim->mark_blocked->approve（清 marker）后 list_awaiting 不含该任务
+    db = new_db()
+    rid = seed_req(db, "k-g12")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.call_ok("mark_blocked", {"requirement_id": rid, "reason": "waiting input"})
+    m.close()
+    cli_ok(db, "approve", "--requirement-id", rid)
+    m2 = MCP(db).start()
+    ids = [t["requirement_id"] for t in m2.call_ok("list_awaiting", {})["awaiting"]]
+    ok("k_g12(1): list_awaiting 不含已清 marker 任务（a1 字面）", rid not in ids, str(ids))
+    m2.close()
+    # (2) 机制断言：库内列值 = 真 SQL NULL，非 "null" 文本
+    row = query(db, "SELECT awaiting_human FROM requirements WHERE id=?", (rid,))[0]
+    ok("k_g12(2): awaiting_human 库内 = SQL NULL（机制断言）",
+       row["awaiting_human"] is None, repr(row["awaiting_human"]))
+    # (3) 正向守卫：存活 marker（claim->mark_blocked 未清）仍含且对象完整（防过度过滤）
+    rid3 = seed_req(db, "k-g12-alive")
+    m3 = MCP(db).start()
+    m3.call_ok("claim_task", {"requirement_id": rid3, "agent_name": "a"})
+    m3.call_ok("mark_blocked", {"requirement_id": rid3, "reason": "need decision"})
+    aw3 = [t for t in m3.call_ok("list_awaiting", {})["awaiting"] if t["requirement_id"] == rid3]
+    ok("k_g12(3): 正向守卫——存活 marker 任务仍含且对象完整",
+       len(aw3) == 1 and aw3[0]["awaiting_human"]["kind"] == "blocked"
+       and aw3[0]["awaiting_human"]["reason"] == "need decision",
+       str([t["awaiting_human"] for t in aw3]))
+    m3.close()
+    # (4) 启动自愈：预置存量 "null" 文本行（raw SQL，忠实存量态；经 ORM 写会被 none_as_null 归一为 SQL NULL 假绿）
+    #     + 存活 marker 行（ORM 写）-> 重启服务（ensure_schema 执行）-> 'null' 行变 SQL NULL、存活行逐字节不动
+    db4 = new_db()
+    m4 = MCP(db4).start()
+    m4.call_ok("list_tasks", {})
+    m4.close()
+    rid4a = seed_req(db4, "k-g12-legacy")
+    _update(db4, "UPDATE requirements SET awaiting_human='null' WHERE id=?", (rid4a,))
+    rid4b = seed_req(db4, "k-g12-alive4")
+    m4b = MCP(db4).start()
+    m4b.call_ok("claim_task", {"requirement_id": rid4b, "agent_name": "a"})
+    m4b.call_ok("mark_blocked", {"requirement_id": rid4b, "reason": "still waiting"})
+    alive_before = query(db4, "SELECT awaiting_human FROM requirements WHERE id=?", (rid4b,))[0]["awaiting_human"]
+    m4b.close()
+    m5 = MCP(db4).start()
+    aw5 = m5.call_ok("list_awaiting", {})["awaiting"]  # 首个 op 触发 ensure_schema -> 自愈
+    ids5 = [t["requirement_id"] for t in aw5]
+    m5.close()
+    legacy_after = query(db4, "SELECT awaiting_human FROM requirements WHERE id=?", (rid4a,))[0]["awaiting_human"]
+    alive_after = query(db4, "SELECT awaiting_human FROM requirements WHERE id=?", (rid4b,))[0]["awaiting_human"]
+    ok("k_g12(4): 启动自愈——存量 'null' 文本行回填 SQL NULL", legacy_after is None, repr(legacy_after))
+    ok("k_g12(4): 启动自愈——存活 marker 行逐字节不动（精确匹配判据）",
+       alive_after == alive_before, f"{alive_before!r} vs {alive_after!r}")
+    ok("k_g12(4): 自愈后 list_awaiting 只含存活行", ids5 == [rid4b], str(ids5))
+    # (5) 自愈零写判据：稳态（无 "null" 行）+ 外部写锁持有下，只读 op 正常完成
+    #     ——自愈若开写事务，必撞 busy_timeout 报 db_busy
+    db5 = new_db()
+    rid5 = seed_req(db5, "k-g12-steady")
+    m5b = MCP(db5).start()
+    m5b.call_ok("claim_task", {"requirement_id": rid5, "agent_name": "a"})
+    m5b.call_ok("mark_blocked", {"requirement_id": rid5, "reason": "steady"})
+    m5b.close()
+    holder = sqlite3.connect(str(db5))
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        m6 = MCP(db5).start()
+        ids6 = [t["requirement_id"] for t in m6.call_ok("list_awaiting", {})["awaiting"]]
+        ok("k_g12(5): 稳态启动零写（外部写锁下只读 op 完成）", ids6 == [rid5], str(ids6))
+        m6.close()
+    finally:
+        holder.rollback()
+        holder.close()
