@@ -1,0 +1,7 @@
+# 内网 PyPI 镜像配置（与宿主 ~/.config/uv/uv.toml 同源，镜像内 COPY 到 /root/.config/uv/）
+allow-insecure-host = ["mirrors.aliyun.com", "mirrors.tuna.tsinghua.edu.cn", "mirrors.ustc.edu.cn", "files.pythonhosted.org", "pypi.org", "pypi.python.org"]
+
+[[index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
+concurrent-downloads = 4

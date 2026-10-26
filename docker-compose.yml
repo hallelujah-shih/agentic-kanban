@@ -1,10 +1,8 @@
 services:
   kanban:
     build: .
-    ports:
-      - "127.0.0.1:8765:8765"
-    environment:
-      AGENT_KANBAN_TOKEN: "${KANBAN_TOKEN:?KANBAN_TOKEN required (container binds 0.0.0.0, token mandatory)}"
+    # host 网络：容器内 bind 127.0.0.1 即宿主 localhost，安全模型（localhost 免 token）成立
+    network_mode: host
     volumes:
       - ${HOME}/.agent-kanban:/data
     restart: unless-stopped
