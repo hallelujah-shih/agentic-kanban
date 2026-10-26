@@ -22,7 +22,7 @@
 - tier-0: `uv run python -m compileall -q src cli.py tests`。
 - tier-2（合并门槛）: tier-1 全绿 + `docs/ops/m1-5-verification.md` 填齐（判据/结果/红绿证据/BCD 映射/重跑规格，格式同 `m1-4-verification.md`）+ `git ls-files` 全 tracked。
 - 基线: base main 8767385（worktree 切出点）；批次首个 subagent 开工时先跑一次全量，记录基线断言数写入验证文档（历史记录 m1-4 为 382/382、G11 复验为 411/411，用例集以 main 当轮实际为准）；基线不绿 = 停，先修基线。
-- oracle 环境: python 3.14.8（.venv）；依赖版本以批次开工时 `uv pip list` 实际值为准，记入验证文档（m1-4 记录为 mcp 2.3.0 / httpx2 2.16.0 / fastapi 0.158.2 / sqlalchemy 2.1.6）。
+- oracle 环境: python 3.14.4（.venv，P5 勘误：初版误记 3.14.8 = 系统 python；依赖版本以批次开工时 `uv pip list` 实际值为准，记入验证文档（m1-4 记录为 mcp 2.3.0 / httpx2 2.16.0 / fastapi 0.158.2 / sqlalchemy 2.1.6）。依赖版本以批次开工时 `uv pip list` 实际值为准，记入验证文档（m1-4 记录为 mcp 2.3.0 / httpx2 2.16.0 / fastapi 0.158.2 / sqlalchemy 2.1.6）。
 
 ## 全局约束
 
