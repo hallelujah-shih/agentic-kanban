@@ -276,7 +276,7 @@ async function submitNew(){
   var body = {title: title};
   var desc = document.getElementById("nf-desc").value.trim();
   if (desc) body.description = desc;
-  var acc = document.getElementById("nf-acc").value.split("\n")
+  var acc = document.getElementById("nf-acc").value.split("\\n")
     .map(function(s){ return s.trim(); }).filter(Boolean);
   if (acc.length) body.acceptance = acc.map(function(s){ return {item: s}; });
   var jira = document.getElementById("nf-jira").value.trim();
