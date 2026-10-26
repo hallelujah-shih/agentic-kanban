@@ -276,7 +276,7 @@ async function submitNew(){
   var body = {title: title};
   var desc = document.getElementById("nf-desc").value.trim();
   if (desc) body.description = desc;
-  var acc = document.getElementById("nf-acc").value.split("\n")
+  var acc = document.getElementById("nf-acc").value.split("\\n")
     .map(function(s){ return s.trim(); }).filter(Boolean);
   if (acc.length) body.acceptance = acc.map(function(s){ return {item: s}; });
   var jira = document.getElementById("nf-jira").value.trim();
@@ -387,6 +387,7 @@ function render(d, s){
     + esc(stateZh(s.state)) + "</span></div>";
   html += "<p class='meta'>id: " + esc(s.requirement_id) + "</p>";
   if (d.history_note) html += "<p class='meta'>" + esc(d.history_note) + "</p>";
+  if (s.description) html += "<div class='sec wide'><h2>描述</h2><div style='white-space:pre-wrap'>" + esc(s.description) + "</div></div>";
   if (s.awaiting_human) {
     var hint = s.awaiting_human.kind === "blocked" ? "解除阻塞: kanban approve " : "人面确认: kanban approve ";
     html += "<div class='wait-banner'>等待人决策: kind=" + esc(s.awaiting_human.kind)
@@ -508,8 +509,8 @@ async function handleOpResult(resp){
     flash("操作失败: " + (body && body.code ? body.code + ": " + (body.message || "") : txt), true);
     return;
   }
-  flash("操作成功", false);
-  load();
+  // 终态操作（archive/delete）：成功即回看板，不停留深潜页（契约见 web.md:42）
+  location.href = "/";
 }
 function flash(msg, isErr){
   var el = document.getElementById("op-msg");

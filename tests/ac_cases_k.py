@@ -13,6 +13,7 @@ prune 真实子进程 CLI + SQL backdate（确定性，禁 sleep 撞窗）。
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import subprocess
 import tempfile
@@ -319,6 +320,40 @@ def k_web():
         ok("k_web: 深潜等待人横幅 kind 级 CLI 提示",
            "人面确认: kanban approve" in raw2 and "解除阻塞: kanban approve" in raw2, "提示缺失")
         ok("k_web: 深潜壳无原始输出（既有契约保持）", secret not in raw2, "shell leak")
+        # M1-6 T1 壳解析防线：JS 字符串字面量不得被未转义换行截断（P0：web.py 三引号串
+        # 把 JS "\n" 转成真换行 -> 整 <script> 块 SyntaxError -> JS 零执行，看板恒"加载中"）
+        ok('k_web(M1-6 A1): board 壳 split 换行转义以字面 2 字符 \\n 送达（spec 71 行一条锚）',
+           '.value.split("\\n")' in raw and '.value.split("\n")' not in raw, "JS 换行转义被 Python 三引号串损坏")
+        # 假阳边界（plan 审 P2 登记）：单引号 JS 字符串/正则字面量/注释内含奇数个双引号
+        # 的行会假红；当前两壳零命中，属未来维护面。
+        def _js_quote_parity(shell_html: str) -> bool:
+            m = re.search(r"<script>(.*)</script>", shell_html, re.S)
+            if not m:
+                return False
+            for line in m.group(1).splitlines():
+                if re.sub(r"\\.", "", line.rstrip()).count('"') % 2 == 1:
+                    return False
+            return True
+        ok("k_web(M1-6 A2): board+detail 壳 <script> 块逐行双引号配对（无字符串截断）",
+           _js_quote_parity(raw) and _js_quote_parity(raw2), "存在未终止 JS 字符串字面量")
+        # M1-6 T2 终态操作导航防线：archive/delete 成功后回看板（user 2026-10-26 第二轮
+        # 原话：点了 archive 即不再期许看详情）。单根因 = handleOpResult 成功路径
+        # flash+load() 重拉（delete->404 死页归因错 / archive->静默成功无反馈）
+        # 抽取法（plan 审 P2-1 登记）：至首个列 0 的 `}` 止（lstrip 形态匹配缩进 `}`
+        # 会在 if 闭合处截断块 -> 假红）
+        _l = raw2.splitlines()
+        _s = next(i for i, x in enumerate(_l) if x.startswith("async function handleOpResult"))
+        _e = next(i for i in range(_s + 1, len(_l)) if _l[i] == "}")
+        _op_block = "\n".join(_l[_s:_e + 1])
+        ok("k_web(M1-6 A3): handleOpResult 成功回看板（location.href \"/\"）",
+           'location.href = "/"' in _op_block, "缺回看板导航")
+        ok("k_web(M1-6 A4): handleOpResult 成功路径无 load() 重拉（杜绝死页/静默成功）",
+           "load()" not in _op_block, "残留 load() 重拉")
+        # M1-6 T3 description 展示：深潜页必须渲染 description（user 2026-10-26 第三轮：
+        # 写了详细描述详情页完全看不到；M1-2 起 render() 无展示位，设计缺口非回归）。
+        # esc 在场 = XSS 防线（description 是用户输入，全壳无未转义渲染先例）
+        ok("k_web(M1-6 A5): 深潜页描述节以 esc 渲染 description",
+           'esc(s.description)' in raw2 and "描述</h2>" in raw2, "description 未渲染")
         # AC1 数据路径：Web 表单映射的 payload（一行一条 -> {item}）+ jira 映射（spec case 7）
         # token 必带（REST 以 token="sekret" 启动，中间件对全路径强制，T4 红跑实证 401）
         code, body = rest.req("POST", "/requirements", {"title": "k-create",
