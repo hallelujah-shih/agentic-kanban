@@ -21,7 +21,7 @@
 - 验证入口（tier-1）: `uv run python tests/run_ac.py`（工作目录 = worktree 根）；新用例 `--only k_state,k_archive,k_delete,k_web` 单跑。
 - tier-0: `uv run python -m compileall -q src cli.py tests`。
 - tier-2（合并门槛）: tier-1 全绿 + `docs/ops/m1-5-verification.md` 填齐（判据/结果/红绿证据/BCD 映射/重跑规格，格式同 `m1-4-verification.md`）+ `git ls-files` 全 tracked。
-- 基线: base main 8767385（worktree 切出点）；批次首个 subagent 开工时先跑一次全量，记录基线断言数（预期 382，以 m1-4-verification.md 全量 382/382 为上界参考）写入验证文档；基线不绿 = 停，先修基线。
+- 基线: base main 8767385（worktree 切出点）；批次首个 subagent 开工时先跑一次全量，记录基线断言数写入验证文档（历史记录 m1-4 为 382/382、G11 复验为 411/411，用例集以 main 当轮实际为准）；基线不绿 = 停，先修基线。
 - oracle 环境: python 3.14.8（.venv）；依赖版本以批次开工时 `uv pip list` 实际值为准，记入验证文档（m1-4 记录为 mcp 2.3.0 / httpx2 2.16.0 / fastapi 0.158.2 / sqlalchemy 2.1.6）。
 
 ## 全局约束
@@ -106,8 +106,6 @@ from pathlib import Path
 
 from ac_lib import (CLI, MCP, REST, REPO_ROOT, TIMEOUT, VENV_PY, cli, cli_ok, cli_err,
                     env_for, new_db, ok, query, seed_req, seed_reopen)
-
-HISTORY_NOTE = "该需求事件已按保留窗口清理，完整历史见导出归档"
 
 
 def _update(db: Path, sql: str, params: tuple = ()) -> None:
@@ -317,7 +315,7 @@ from ac_cases_k import k_state, k_archive   # run_ac.py 侧
 
 ```python
 def k_archive():
-    print("== M1-5.2: archive 七状态矩阵 + claim 同事务结束（release_reason=archive）+ marker 清除 + 事件形态 + channel 归属")
+    print("== M1-5.2: archive 七状态矩阵 + claim 同事务结束（release_reason=archive）+ marker 清除 + 事件形态 + channel 归属 + archive 后 agent 写 no_active_claim")
     def _seed_state(db, title, state, need_claim=False, need_blocked=False):
         rid = seed_req(db, title)
         if need_claim or state == "DONE":
@@ -394,6 +392,18 @@ def k_archive():
     db3 = new_db()
     code3, _ = cli_err(db3, "archive", "--requirement-id", "deadbeef")
     ok("k_archive: CLI archive 不存在 -> not_found", code3 == "not_found", code3)
+    # (iii) archive 后 agent 写 -> no_active_claim（BCD I6"不可写"端到端，盲审 P2-3：
+    # claim 未同事务结束或 write guard 漏新终态，任一坏都会红）
+    db4 = new_db()
+    rid4 = seed_req(db4, "k-arch-guard")
+    m4 = MCP(db4).start()
+    m4.call_ok("claim_task", {"requirement_id": rid4, "agent_name": "a"})
+    m4.close()
+    cli_ok(db4, "archive", "--requirement-id", rid4)
+    m5 = MCP(db4).start()
+    code4, _ = m5.call_err("add_record", {"requirement_id": rid4, "kind": "note", "title": "post-archive"})
+    ok("k_archive(iii): archive 后 agent 写 -> no_active_claim（BCD I6）", code4 == "no_active_claim", code4)
+    m5.close()
 ```
 
 - [ ] **Step 2: 红跑**
@@ -759,8 +769,8 @@ var STATE_ZH = {OPEN:"待认领", CLAIMED:"进行中", BLOCKED:"阻塞", REOPEN:
 (3) `board_shell`：
 - `<style>` 内（`.done-row .grow{flex:1}` 之后）加：
 ```
-input{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:7px;
-  padding:6px 8px;font-size:.82rem}
+input,textarea{background:var(--card);color:var(--text);border:1px solid var(--border);
+  border-radius:7px;padding:6px 8px;font-size:.82rem}
 #nf-msg.err{color:var(--red)}
 #nf-msg.ok{color:var(--green)}
 ```
@@ -769,7 +779,7 @@ input{background:var(--card);color:var(--text);border:1px solid var(--border);bo
 <div class="topbar">
   <span class="title">agent-kanban</span>
   <span class="meta" id="top-count"></span>
-  <button id="new-btn" style="margin-left:auto">新建</button>
+  <button id="new-btn">新建</button>
   <div class="live" id="live"><div class="dot"></div><span>连接中</span></div>
 </div>
 <div id="new-form" style="display:none;padding:10px 20px 0;max-width:720px">
@@ -938,6 +948,7 @@ git add -A && git commit -m "T4: Web 壳——board 新建表单（一行一条�
 - Modify: `docs/design.md`（§0 旧措辞）
 - Modify: `docs/web.md`（surface 行 + 人面操作节重写 + 冒烟第 4 条 + CLI 速查）
 - Modify: `docs/adr/0000-known-gaps.md`（登记 R1/R3/R4）
+- Modify: `docs/business-contracts/task-lifecycle-positioning.md`（S1 Then "SSE 推送" 子句修订 + 修订记录）
 - Modify: `README.md`（line 3 定位行）
 
 **Interfaces:** 无代码行为变更（除 prune 确认文案，harness 无字面断言，已核实）。
@@ -962,18 +973,18 @@ line 188：
                 f"将删除 {count} 条事件（终态需求级原子窗口：仅 DONE/REJECTED/CANCELLED/ARCHIVED "
 ```
 
-- [ ] **Step 2: `docs/PRD.md` 五处**
+- [ ] **Step 2: `docs/PRD.md` 七处**
 
-(1) §0 定位语（line 7）：
+(1) §0 定位语（line 5；新增段逐字贴 spec §1 引文，盲审 P2-1/勘误）：
 ```
 定位: AI 时代的看板——不是任务状态跟踪，而是**大黑箱（AI 自动化执行）的关键节点暴露窗口 + 可回溯审计资产**
 ```
 改为：
 ```
-定位: AI 时代的看板——不是任务状态跟踪，而是**大黑箱（AI 自动化执行）的关键节点暴露窗口 + 可回溯审计资产 + AI 与人对称交换关键信息的场所**。看板不承担共识达成逻辑：子任务/里程碑共识在 AI 会话内（in-band）达成，看板只展现结果；决策记录两类来源——人在 AI 中做出的决策（agent 以 decision/note 事件记录，带 actor provenance）与 AI 自主的决策（decision 事件）
+定位: AI 时代的看板——不是任务状态跟踪，而是**大黑箱（AI 自动化执行）的关键节点暴露窗口 + 可回溯审计资产 + AI 与人对称交换关键信息的场所 + 关键决策的记录点/审计点**。看板不承担共识达成逻辑：子任务/里程碑的共识在 AI 会话内（in-band）达成，看板只展现结果；决策记录两类来源——人在 AI 中做出的决策（agent 以既有 decision/note 事件记录，带 actor provenance）与 AI 自主的决策（decision 事件）
 ```
 
-(2) §0 职责边界行（line 25）：
+(2) §0 职责边界行（line 26）：
 ```
 职责边界：看板是记录面 + 协作窗口，不是控制面。它不管理 worktree、不执行合入、不隔离执行。
 ```
@@ -988,13 +999,9 @@ line 188：
 ```
 并把 line 83 的 `OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN。` 改为 `OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN；终态 DONE / REJECTED / CANCELLED / ARCHIVED。`
 
-(4) §3.4 approve 判定表（line 133）：
+(4) §3.4 approve 判定表：既有 catch-all 行 `| OPEN/DONE/REOPEN/REJECTED/CANCELLED | 任意 | 拒绝 | 无 | 无 | illegal_state |` **之后新增行**（spec §9 口径，不并入既有行）：
 ```
-| OPEN/DONE/REOPEN/REJECTED/CANCELLED | 任意 | 拒绝 | 无 | 无 | illegal_state |
-```
-改为：
-```
-| OPEN/DONE/REOPEN/REJECTED/CANCELLED/ARCHIVED | 任意 | 拒绝 | 无 | 无 | illegal_state |
+| ARCHIVED | 任意 | 拒绝 | 无 | 无 | illegal_state |
 ```
 
 (5) §4.2：
@@ -1007,6 +1014,11 @@ line 188：
 - Web 窗口表（line 180-185）：`GET /` 行改为 `看板 HTML 壳：内联 JS fetch /board 渲染（在板/已完成/已归档 三 tab）+ 新建表单 + EventSource 重拉，无原始输出`；`GET /requirements/{id}` 行的 `（JS 渲染 + 人面操作）` 改为 `（JS 渲染 + task 生命周期操作 archive/delete；决策操作 CLI/REST-only）`。
 
 (6) §6 数据保留行（line 258）：`仅 DONE/REJECTED/CANCELLED 且全部事件早于窗口的需求整删` 改为 `仅 DONE/REJECTED/CANCELLED/ARCHIVED 且全部事件早于窗口的需求整删`；并在该行"目标"单元格末尾（"导出文件为审计资产最终载体"之后）加：`；另有人面定点即时删除（4.2 delete）：任意状态、不强制导出、不受窗口约束、删需求行（prune 只删事件留需求行）`。
+
+(7) §0 报告纪律段（line 24，盲审 P2-1——spec §9 明确项，把 in-band 决策记录确立为预期模式）：段末追加：
+```
+in-band 人的决策（人在 AI 会话中做出的决策）由 agent 以 decision/note 事件记录（带 actor provenance）= 预期模式，非可选行为。
+```
 
 - [ ] **Step 3: `docs/design.md` §0**
 
@@ -1021,10 +1033,10 @@ line 11：
 
 - [ ] **Step 4: `docs/web.md`**
 
-(1) line 14 surface 行：`（JS 渲染 + 人面操作按钮）` 改为 `（JS 渲染 + task 生命周期操作 archive/delete；决策操作 CLI/REST-only）`。
+(1) line 12 `GET /board` 行（T1 后默认过滤含 ARCHIVED，盲审 P2-2）：`默认只含非终态需求（DONE/REJECTED/CANCELLED 过滤掉）` 改为 `默认只含非终态需求（DONE/REJECTED/CANCELLED/ARCHIVED 过滤掉）`；line 14 `GET /requirements/{id}` 行：`（JS 渲染 + 人面操作按钮）` 改为 `（JS 渲染 + task 生命周期操作 archive/delete；决策操作 CLI/REST-only）`。
 (2) line 27 看板页描述末尾补：`顶部 tabs：在板 / 已完成（DONE/REJECTED/CANCELLED）/ 已归档（ARCHIVED）；顶栏「新建」按钮展开内联表单（title 必填 / description / acceptance 一行一条锚 / Jira 链接可选 -> source=jira）；等待人卡片含 CLI 提示（kanban approve <id>）。`
 (3) line 29 深潜页描述末尾 `、人面操作区` 改为 `、Task 生命周期区（archive/delete）`。
-(4) 「## 人面操作（深潜页按钮，全走既有 REST）」整节（line 31-42）替换为：
+(4) 「## 人面操作（深潜页按钮，全走既有 REST）」整节（line 31-43，**含 line 43 操作结果行**——下方替换块自带更新后的操作结果行，替换后旧行不得残留，盲审勘误）替换为：
 ```
 ## 人面 surface（修订 2026-10-26）
 
@@ -1044,7 +1056,7 @@ line 11：
 4. 生命周期操作：新建表单提交（带/不带 acceptance 两行锚、带 Jira 链接）成功且看板重拉出现新任务；对 CLAIMED 需求 archive 成功（移入已归档 tab）；delete 输入错误标题被拒、正确标题删成功（页面转"任务不存在"）。
 5. 等待人提示：对 awaiting_human 任务确认深潜页与卡片横幅显示 `kanban approve <id>` 提示（静态文字，非按钮）。
 ```
-（原 5/6 条顺延为 6/7。）
+（原 5/6/7 条顺延为 6/7/8，盲审勘误。）
 
 - [ ] **Step 5: `docs/adr/0000-known-gaps.md` 登记残余**
 
@@ -1055,7 +1067,18 @@ line 11：
 | R4 | 决策操作移 CLI 后 awaiting 堆积风险（人习惯点按钮，发现无入口） | ② | 深潜页/卡片等待人横幅静态 CLI 提示 + web.md 人面 surface 速查；残余：习惯迁移靠使用 | 2026-10-26 登记（BCD F3） |
 ```
 
-- [ ] **Step 6: `README.md` line 3 定位行**
+- [ ] **Step 6: `docs/business-contracts/task-lifecycle-positioning.md` S1 修订记录（盲审·正典老化）**
+
+S1 Then 子句 `SSE 推送使看板自动刷新` 对已折入的设计（create 不写事件 -> 无 SSE 触发器，前端主动重拉）陈旧。改为：
+```
+Then 看板"待认领"列出现新任务（state=OPEN），深潜页验收对照表显示两条锚（自动编号 a1/a2），前端主动 loadBoard() 重拉看板（create 不写事件，无 SSE 触发器，不依赖 SSE）
+```
+并在 S1 场景块之后（S2 修订记录同格式）追加：
+```
+**修订记录**: 2026-10-26 主循环——S1 Then "SSE 推送使看板自动刷新" 子句陈旧：spec 审 P1-2 已折入（create 不写事件 -> 无 SSE 触发器，前端主动重拉），本处同步。
+```
+
+- [ ] **Step 7: `README.md` line 3 定位行**
 
 ```
 AI 时代的看板：不是任务状态跟踪，而是**大黑箱（AI 自动化执行）的关键节点暴露窗口 + 可回溯审计资产**。
@@ -1065,11 +1088,11 @@ AI 时代的看板：不是任务状态跟踪，而是**大黑箱（AI 自动化
 AI 时代的看板：不是任务状态跟踪，而是**大黑箱（AI 自动化执行）的关键节点暴露窗口 + 可回溯审计资产 + AI 与人对称交换关键信息的场所**（看板只记录/展现，不承载共识达成；人面 = Web 只读 + task 生命周期，决策操作 CLI/REST）。
 ```
 
-- [ ] **Step 7: 全量回归 + 提交**
+- [ ] **Step 8: 全量回归 + 提交**
 
 Run: `uv run python tests/run_ac.py` -> 全绿（prune 文案改动无断言影响，确认 `prune_confirm` 绿）。
 ```bash
-git add -A && git commit -m "T5: 文档同步（PRD §0/§3.1/§3.4/§4.2/§6 定位与生命周期面、design.md §0 旧措辞、web.md surface 重写 + 冒烟清单、README 定位行）+ prune 确认文案补 ARCHIVED + known-gaps 登记 R1/R3/R4 残余"
+git add -A && git commit -m "T5: 文档同步（PRD §0 七处（含报告纪律预期模式）/§3.1/§3.4/§4.2/§6 定位与生命周期面、design.md §0 旧措辞、web.md /board 行 + surface 重写 + 冒烟清单、BCD S1 SSE 子句修订记录、README 定位行）+ prune 确认文案补 ARCHIVED + known-gaps 登记 R1/R3/R4 残余"
 ```
 
 ---
@@ -1077,7 +1100,7 @@ git add -A && git commit -m "T5: 文档同步（PRD §0/§3.1/§3.4/§4.2/§6 �
 ## 收尾（全部任务后）
 
 - [ ] 全量回归：`uv run python tests/run_ac.py` 全绿。
-- [ ] 核对 spec §9 文档同步清单逐项打勾（PRD 五节 / design.md / web.md / known-gaps / README / prune 文案）。
+- [ ] 核对 spec §9 文档同步清单逐项打勾（PRD 七处含报告纪律 / design.md / web.md / BCD 修订记录 / known-gaps / README / prune 文案）。
 - [ ] 核对 spec §2 非目标未被偷渡（无 unarchive / 无 subtask 编辑 / 无新事件 kind / MCP 12 工具不变 / 无回收站）。
 - [ ] tier-2：`docs/ops/m1-5-verification.md` 填齐（格式同 `m1-4-verification.md`：oracle 版本 / 判据逐字引 BCD / 结果 / 红绿证据表 / BCD 映射逐场景 / 重跑规格）；`git ls-files` 确认全 tracked。
 - [ ] 向 user 汇报：测试结果 + 手工冒烟建议（web.md 冒烟 checklist 浏览器过一遍）+ MR 建议（分支 task-lifecycle -> main，user 裁决合入）。
