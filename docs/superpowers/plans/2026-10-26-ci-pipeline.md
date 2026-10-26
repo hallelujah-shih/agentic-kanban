@@ -148,7 +148,7 @@ docker run -d --rm -p 127.0.0.1:18811:8765 --name ak-t1-smoke ak-ci-t1 && sleep 
   - 装依赖（D 实验机制逐字）：
     `uv export --locked --all-groups -o requirements-ci.txt`
     → `uv venv` → `UV_INDEX_URL=https://pypi.org/simple/ uv pip install -r requirements-ci.txt`
-  - ② node --check（runner 默认 node 22.23.3，不另装）：`.venv/bin/python` 内联脚本用
+  - ② node --check（node 已由 setup-node 钉 22）：`.venv/bin/python` 内联脚本用
     `re.findall(r"<script>(.*?)</script>", html, re.S)` 抽两壳（board_shell()/detail_shell()）
     落 /tmp，逐个 `node --check`（findall 而非 search：防多块吞并；断言每壳至少 1 块）。
   - ① 全量套件：`.venv/bin/python -u tests/run_ac.py`（`-u` 关块缓冲实时见逐条；
@@ -162,12 +162,15 @@ docker run -d --rm -p 127.0.0.1:18811:8765 --name ak-t1-smoke ak-ci-t1 && sleep 
 **oracle**（本地模拟 = CI 命令序列在洁净环境的同构复现）：
 - S1（CI-faithful 全链，绿）：洁净 venv（建在 worktree 外，如 `<ledger 目录>/venv-pypi`，
   **不动办公网 .venv**）+ 独立缓存跑 test job 命令序列：
+  **全程 CWD = worktree 根**（export 发现 lock、`-e .` 按 CWD 解析）。
   `uv export --locked --all-groups -o <ledger 目录>/reqs-ci.txt`（断言：
   `grep -cE 'aliyun|https?://' reqs-ci.txt` == 0——模式写死，防 httpx2/httptools 包名误伤
   'http'；含 `httpx2==`；含 `-e .`；行数口径：含哈希 786 行 / 非哈希 134 行，两口径均可
   复算）→ `UV_CACHE_DIR=<独立> uv venv <ledger 目录>/venv-pypi` →
-  `UV_CACHE_DIR=<独立> UV_INDEX_URL=https://pypi.org/simple/ uv pip install -r reqs-ci.txt`
-  （独立缓存强制真实下载，日志见 pythonhosted）→
+  `UV_CACHE_DIR=<独立> VIRTUAL_ENV=<ledger 目录>/venv-pypi UV_INDEX_URL=https://pypi.org/simple/ \
+   uv pip install -r reqs-ci.txt`（**VIRTUAL_ENV 定向写死**——无定向时 uv 发现序会命中
+  worktree .venv，装进办公网 venv 破坏"不动办公网"不变量；独立缓存强制真实下载，
+  日志见 pythonhosted）→
   `<venv-pypi>/bin/python -c "import agent_kanban"` → ② 两步链双 PASS →
   **以 venv-pypi 顶层解释器跑全量 run_ac = 514/514**（~6 min，CI 同构绿）。
   - 保真论证（plan 审 F3 折入，登记）：`tests/ac_lib.py:24` 将子进程（MCP/uvicorn/CLI）
@@ -231,9 +234,14 @@ module.exports = require('@playwright/test').defineConfig({
 - 免 token（localhost 豁免，config 默认 127.0.0.1）：token 传播链由后端套件 security 用例
   API 层覆盖，e2e 不重复（裁决留人工/不覆盖面见不修清单）。
 - `seed.py`（服务启动前直写 DB，无并发）：复用 `tests/ac_lib`（`sys.path` 插入 tests/），
-  造 7 种子——s1 OPEN+description（**含对抗内容**：`<img src=x onerror=alert(1)>` + 引号 +
+  造 7 种子（预探针触发后备路径则 8，见 s3）——s1 OPEN+description（**含对抗内容**：`<img src=x onerror=alert(1)>` + 引号 +
   换行，真浏览器 XSS 探针）、s2 OPEN+acceptance 2 锚 0 子任务（缺口标红对象）、
-  s3 CLAIMED+BLOCKED（MCP `claim_task`+`mark_blocked`，awaiting_human 对象）、
+  s3 CLAIMED+BLOCKED+进度注记（MCP `claim_task`+`mark_blocked`+`update_progress`，
+  awaiting_human 与 E3c 双对象；事件链 = 恰好 3 条：state_change×2 + progress_note×1，
+  推导锚 operations.py:439-491/703-719/798-823 + state_machine.py:69-79）。
+  **预探针**（seed.py 首跑后）：核 s3 深潜页等待人横幅仍在（update_progress 不清 marker）；
+  若横幅消失（marker 被清）→ 启用后备种子 s8（仅 claim+mark_blocked，E5 改用 s8，
+  s3 保进度注记），回报登记实际——两路径写死，禁执行者即兴；
   s4 **CLAIMED**（MCP claim；archive 对象，web.md:49 字面"对 CLAIMED 需求 archive"）、
   s5 OPEN（delete 对象）、s6 CLAIMED（status 过滤对象）、
   s7 **DONE**（MCP claim + CLI `approve`；"已完成" tab 对象，终态视图过滤断言）。
@@ -249,7 +257,7 @@ module.exports = require('@playwright/test').defineConfig({
 | E2 | 2 | 页面渲染后 node `fetch /board` | 逐种子（s1-s6）id 在场 + 每行 title/state 标签文本与 JSON 逐字段一致 + 页面标题集合 == JSON 标题集合（集合断言，非裸计数，执行序无关） |
 | E3a | 3 | 点 s1 标题进深潜页 | description 以**纯文本**呈现（含换行）；该节内 `img` 元素数 = 0（XSS 中和，真浏览器对抗位） |
 | E3b | 3 | 点 s2 进深潜页 | 验收对照表 2 行；缺口标红样式在场（执行者实读壳定红标判定，登记） |
-| E3c | 3 | 深潜 s3，选事件流 kind 过滤值（稳定 id `ev-kind`，web.py:447 实测；过滤为纯客户端 JS web.py:469-475） | 事件行仅含所选 kind（s3 有 claim+block 事件链，取其中一 kind 断言过滤后行数变化且无其他 kind 行；执行者按实跑定过滤前后行数并登记） |
+| E3c | 3 | 深潜 s3，选事件流 kind 过滤值 `state_change`（稳定 id `ev-kind`，web.py:447 实测；过滤为纯客户端 JS web.py:469-475） | 可复算确定值断言（s3 事件链 = 3 条：state_change×2 + progress_note×1）：过滤前事件行 = 3；选 state_change 后 = 2 且行全为 state_change（正方向"保留"+负方向"排除"双判别）；对称位（可选）选 progress_note 后 = 1 |
 | E4a | 4 | 顶栏新建两连发：① title `e2e-new1-<ts>` + acceptance 两行 + Jira 链接；② title `e2e-new2-<ts>` 仅 title | 两新标题均出现在看板（poll ≤10s）；① source=jira（fetch /board 核）；② 默认 source（fetch 核） |
 | E4b | 4 | 深潜 s4（CLAIMED）-> archive | 回看板（URL `/`）；「已归档」tab 内 s4 在场 |
 | E4c | 4 | 深潜 s5 -> delete：dialog 先输**错误**标题，再输正确标题 | 第一次：停留深潜页（未离开）；第二次：回看板且 s5 行消失 |
@@ -268,13 +276,25 @@ spec 内不留该断言（留 = 镜像现实现 = 陷阱库 3）。
   config 的 baseURL sed 成 `http://127.0.0.1:18799`（服务不在该端口），跑 E1 -> 必须红
   （连接失败，非静默跳）；恢复 config（git checkout playwright.config.js）。一次性仪器，
   红绿采集后冻结（证据仪器纪律）。
-- 红 R2（历史坏壳 = P0 类真红，canary 式阴性对照）：一次性 worktree
-  `git worktree add .worktree/ci-r2-probe f764794` 后
-  `git checkout f764794^ -- src/agent_kanban/api/web.py`（= M1-6 前坏壳），以该 worktree 代码
-  起服务（`E2E_PORT=18766` + `AK_E2E_DB` 指向 ledger 目录独立 DB，PYTHONPATH=src 走主
-  worktree 的 .venv）→ `E2E_PORT=18766 npx playwright test`（仅 E1 例）-> 必须红
-  （"加载中"卡死）；同一坏壳跑 ② 两步链 -> 必须红（SyntaxError，行号 ≈147）。用完删
-  probe worktree。
+- 红 R2（历史坏壳 = P0 类真红，canary 式阴性对照）。**执行形态不变量**（plan 审 N2
+  折入：probe worktree 无 .venv/无 e2e 资产，字面执行必产 infra 红而非产品红，canary
+  反证位失效）：
+  1. 坏壳源 = 一次性 worktree `git worktree add .worktree/ci-r2-probe f764794` 后
+     `git checkout f764794^ -- src/agent_kanban/api/web.py`（= M1-6 前坏壳）；**唯一差异源
+     是 web.py，其余一切走主 worktree 资产**。
+  2. 种子：主 worktree `tests/e2e/seed.py` 先写独立 DB `<ledger 目录>/r2/r2.db`（服务前，
+     无并发）。
+  3. 坏服务**手动**后台起（日志落 ledger 目录）：
+     `AGENT_KANBAN_DB=<ledger>/r2/r2.db AGENT_KANBAN_PORT=18766 \
+      PYTHONPATH=<probe worktree>/src <主 worktree>/.venv/bin/python -m agent_kanban.api`。
+  4. webServer 协调写死：临时 sed `playwright.config.js` 的 webServer.command 为
+     `sleep 600`（占位 no-op；readiness url `http://127.0.0.1:18766/healthz` 由手动坏服务
+     满足）——禁执行者换其他协调方式。
+  5. `E2E_PORT=18766 npx playwright test`（仅 E1 例）-> 必须红。
+  6. **红因判据写死**：红因必须是 E1 的断言失败（页面卡"加载中"/标题未渲染）；红因落在
+     webServer 启动/端口/种子面 = 探针无效，修探针重跑（禁当产品红留档，陷阱库 1）。
+  7. 同一坏壳跑 ② 两步链 -> 必须红（SyntaxError，行号 ≈147）。
+  8. 清理：杀手动服务、`git checkout playwright.config.js`、删 probe worktree。
 - 绿 G5：健康服务 12/12 全绿（12 spec），计时落 ledger（预期 1-2 min，超 3 min 须在
   回报解释）。
 
