@@ -1,0 +1,8 @@
+services:
+  kanban:
+    build: .
+    # host 网络：容器内 bind 127.0.0.1 即宿主 localhost，安全模型（localhost 免 token）成立
+    network_mode: host
+    volumes:
+      - ${HOME}/.agent-kanban:/data
+    restart: unless-stopped
