@@ -336,6 +336,19 @@ def k_web():
             return True
         ok("k_web(M1-6 A2): board+detail 壳 <script> 块逐行双引号配对（无字符串截断）",
            _js_quote_parity(raw) and _js_quote_parity(raw2), "存在未终止 JS 字符串字面量")
+        # M1-6 T2 终态操作导航防线：archive/delete 成功后回看板（user 2026-10-26 第二轮
+        # 原话：点了 archive 即不再期许看详情）。单根因 = handleOpResult 成功路径
+        # flash+load() 重拉（delete->404 死页归因错 / archive->静默成功无反馈）
+        # 抽取法（plan 审 P2-1 登记）：至首个列 0 的 `}` 止（lstrip 形态匹配缩进 `}`
+        # 会在 if 闭合处截断块 -> 假红）
+        _l = raw2.splitlines()
+        _s = next(i for i, x in enumerate(_l) if x.startswith("async function handleOpResult"))
+        _e = next(i for i in range(_s + 1, len(_l)) if _l[i] == "}")
+        _op_block = "\n".join(_l[_s:_e + 1])
+        ok("k_web(M1-6 A3): handleOpResult 成功回看板（location.href \"/\"）",
+           'location.href = "/"' in _op_block, "缺回看板导航")
+        ok("k_web(M1-6 A4): handleOpResult 成功路径无 load() 重拉（杜绝死页/静默成功）",
+           "load()" not in _op_block, "残留 load() 重拉")
         # AC1 数据路径：Web 表单映射的 payload（一行一条 -> {item}）+ jira 映射（spec case 7）
         # token 必带（REST 以 token="sekret" 启动，中间件对全路径强制，T4 红跑实证 401）
         code, body = rest.req("POST", "/requirements", {"title": "k-create",

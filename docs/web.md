@@ -39,14 +39,14 @@
 
 **决策操作 = CLI/REST-only（Web 无入口）**：approve / release(reason) / renew / reopen(--continue) / note(content) / abandon(to_state) / set_expectations——语义与端点不变（PRD §4.2），Web 壳已移除对应按钮。深潜页等待人横幅含静态 CLI 提示（kind=review -> 人面确认: kanban approve <id>；kind=blocked -> 解除阻塞: kanban approve <id>）。
 
-操作结果：成功 -> 提示后 `load()` 重拉页面数据；失败 -> 内联展示响应体 `{code, message}`（如 `illegal_state: ...`、`not_found: ...`）。
+操作结果：成功 -> 回看板（`location.href = "/"`，看板即反馈；archive/delete 均为终态操作，user 裁决 2026-10-26 不再停留深潜页）；失败 -> 内联展示响应体 `{code, message}`（如 `illegal_state: ...`、`not_found: ...`），停留页面。
 
 ## 冒烟 checklist（浏览器人工）
 
 1. `GET /?token=<t>` 打开看板页：需 token 或 localhost；任务行按需要关注置顶；无任务时显示「（无任务）」。
 2. 数据与 `/board` JSON 一致（核对 title/state/进度/信号标签）。
 3. 点深潜链接进深潜壳：验收对照缺口标红、事件流可按 kind/severity 过滤。
-4. 生命周期操作：新建表单提交（带/不带 acceptance 两行锚、带 Jira 链接）成功且看板重拉出现新任务；对 CLAIMED 需求 archive 成功（移入已归档 tab）；delete 输入错误标题被拒、正确标题删成功（页面转“任务不存在”）。
+4. 生命周期操作：新建表单提交（带/不带 acceptance 两行锚、带 Jira 链接）成功且看板重拉出现新任务；对 CLAIMED 需求 archive 成功（回看板，任务出现在已归档 tab）；delete 输入错误标题被拒、正确标题删成功（回看板，任务消失）。深链直接访问不存在的任务 -> 友好文案“任务不存在（可能已被人删除）”。
 5. 等待人提示：对 awaiting_human 任务确认深潜页与卡片横幅显示 `kanban approve <id>` 提示（静态文字，非按钮）。
 6. SSE 断连重连行为：断网/服务重启后 EventSource 自动重连，onopen 触发重拉，页面结构自愈（无历史回填，数据以重拉结果为准）；页面打开状态下另一进程（如 MCP stdio agent）推进状态 -> 页面 2s 内自动刷新（`AGENT_KANBAN_SSE_POLL_MS`）。
 7. `GET /board?status=CLAIMED` 等过滤有效。

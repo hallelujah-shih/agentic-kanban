@@ -1,4 +1,4 @@
-# M1-6: board 壳 JS 转义修复 + 壳解析防线
+# M1-6: board/detail 壳修复与防线（T1 转义 + T2 终态操作导航 + T3 深潜 description 展示）
 
 **基分支**: main @ 1f1f47a（worktree `.worktree/m1-6-board-shell-js`，分支 `m1-6-board-shell-js`）
 **档位**: 全六门（B/D 面交界按 D 取重：改动落在用户可见的 Web 壳，且新增测试资产）
@@ -48,7 +48,7 @@
    - 一次性真机：修复后对两壳（board/detail）的 script 块 node --check 均通过
      （node v24.21.0，宿主实测在场；重跑规格见下）。
 
-## 原子任务（单任务批次）
+## 原子任务（T1/T2/T3 三任务批次）
 
 ### T1: 转义修复 + 2 条壳解析防线断言
 
@@ -94,13 +94,127 @@ commit message 含红绿证据路径与不修清单登记引用）。
 一次性 node --check 真机重跑规格/盲区/不修清单/流程审计记录），
 tier-2 合并门槛 = 全量全绿 + 本文档 + git ls-files 全 tracked。
 
+### T2: 深潜页终态操作（archive/delete）成功后回看板（plan delta，user 冒烟第二轮）
+
+**起因（user 原话，2026-10-26）**：
+- delete：删除成功后停留深潜页渲染"任务不存在（可能已被人删除）"——归因错
+  （暗示他人删的，实为本人刚删）+ 不回看板。
+- archive："点了archive,毫无响应（实际已经archive了）……既然点击了archive,就不是期许
+  还继续看详情。后续要看详情也应该是去archive中查看。"
+- 共同机制（单根因）：`handleOpResult` 成功路径统一 `flash("操作成功"); load()` 重拉
+  ——delete 重拉拉到 404（死页）；archive 重拉拉到 ARCHIVED 态（页面观感几乎不变 =
+  静默成功）。doOp(archive) 与 doDelete 共用该路径（web.py:490/494/503-513）。
+
+**契约三锚**：
+1. **契约源**：user 裁决（上引原话两轮）。M1-5 spec 对终态操作后的导航未作规定，
+   但 `docs/web.md:42/49` 逐字记载旧行为（成功 -> `load()` 重拉 / delete 后页面转
+   "任务不存在"）——T2 按 user 第二轮裁决变更该旧契约，**web.md:42/49 同步为 T2
+   交付物**（plan 审 P1-2 折入；"spec 静默"措辞已纠正）。板上任务 f49ce945 验收锚
+   a2（原"archive 后行为不变（重拉显示 ARCHIVED 态）"，建任务时先于 user 第二轮
+   反馈写成）被 user 原话"点了archive……不是期许还继续看详情"**取代**，锚已按
+   更新行为改（plan 审 P1-1 折入，板上留 note）。"detail 404 友好文案"契约保留
+   给深链场景（直接访问不存在的任务），不受本修复影响。业务规则无变化（④ 不在；
+   纯 UI 导航语义，user 明示）。
+2. **代码锚点**（worktree HEAD 实测）：
+   - `src/agent_kanban/api/web.py:490-493` doOp（archive 按钮 data-op）与
+     `:494-502` doDelete，共用
+   - `:503-513` handleOpResult，成功路径 = :511-512 `flash("操作成功", false); load();`
+     （修点）
+   - `:518` 初始 `load()` 与 `:520` `es.onmessage = load`（SSE 重拉）——保留不动
+   - `:372` 404 友好文案——保留（深链语义正确）
+   - `:457` archive 按钮 disabled 态（ARCHIVED 时禁用）——保留
+3. **逐例期望**：
+   - 基线：T1 后全量 511/511（已实测）。
+   - 新增 2 条断言（T2-A3/A4，正负独立，plan 审 P2-2 折入：红诊断可区分"缺导航"
+     vs "残留 load()"）在 T1 HEAD 上必须红。红证据先采集（t2-red.log）。
+   - 修复后全绿：513/513（511 + 2）。
+   - 一次性真机：两壳 script 块 node --check 重跑（node-check-2.log；board 壳 T2
+     未动，为防线完整性同跑）。
+
+**修复（单产品位 1 处）**：
+- `web.py:511-512`：`flash("操作成功", false); load();` -> `location.href = "/";`
+  （终态操作成功即回看板，看板即反馈：任务消失/转 ARCHIVED。失败路径不动：
+  flash 错误 + 停留。archive/delete 双调用方同享单点，无需分支——当前 data-op
+  仅 archive，doOp 泛化性风险见不修清单）
+
+**T2-A3/A4 断言（k_web 组 +2 例）**（plan 审 P2-2 折入：正负拆独立断言）：
+- 抽取法（plan 审 P2-1 折入，探针实证）：自 `async function handleOpResult`
+  行起，至**首个列 0 的 `}`（非缩进 `}`）**止——lstrip 形态（匹配缩进 `}`）会
+  在 if 闭合处截断块，T2 后假红卡死。
+  - A3（正）：块含 `location.href = "/"`（成功回看板）
+  - A4（负）：块不含 `load()`（终态成功后不重拉）
+- oracle 判据：① 独立于实现——锚 = user 行为契约（终态操作后离开深潜页）+
+  "导航 vs 重拉"互斥形态，非实现镜像；② 反证位——T1 HEAD 先红留档（A3 红=缺
+  导航，A4 红=残留重拉，红因各自可辨）；③ 对抗变体——A4 防"加了导航但保留
+  load() 重拉"的半修复态。
+- 形态耦合登记（同 A1 级）：锚函数块列 0 边界形态；壳格式风格变化需同步。
+- 运行时归因：真机验收 = user 浏览器复测（archive->看板 / delete->看板，服务更新
+  后）；持久浏览器 e2e 归 CI 批次（board task 86dfe88f，盲区登记不变）。
+- A2 联动：新行 `location.href = "/";` 双引号计数偶，A2 无假阳（探针预验）。
+
+**验证命令（T2）**：
+- 红：`uv run python tests/run_ac.py --only k_web`（T1 HEAD，A3 FAIL 行留档
+  t2-red.log）
+- 绿：同命令 25/25（t2-green.log）
+- 最高 tier：全量 513/513（full-rerun-2.log）
+- 一次性真机：两壳 node --check（node v24.21.0；node-check-2.log 格式升级：
+  记录被检文件路径与抽取命令，折入结果审勘误 1）
+
+**commit**：T2 独立 commit（修复 + A3/A4 + plan delta + web.md:42/49 同步同
+commit），与 T1 同分支，user 一次性裁决合入。
+
+### T3: 深潜页展示任务 description（plan delta，user 冒烟第三轮）
+
+**起因（user 原话，2026-10-26）**："我手动创建了一个任务：面向Gmail的邮件AI
+Agent调研，写了详细的描述，但是我进入详情，完全看不到了。"
+**机制**（单点，证据坐实）：深潜壳 render() 无 description 展示位——payload 有
+字段（9acea09b7 JSON 实测 description=174 字）但 JS 不渲染；全 web.py 仅新建
+表单引用 description（:278）。缺口溯源：M1-5 spec:126"深潜页零改动"→ 缺口早于
+M1-5（M1-2 设计缺口，**非回归**）；web.md 深潜页契约行同样未列 description。
+
+**契约三锚**：
+1. **契约源**：user 原话 + web.md 深潜页契约行（记载现有内容清单、无
+   description——T3 新增该节并同步 web.md，同 P1-2 纪律）；spec:126 零改动
+   证明缺口溯源（登记）。业务规则无变化（④ 不在；纯展示补全）。
+2. **代码锚点**（worktree HEAD 实测）：`web.py:380-389` render() 头部区
+   （插入位：history_note 行后、awaiting_human 横幅前）；`esc()` 既有（:386
+   标题同款）；`sec`/`wide` 样式类既有。
+3. **逐例期望**：
+   - 基线：T2 后全量 513/513。
+   - 新增 1 条断言（T3-A5）在 T3 前 HEAD 上必须红：深潜壳无 description 渲染。
+   - 修复后全绿：514/514（513 + 1）；k_web 26/26。
+   - 一次性真机：两壳 node --check（node-check-3.log）。
+
+**修复（单产品位 1 行）**：
+- `web.py:389` 后（render() 内）：
+  `if (s.description) html += "<div class='sec wide'><h2>描述</h2><div style='white-space:pre-wrap'>" + esc(s.description) + "</div></div>";`
+  （esc 必带——description 是用户输入，全壳转义纪律同 ;pre-wrap 保留用户换行;
+  空 description 不渲染空节）
+
+**T3-A5 断言（k_web 组 +1 例）**：
+- 正：detail 壳含描述节且以 esc 渲染（字面 `esc(s.description)` + `描述</h2>`
+  同在）——esc 在场同时覆盖 XSS 面（无转义渲染=注入向量，全壳无先例）。
+- 形态耦合登记（同 A1 级）。运行时归因 = user 浏览器复测（Gmail 任务详情页
+  见描述全文）；浏览器 e2e 归 CI 批次（86dfe88f）。
+- A2 联动：新行双引号计数偶（探针预验）。
+
+**验证命令（T3）**：
+- 红：`--only k_web`（T3 前 HEAD，A5 FAIL，t3-red.log）
+- 绿：26/26（t3-green.log）；最高 tier 全量 514/514（full-rerun-3.log）
+- 一次性真机：两壳 node --check（node-check-3.log）
+
+**commit**：c3（修复 + A5 + plan delta + web.md 深潜页契约行同步），与 T1/T2
+同分支，user 一次性裁决合入。
+
 ## 影响面
 
 - ① 对外接口/工件格式/数据迁移：不在（REST/MCP 契约零改动；送出壳的 JS
   内容从"损坏"变"有效"，非接口形状变化）
 - ② 新入口/信任边界/凭据/反序列化：不在
 - ③ 热路径/资源敏感：不在（壳为静态字符串）
-- ④ 业务规则变化：不在 → Phase 0.5 不触发（纯缺陷修复，行为回归 spec 原意）
+- ④ 业务规则变化：不在 → Phase 0.5 不触发（T1 纯缺陷修复，行为回归 spec 原意；
+  T2 为 user 明示的 UI 导航语义，spec 静默已登记于 T2 节，非业务规则；
+  T3 为纯展示补全，无既有契约（spec 缺口登记于 T3 节），非业务规则）
 
 ## 单向门检查
 
@@ -117,17 +231,32 @@ tier-2 合并门槛 = 全量全绿 + 本文档 + git ls-files 全 tracked。
 - 盲区"浏览器 JS 无自动化"：本批只落静态解析防线（A2）；真浏览器 e2e
   （Playwright 等）归 CI 批次——user 已裁决该事项作为看板任务统一管理
   （本批次外立项）。
-- 容器 8765 当前跑含 bug 代码：本批合并后由 user 裁决重建（docker compose
-  up -d --build），不在本批内动生产部署。
+- 容器 8765：user 裁决（2026-10-26）先行部署修复分支（worktree 构建镜像，
+  compose 原配置重建，现网壳 node --check PASS）；合入 main 后从 main 重建
+  收敛（内容相同）。
+- (T2) `web.py:372` "任务不存在（可能已被人删除）"：深链语义（直接访问不存在
+  的任务）正确，保留；修复后"本人刚删"场景不再到达该文案。
+- (T2) SSE 事件与导航的 micro-race（plan 审 P2-3 措辞修正）：delete 不写事件
+  （spec §4.3），无"delete 事件渲染 404"的 race；location.href 生效前 archive
+  事件触发 load() 显示 ARCHIVED 态（非 404）；真 404 闪现仅由 delete 后无关事件
+  触发重拉产生（窗口 < fetch 往返，通常页面先卸载）；登记不修。
+- (T2) `load()` 函数本体与初始（:518）/SSE（:520）调用点、archive 按钮 disabled
+  态（:457）、board 壳：不动（本问题仅 detail 壳）。
+- (T2) doOp 泛化性：未来若新增非终态操作复用 handleOpResult 会被迫回看板——
+  届时成功路径需加参数；维护面登记，本批不修。
+- (T3) board 卡片紧凑行不展示 description：看板定位概览，深潜页为阅读入口，
+  本任务范围仅深潜页。
 
 ## 验证入口与 tier
 
 - 入口：`uv run python tests/run_ac.py`（本机；开发机即构建机）。
 - tier 定义：依 tracked 文档 `docs/ops/m1-5-verification.md`——tier-2 = 全量
   run_ac（最高 tier = 合并门槛）。
-- 基线数字：509/509（main@1f1f47a）；本批期望 511/511。
-- 当轮产物目录：/tmp/opencode/m1-6/logs/（t1-red / t1-green / full-rerun /
-  node-check 四份）。
+- 基线数字：509/509（main@1f1f47a）；T1 后 511/511（已实测）；T2 后 513/513；
+  T3 后本批期望 514/514。
+- 当轮产物目录：/tmp/opencode/m1-6/logs/（T1: t1-red / t1-green / full-rerun /
+  node-check；T2: t2-red / t2-green / full-rerun-2 / node-check-2；
+  T3: t3-red / t3-green / full-rerun-3 / node-check-3，共十二份）。
 - **适配登记**：目标仓无 AGENTS.md；验证入口/tier/基线以 tracked 的
   docs/ops/m1-5-verification.md + docs/adr/0000-known-gaps.md 为正典。
 

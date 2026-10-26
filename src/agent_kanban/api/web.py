@@ -508,8 +508,8 @@ async function handleOpResult(resp){
     flash("操作失败: " + (body && body.code ? body.code + ": " + (body.message || "") : txt), true);
     return;
   }
-  flash("操作成功", false);
-  load();
+  // 终态操作（archive/delete）：成功即回看板，不停留深潜页（契约见 web.md:42）
+  location.href = "/";
 }
 function flash(msg, isErr){
   var el = document.getElementById("op-msg");
