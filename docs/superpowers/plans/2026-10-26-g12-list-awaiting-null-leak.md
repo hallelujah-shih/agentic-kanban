@@ -1,7 +1,8 @@
 # G12 修复：list_awaiting 对已清 marker 任务泄漏（null 文本）
 
 **基分支**: main @ ab48e4b（worktree `.worktree/g12-list-awaiting`，分支 `g12-list-awaiting`）
-**档位**: 全六门（单向门：存量数据回填 = 数据变更，P2 升全量四层审查含回滚/兼容矩阵）
+**档位**: 全六门（后果面 C 数据面：落盘语义变更 + 新测试语义 k_g12 新测试资产；
+P2 已按单向门级全量四层含回滚/兼容矩阵执行——深度为超集，不降档）
 **日期**: 2026-10-26
 **板上任务**: 3d2f99e442694c19985a0231d773403b（a1 过滤层不再泄漏 / a2 存量处理方案裁决并落地）
 
@@ -13,9 +14,9 @@ G12（known-gaps 2026-10-26 登记，M1-5 T2 域外发现）：`list_awaiting` �
   - `models.py:53`：`awaiting_human: Mapped[dict | None] = mapped_column(JSON, nullable=True)`——
     裸 `JSON` 类型，SQLAlchemy `none_as_null` 默认 **False**：显式绑定 None 时写 **文本 `"null"`**，
     非 SQL NULL。
-  - 唯一清 marker 路径 `state_machine.py:65-67`：transition 到非 BLOCKED 时
+  - 唯一清 marker 路径 `state_machine.py:64-67`：transition 到非 BLOCKED 时
     `update(Requirement)...values(awaiting_human=None)` → 落库文本 `"null"`。
-  - 泄漏点 `operations.py:949`（list_awaiting）：`where(Requirement.awaiting_human.isnot(None))`
+  - 泄漏点 `operations.py:951`（list_awaiting）：`where(Requirement.awaiting_human.isnot(None))`
     → SQL `awaiting_human IS NOT NULL`，命中 `"null"` 文本 → 已清任务泄漏（awaiting_human 反序列化
     归一 None 输出）。
   - 可见面（detail/board/壳）不受影响 = 反序列化归一 None 的**侥幸**，非设计；SQL 层该列过滤引用
@@ -39,12 +40,12 @@ G12（known-gaps 2026-10-26 登记，M1-5 T2 域外发现）：`list_awaiting` �
    - `docs/adr/0000-known-gaps.md` G12 行（逐字摘）："`awaiting_human` JSON 列 none_as_null=False，
      清 marker 存文本 'null'，SQL 谓词 `IS NOT NULL`（operations.py:918）匹配该文本 -> approve/
      abandon/archive on BLOCKED 后任务仍出现在 list_awaiting（awaiting_human=null）"。
-     （行号 :918 为 M1-5 时点，现主代码 = operations.py:949，行号漂移归簿记。）
+     （行号 :918 为 M1-5 时点，现主代码 = operations.py:951，行号漂移归簿记。）
 2. **代码锚点**（main@ab48e4b 实测）：
    - `src/agent_kanban/models.py:53`（列定义，改造点 1）。
-   - `src/agent_kanban/services/state_machine.py:65-67`（唯一清 marker 路径，不改）。
-   - `src/agent_kanban/services/operations.py:949`（list_awaiting 谓词，不改——编码修好后自健全）。
-   - `src/agent_kanban/db.py:104-134` `ensure_schema()`（幂等建表 + seq 种子；回填挂接点，
+   - `src/agent_kanban/services/state_machine.py:64-67`（唯一清 marker 路径，不改）。
+   - `src/agent_kanban/services/operations.py:951`（list_awaiting 谓词，不改——编码修好后自健全）。
+   - `src/agent_kanban/db.py:105-136` `ensure_schema()`（幂等建表 + seq 种子；回填挂接点，
      改造点 2；同函数既有模式 = 读引擎检查 / 写引擎变更 / 无事不写）。
    - `tests/ac_lib.py:38` `new_db()` / `query(db, sql)`（直读 DB 文件）/ `MCP` 子进程类
      （服务起法 = 子进程，`ensure_schema` 每次服务启动跑）。
@@ -69,12 +70,18 @@ G12（known-gaps 2026-10-26 登记，M1-5 T2 域外发现）：`list_awaiting` �
 
 ## 影响面
 
-- ① **命中（单向门：存量数据变更）**：回填 = 单条精确匹配 UPDATE（`awaiting_human = 'null'`
-  文本行 -> SQL NULL）。**回滚/兼容矩阵**：
+- ① **命中（数据订正，非单向门）**：回填 = 单条精确匹配 UPDATE（`awaiting_human = 'null'`
+  文本行 -> SQL NULL）。**为何非单向门**（单向门 = 不可逆变更：存储格式/对外 ABI/
+  数据迁移/已发版契约）：SQL NULL 自始即该列合法值（`nullable=True`，新建任务初值即 NULL，
+  列 DDL 不变）；两种编码在新旧代码下读取等价——旧代码读 SQL NULL 直返 None
+  （SQLAlchemy JSON 类型对 NULL 列值不做 json.loads），`json.loads('null')` 亦 -> None；
+  全仓唯一区分二者的谓词 = list_awaiting 的 `IS NOT NULL`（G12 缺陷本身），不存在合法
+  查询消费该区分 → 回填不产生语义不可逆后果。"不可精确逆推"（分不清原 NULL 与回填 NULL）
+  为诚实承认，但无消费者依赖该区分。**回滚/兼容矩阵**（P2 已按全量四层含矩阵执行，深度超集）：
   - 数据回滚性：UPDATE 只触 `"null"` 文本（真实 marker 恒为 `{...}` JSON 对象文本，不可能精确
     匹配 4 字节 `null`）；回滚 = 反向 UPDATE（`SET awaiting_human='null' WHERE awaiting_human IS
     NULL AND <曾为 null 文本>`——不可精确逆推，但**无需逆推**：新代码下 SQL NULL 与 `"null"` 文本
-    语义同义（都=已清），旧代码读 SQL NULL 同样归一 None（JSON 反序列化对 NULL 列值返回 None），
+    语义同义（都=已清），旧代码读 SQL NULL 直返 None（对 NULL 列值不做 json.loads），
     唯一差异 = 旧代码谓词 `IS NOT NULL` 对 SQL NULL 正确排除（泄漏消失=旧行为改善非破坏）。
   - 代码回滚性：模型行回退后，SQL NULL 行读写均正常；新清除写回 `"null"` 文本（旧行为恢复）。
     无 DDL 变更（`none_as_null` 是绑定行为非列类型，SQLite 列 DDL 不变，`tests/alembic_diff.py`
@@ -86,11 +93,19 @@ G12（known-gaps 2026-10-26 登记，M1-5 T2 域外发现）：`list_awaiting` �
 - ② 不命中（无新执行环境；回填跑在既有服务进程既有写引擎上）。
 - ③ 不命中（ensure_schema 每次启动多一条 COUNT 读检查（读引擎，不抢写锁），COUNT=0 时零写——
   稳态零成本；非热路径）。
-- ④ 命中（**业务可见行为变化**：list_awaiting 结果集收缩——已清任务不再出现）。
-  **BCD 判定**：变化方向 = 消除已登记缺陷（G12），向 known-gaps 声明的期望行为回归，
-  非新增业务规则；无派生状态/事件/契约形状变化（list_awaiting 输出形状不变，仅结果集正确化）。
-  按 strict-sdd-loop 判据"客户或用户可见语义变化"属**有界路径**（单查询结果集修正，无跨模块
-  契约），BCD 不触发，本 plan 三锚即契约。
+- ④ **不命中**（业务可见行为被修正，非业务规则被变更）：list_awaiting 结果集收缩
+  = 向 G12 声明的期望行为回归（已登记缺陷：已清任务本就不该出现），非新增/修改业务
+  不变量、业务流程或配置语义；无派生状态/事件/契约形状变化（list_awaiting 输出形状
+  不变，仅结果集正确化）。
+  **BCD 判定（Phase 0.5 触发面逐条，权威序 = SDD 门）**：④ 不命中（如上）；单向门
+  不命中（① 论证）；D 面对外契约不命中——输出形状不变、无对外 API/ABI 变更、无 DDL
+  （none_as_null 为绑定行为非列类型，alembic_diff 基线不漂移）、行为语义为符合性
+  恢复而非语义变更（list_awaiting 语义恒为"列出等待人决策的任务"，修复使行为符合
+  该语义）。→ Phase 0.5 不触发，BCD 不触发；业务前置类 skill 亦非独立触发（纯代码
+  bug 修复 + 数据订正，非业务/客户维度的设计/方案/改造/选型/评估）。本 plan 三锚
+  即契约。
+  （plan 初稿曾判④命中并引 brainstorming "有界路径"作豁免——术语框架错配且
+  "业务可见行为变化"与"业务规则变化"混用，P2 复审后修订，见 plan-review.md。）
 
 ## 原子任务
 
@@ -112,17 +127,22 @@ G12（known-gaps 2026-10-26 登记，M1-5 T2 域外发现）：`list_awaiting` �
 3. **不改**：state_machine 清除路径、list_awaiting 谓词、任何 alembic 文件。
 
 **oracle（红先于绿，序不可换）**：
-- 红 R1（复现，修复前 HEAD 态）：`k_g12` 先行落盘（只含泄漏断言部分），`uv run --no-sync
-  python tests/run_ac.py --only k_g12`（或既有单跑口径）→ **必须红**：approve 后
-  list_awaiting 含该任务（red 输出留档：泄漏行 + raw query 列值 `"null"`）。
+- 红 R1（复现，修复前 HEAD 态）：`k_g12` 先行落盘，**R1 断言集 = 下述断言 1 + 断言 2**
+  （其余断言修复后补入完整体），`uv run --no-sync python tests/run_ac.py --only k_g12`
+  （或既有单跑口径）→ **必须红**：断言 1（list_awaiting 不含该任务）修复前因任务在
+  结果集中而红，断言 2（raw 列 = SQL NULL）修复前因列值为 `"null"` 文本而红——两断言
+  修复前皆红。red 输出留档：泄漏行 + raw query 列值 `"null"`（区分"真泄漏"与
+  "harness 崩溃"：子进程崩则 list_awaiting 报错而非返回泄漏任务）。
 - 绿 G1：修复后同命令 → 全绿；断言集（k_g12 完整体）：
   1. 序列 claim→mark_blocked→approve 后 list_awaiting **不含**该任务（a1 字面）；
   2. raw query：该行 awaiting_human = **SQL NULL**（`IS NULL` 谓词直查，机制断言）；
   3. 正向守卫：另一任务 claim→mark_blocked（存活）→ list_awaiting **含**且 marker 对象
      完整（kind/reason 在场）；
-  4. 启动自愈：新 DB 起服务（schema 建）-> 停 -> raw 写一行 `awaiting_human='null'`
-     （忠实存量态）+ 一行存活 marker -> 再起服务（ensure_schema 跑）-> raw 查：`'null'` 行
-     = SQL NULL、存活行**未变**（raw 文本比对）-> list_awaiting 只含存活行；
+  4. 启动自愈：新 DB 起服务（schema 建）-> 停 -> **用 raw SQL 插入字面 4 字节 `null`
+     文本**（忠实存量态；**禁经 ORM 写**——修复后 none_as_null=True 会把 None 写成
+     SQL NULL，无法模拟存量态，断言 4 假绿）+ 一行存活 marker（ORM 写）-> 再起服务
+     （ensure_schema 跑）-> raw 查：`'null'` 行 = SQL NULL、存活行**未变**
+     （raw 文本比对）-> list_awaiting 只含存活行；
   5. 自愈零写判据（可选）：稳态（无 `"null"` 行）下 ensure_schema 不产生该 UPDATE
      （执行者按可观测方式定，如 sqlite 日志或 rowcount 断言，定不下来降登记不硬造）。
 - 绿 G2（回归）：全量 `run_ac` = 514+N 全绿（N 实测钉死回报；k_archive:163 注释更新后
@@ -156,7 +176,7 @@ G12（known-gaps 2026-10-26 登记，M1-5 T2 域外发现）：`list_awaiting` �
 | state_machine 清除路径 | `values(awaiting_human=None)` 语义正确，错在类型绑定行为；改路径=绕过根因 | 本 plan 机制节 |
 | alembic revision | 无 DDL 变更（none_as_null 非列类型）；生产建表路径 = create_all/ensure_schema | 影响面 ① 回滚矩阵 |
 | detail/board/壳可见面 | 本就正确（反序列化归一），零改动 | 契约三锚.2 |
-| 生产库本批执行任何写 | 回填=启动自愈，user 重部署时自动跑；禁 agent 触碰生产数据（单向门纪律） | oracle 版本节 |
+| 生产库本批执行任何写 | 回填=启动自愈，user 重部署时自动跑；禁 agent 触碰生产数据 | oracle 版本节 |
 | 独立验证文档（m1-x 级） | 批次规模 = 2 文件代码改动 + 注释级文档更新；known-gaps 行 + ci-verification 计数即正典 | T2 契约 |
 | e2e 层覆盖 list_awaiting | list_awaiting 是 MCP 面（无 web 壳消费面——壳用 /board 的 attention_ids，Q2 待裁决）；MCP 面由 run_ac 覆盖 | 本表 + 板上 Q2 关联 |
 
@@ -168,5 +188,7 @@ G12（known-gaps 2026-10-26 登记，M1-5 T2 域外发现）：`list_awaiting` �
   `uv sync --frozen` 重建**（CI 批次先例：worktree 不共享主仓 untracked）。
 - **纯测试断言时序不变量（CI 批次 P6 审 A1 纪律注记，本批生效）**：先落红测试采红证据 ->
   实现 -> 绿 -> commit。
-- 域外发现（含生产 DB 形态差异、ensure_schema 并发窗新风险）强制回报单列，禁静默绕过。
+- 域外发现（含生产 DB 形态差异）强制回报单列，禁静默绕过；ensure_schema 并发窗按
+  P2 审判定 = 既有幂等模式复用（与 seq 种子 INSERT OR IGNORE 同构），非新增风险，
+  执行期 flag 即可。
 - 证据保全：每轮红绿日志 cp 落产物目录后再重跑。
