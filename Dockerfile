@@ -6,9 +6,7 @@ COPY pyproject.toml uv.lock cli.py alembic.ini README.md ./
 COPY src ./src
 COPY alembic ./alembic
 
-# 与宿主 uv.toml 同源：内网 PyPI 镜像（mirrors.aliyun.com 解析到 internal-proxy 代理，
-# internal CA 签发证书），uv/pip 对该 host 跳过证书校验（allow-insecure-host）
-# 内网 PyPI 镜像 + allow-insecure-host 与宿主 uv.toml 同源（internal CA 拦截，镜像源证书不可验证）
+# 内网 PyPI 镜像 + allow-insecure-host 与宿主 uv 配置同源（镜像源证书不可验证，uv.toml 已声明）
 COPY uv.toml /root/.config/uv/uv.toml
 
 RUN pip install --no-cache-dir uv --index-url https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
