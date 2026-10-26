@@ -120,20 +120,31 @@ RUN if [ "$UV_DEPS_MODE" = "frozen" ]; then \
 - 红 R3：对**未改** Dockerfile（f764794）跑 pypi 轨 build——ARG 未声明，`--build-arg` 为 no-op，
   build 日志走 aliyun（证据：日志含 mirrors.aliyun.com、无 pypi.org/pythonhosted 依赖下载行）。
   这证明"不改则 CI 海外 build 只能赌 aliyun 可达性"。
-- 绿 G3：新 Dockerfile pypi 轨 build 成功；日志含 pypi.org/pythonhosted 下载；镜像
-  `docker run --rm <img> /app/.venv/bin/python -c "import agent_kanban"` PASS；
-  `docker run -d -p 127.0.0.1:18811:8765 <img>` 后 `curl 127.0.0.1:18811/healthz` == 200（18811
-  避开在跑的 8765 容器）。
+- 绿 G3（pypi 轨容器 build）：~~本地判"build 成功"~~ **修订（T1 执行后主循环裁决，
+  域外发现 1）**：办公网透明 MITM（aliyun 与 pythonhosted 均 DNS 重写内网镜像 + Knownsec
+  自签链）下，python:3.14-slim 容器信任库无该根 → **容器内 pypi 轨 TLS 确定性失败 =
+  环境面阻塞，非机制缺陷**（g3.log 红点 [7/8] uv 本体安装，早于依赖轨）。G3 判定改为双点：
+  - G3a（机制证据，主机级）= T2 的 S1（export + venv-pypi + `uv pip install -r` 同链，
+    宿主 uv 信任内网镜像 CA，含 editable+hatchling 首验段）；
+  - G3b（容器级）= P5 GH 首跑 docker job（runner 无 MITM，公开证书）——该 job 绿 = G3 闭合。
+- smoke 断言修正（域外发现 2，T1 实证）：产品绑**容器内** 127.0.0.1（Dockerfile ENV），
+  `-p 127.0.0.1:X:8765` 的 DNAT 到 eth0 **结构性不可达**容器 loopback（生产容器
+  NetworkMode=host 佐证）。断言锚修正 = `docker run -d --network host -e
+  AGENT_KANBAN_PORT=<X>` + **轮询锚**（冷启动实测 4-6s，`sleep 3` 不足；30×1s 循环
+  `curl .../healthz` 见 200 即过）。
 - 回归 G4：默认轨 `docker build`（不带 ARG）成功 + 同法 healthz 200（办公网零改动实证；
   预期 ~27-60s）。
 
-**验证命令**:
+**验证命令**（smoke 用修正锚，见上域外发现 2）:
 ```
 docker build [ARG...] -t ak-ci-t1 .
 docker run --rm ak-ci-t1 /app/.venv/bin/python -c "import agent_kanban"
-docker run -d --rm -p 127.0.0.1:18811:8765 --name ak-t1-smoke ak-ci-t1 && sleep 3 \
-  && curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18811/healthz && docker stop ak-t1-smoke
+docker run -d --network host --name ak-t1-smoke -e AGENT_KANBAN_PORT=18811 ak-ci-t1
+for i in $(seq 30); do curl -sf -o /dev/null http://127.0.0.1:18811/healthz && break; sleep 1; done
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18811/healthz   # 期望 200
+docker stop ak-t1-smoke
 ```
+（18811 避开在跑的 8765；host 网络模式下端口=容器内绑定端口，`AGENT_KANBAN_PORT` 换绑。）
 **Commit**: `ci: Dockerfile 双轨镜像源 ARG（默认 aliyun frozen 零改动；海外 CI 走 pypi export+pip）`
 
 ### T2: CI workflow（test job + docker job）+ 本地模拟
@@ -325,6 +336,12 @@ Modify 板上 86dfe88f note（状态推进）。
   （Q1 分歧裁决前不覆盖，见下）。
 - 已知实践登记：CI actions 以 tag（@v4/@v7）钉版而非全 SHA——单用户无 secret 威胁模型下
   可接受（plan 审 F10 补记），二期再议升 SHA 钉版。
+- 已知局限（T1 域外发现 1 登记）：办公网透明 MITM（内网镜像 + Knownsec 自签链）下
+  **pypi 轨容器 build 不可用**（容器信任库缺根，确定性 TLS 失败）——办公网一律默认轨
+  （aliyun frozen）；pypi 轨仅限无 MITM 网络（海外 CI）。容器内 pypi 段闭合点 = GH 首跑。
+  user 知情项（办公网 TLS 拦截面）随批次交接。
+- docker smoke 断言锚登记（T1 域外发现 2）：容器 + 宿主端口映射形态对"绑容器内 loopback"
+  的产品结构性不可达；一切容器冒烟一律 `--network host` + `AGENT_KANBAN_PORT` + 轮询锚。
 - 分支保护操作交接（user 执行，agent 不碰仓设置；附 gh 命令 + 网页路径两步）：
   必需 check = `test` + `docker`（job 名即 check 名）；e2e 待观察。
 - **Q1 交接（存量契约分歧，非本批引入，需 user 裁决）**：web.md:49"深链直接访问不存在的
