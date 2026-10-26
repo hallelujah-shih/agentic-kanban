@@ -61,3 +61,34 @@ jobs:
       - name: docker build（pypi 轨）
         # Dockerfile 双轨 ARG：UV_DEPS_MODE=pip 走 export+pip 轨，UV_PIP_INDEX 钉 pypi。
         run: docker build --build-arg UV_DEPS_MODE=pip --build-arg UV_PIP_INDEX=https://pypi.org/simple/ -t agentic-kanban:ci .
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: 装依赖（pypi 轨：export 锁 + venv + pip install）
+        # 与 test job 同款安装链（CI 上 .venv 是唯一 venv，无需 VIRTUAL_ENV 定向）。
+        # 禁 uv sync / uv run：默认按 aliyun 锁 sync，会装错源/破坏 CI venv。
+        run: |
+          uv export --locked --all-groups -o requirements-ci.txt
+          uv venv
+          UV_INDEX_URL=https://pypi.org/simple/ uv pip install -r requirements-ci.txt
+      - name: npm ci
+        # package-lock.json 由 registry.npmjs.org 生成（T3 纪律）；GH runner 海外直连 npmjs。
+        run: npm ci
+      - name: Playwright chromium（--with-deps 装系统库，GH runner root 可 apt）
+        # 浏览器下载无缓存（20-40s，登记不修清单）；本机 Fedora 本地跑用不带 --with-deps 的
+        # `npx playwright install chromium`（CI 步骤以 GH ubuntu 为准）。
+        run: npx playwright install --with-deps chromium
+      - name: e2e 冒烟（12 spec，workers=1）
+        # 端口 18765 / DB /tmp/ak-e2e.db 为 CI 默认值（GH 全新 VM 无冲突）；
+        # 服务与种子由 playwright.config.js webServer 一体管（seed.py 先行无并发）。
+        run: npx playwright test

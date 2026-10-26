@@ -11,6 +11,11 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+
+# Playwright e2e
+node_modules/
+test-results/
+playwright-report/
 .venv
 .env
 collab_export/
