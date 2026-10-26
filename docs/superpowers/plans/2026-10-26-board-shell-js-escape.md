@@ -167,6 +167,7 @@ commit），与 T1 同分支，user 一次性裁决合入。
 
 **起因（user 原话，2026-10-26）**："我手动创建了一个任务：面向Gmail的邮件AI
 Agent调研，写了详细的描述，但是我进入详情，完全看不到了。"
+**板上任务**: 07755135（三锚 a1/a2/a3 与本节交付物一一对应；plan 审 P2-1 折入）。
 **机制**（单点，证据坐实）：深潜壳 render() 无 description 展示位——payload 有
 字段（9acea09b7 JSON 实测 description=174 字）但 JS 不渲染；全 web.py 仅新建
 表单引用 description（:278）。缺口溯源：M1-5 spec:126"深潜页零改动"→ 缺口早于
@@ -254,9 +255,16 @@ M1-5（M1-2 设计缺口，**非回归**）；web.md 深潜页契约行同样未
   run_ac（最高 tier = 合并门槛）。
 - 基线数字：509/509（main@1f1f47a）；T1 后 511/511（已实测）；T2 后 513/513；
   T3 后本批期望 514/514。
-- 当轮产物目录：/tmp/opencode/m1-6/logs/（T1: t1-red / t1-green / full-rerun /
-  node-check；T2: t2-red / t2-green / full-rerun-2 / node-check-2；
-  T3: t3-red / t3-green / full-rerun-3 / node-check-3，共十二份）。
+- 当轮产物目录（正典，2026-10-26 起）：/home/shih/.tmp-ak-m16/ —— m1-6/:
+  t2-red(23/25) / t2-green(25/25) / t3-red(25/26) / t3-green(26/26) /
+  node-check-final(两壳 PASS，含被检路径+抽取命令) / full-rerun-3.log(514/514) /
+  result-review.md(T1 结果审) / result-review-plan-t3.md / result-review-b.md
+  (整分支结果审)；full-rerun-2.log(513/513) 在父目录。
+- 事件（plan 审 P4b 勘误 2 折入）：/tmp usrquota 满触发系统清扫，原
+  /tmp/opencode/m1-6/logs/ 十二份全灭（T1 四份 / T2 首轮两份 / node-check-2）。
+  T1 证据 = result-review.md 审者独立复现记录（红绿双态+阴性对照+字节枚举）；
+  T2 红绿 = stash 重建件（整分支结果审以 git 对象 53ffc63 独立加载复现，与机制
+  一致）。重建链详情 = docs/ops/m1-6-verification.md。
 - **适配登记**：目标仓无 AGENTS.md；验证入口/tier/基线以 tracked 的
   docs/ops/m1-5-verification.md + docs/adr/0000-known-gaps.md 为正典。
 
