@@ -1,0 +1,10 @@
+.venv
+.worktree
+__pycache__
+*.pyc
+.git
+docs
+tests
+skills
+collab_export
+tmp

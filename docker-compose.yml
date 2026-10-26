@@ -1,0 +1,10 @@
+services:
+  kanban:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      AGENT_KANBAN_TOKEN: "${KANBAN_TOKEN:?KANBAN_TOKEN required (container binds 0.0.0.0, token mandatory)}"
+    volumes:
+      - ${HOME}/.agent-kanban:/data
+    restart: unless-stopped
