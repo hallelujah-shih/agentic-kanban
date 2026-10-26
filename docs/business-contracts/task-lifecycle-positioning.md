@@ -3,7 +3,7 @@
 **作者**: 主循环（task-lifecycle）
 **日期**: 2026-10-26
 **关联**: PRD §0（定位）/§3.1（状态机）/§3.4（完成语义）/§4.2（人面 surface）/§5.4（回溯判据）/§6（数据保留）；docs/web.md
-**user 裁决**: 2026-10-26 两项——Q1 取 A（UI 瘦身为"读 + task 生命周期"，决策操作降 CLI-only）；Q2 取方案 1（archive = 新终态 ARCHIVED，delete = 整需求硬删，REST + CLI + Web 三层齐）
+**user 裁决**: 2026-10-26 三项——Q1 取 A（UI 瘦身为"读 + task 生命周期"，决策操作 Web 移除、REST/CLI 保留）；Q2 取方案 1（archive = 新终态 ARCHIVED，delete = 整需求硬删，REST + CLI + Web 三层齐）；Q3（对抗审查 P1-3 提出，user 委托主循环代裁，可于 spec 审阅时推翻）archive 事件 from=None 沿用 REJECTED 先例（"? -> ARCHIVED"，实际 from 由 state_change 链重建）
 
 ---
 
@@ -103,7 +103,9 @@ Then 看板"待认领"列出现新任务（state=OPEN），深潜页验收对照
 **S2（happy，archive 活跃任务）**
 Given 一个 CLAIMED 任务（有活跃认领，无 awaiting_human）
 When 人执行 archive（Web 按钮或 CLI）
-Then 任务出现在"已归档"tab（finished_at = archive 事件 ts），在板四列不再出现；claim 行 ended_at 置位且 release_reason="archive"；事件链尾为 state_change(CLAIMED -> ARCHIVED, actor=人面)；agent 下一次写操作拿 no_active_claim（MCP is_error）
+Then 任务出现在"已归档"tab（finished_at = archive 事件 ts），在板四列与 list_tasks 默认列表均不再出现；claim 行 ended_at 置位且 release_reason="archive"；事件链尾为 state_change(from=None, to=ARCHIVED, claim_id 归属, actor=人面——事件形态与 REJECTED 先例一致，"? -> ARCHIVED"，归档时点的实际 from 由 state_change 链重建，Q3 裁决）；agent 下一次写操作拿 no_active_claim（MCP is_error）
+
+**修订记录**: 2026-10-26 主循环——对抗审查 P1-3（BCD S2/E2 声称"实际 from 记录"与 spec §3 from=None 设计冲突）裁决案 A：沿用 REJECTED 先例，S2/E2 相应修订。理由：transition 零改动声明保持 + 审计无损（状态链可重建实际 from）。
 
 **S3（happy，archive 终态任务）**
 Given "已完成"tab 中的一个 DONE 任务
@@ -147,7 +149,7 @@ Then get_task_detail/list_tasks 无该任务或 is_error not_found；写操作�
 **E2（CLI archive，CLAIMED 任务）**
 输入：`kanban archive <id>`，任务 state=CLAIMED，agent 活跃工作中
 操作：人面 REST 调用 -> ops.archive_requirement
-预期：{"requirement_id": ..., "state": "ARCHIVED"}；DB：requirements.state=ARCHIVED、claims.ended_at 非空且 release_reason="archive"、awaiting_human=NULL；events 尾行 state_change "CLAIMED -> ARCHIVED"（实际 from 记录）actor_surface=cli；agent 下一次 update_progress -> MCP is_error no_active_claim
+预期：{"requirement_id": ..., "state": "ARCHIVED"}；DB：requirements.state=ARCHIVED、claims.ended_at 非空且 release_reason="archive"、awaiting_human=NULL；events 尾行 state_change "? -> ARCHIVED"（from=None, to=ARCHIVED, claim_id 归属——REJECTED 先例形态，Q3 裁决）actor_surface=cli；agent 下一次 update_progress -> MCP is_error no_active_claim
 
 **E3（Web delete，确认流程）**
 输入：Web 深潜页点 delete -> 确认框（显示 title + 事件数 + 当前状态 + "删除不可逆，建议先导出"）
