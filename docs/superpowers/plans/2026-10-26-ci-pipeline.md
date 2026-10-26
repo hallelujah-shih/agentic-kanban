@@ -66,6 +66,16 @@ M1-6 的 P0（board 壳 `split("\n")` 被 Python 转成真换行 → JS 整块 S
      友好文案仅存于壳 JS web.py:371-373，前提不成立）。web.md:49 规范 vs 实现 = **存量分歧**
      （基 commit 已在，域外），登记 Q1 交 user 裁决（web.md 为准 = 产品缺陷立项 / 实现为准 =
      改 web.md）；裁决前 e2e 不覆盖此项，**禁按现实现改写断言凑绿**（陷阱库 3）。
+   - 同类存量分歧二则（T3 执行期发现，主循环代码核死，同 E4d 先例处置）：
+     - **Q2 置顶**：web.md:27/46"需要关注需求置顶（attention_ids）" vs 现行四列状态序壳
+       （`renderActive` 无 attention 排序，web.py:193-207 实测；`t._attn` 仅供卡片徽章）——
+       存量分歧（b05e73b UI 重构起）。e2e 不断言置顶序（断言 = 镜像现实现），E1 改断言
+       s3 行 `.wait` 等待人横幅在场。
+     - **Q3 create 无事件**：`new_requirement`（services/operations.py:87-113）无 add_event
+       （壳自述 web.py:292"create 不写事件，SSE 无触发器——主动重拉"）→ 纯 create 在看板
+       打开时不可见（无 SSE 触发）。E6 动作补 `POST /requirements/{id}/note` 作 SSE 触发
+       （note = web.md:51"推进状态"语义），断言不变；"create 是否补事件"= 产品面裁决 Q3
+       交 user（影响：agent 新建任务时人面看板不自动刷新，需等下一事件）。
    - CI 定谔 oracle：PR 上三 job（test/e2e/docker）真实 GH run 全绿（P5 阶段，merge 门槛）。
 
 ## oracle 版本（机械预检）
@@ -248,8 +258,11 @@ module.exports = require('@playwright/test').defineConfig({
   造 7 种子（预探针触发后备路径则 8，见 s3）——s1 OPEN+description（**含对抗内容**：`<img src=x onerror=alert(1)>` + 引号 +
   换行，真浏览器 XSS 探针）、s2 OPEN+acceptance 2 锚 0 子任务（缺口标红对象）、
   s3 CLAIMED+BLOCKED+进度注记（MCP `claim_task`+`mark_blocked`+`update_progress`，
-  awaiting_human 与 E3c 双对象；事件链 = 恰好 3 条：state_change×2 + progress_note×1，
-  推导锚 operations.py:439-491/703-719/798-823 + state_machine.py:69-79）。
+  awaiting_human 与 E3c 双对象；**seed 时**事件链 = 恰好 3 条：state_change×2 + progress_note×1，
+  推导锚 operations.py:439-491/703-719/798-823 + state_machine.py:69-79；**服务启动 +1**：
+  api/main.py:55 启动 reconcile 对 s3 确定性追加 1 条 kind=reconcile severity=info
+  （awaiting_human -> "waiting" != active，reconcile.py:27-37/87-110）→ 深潜视图事件 = 4 条，
+  多重集钉死，[C3] 实跑核过）。
   **预探针**（seed.py 首跑后）：核 s3 深潜页等待人横幅仍在（update_progress 不清 marker）；
   若横幅消失（marker 被清）→ 启用后备种子 s8（仅 claim+mark_blocked，E5 改用 s8，
   s3 保进度注记），回报登记实际——两路径写死，禁执行者即兴；
@@ -264,16 +277,16 @@ module.exports = require('@playwright/test').defineConfig({
 
 | spec | web.md 锚 | 步骤 | 断言 |
 |---|---|---|---|
-| E1 | 1 | 打开 `/` | 不停在"加载中"；6 条在板种子（s1-s6）标题全部渲染；s3（attention 行）排序在 s1 之前（需要关注置顶）；s3 行带需要关注/信号标签；s7（DONE）不在板 |
+| E1 | 1 | 打开 `/` | 不停在"加载中"；6 条在板种子（s1-s6）标题全部渲染；s7（DONE）不在板；s3 行带等待人（`.wait`）横幅。**置顶不断言**（Q2 存量分歧，裁决前镜像现实现 = 陷阱库 3） |
 | E2 | 2 | 页面渲染后 node `fetch /board` | 逐种子（s1-s6）id 在场 + 每行 title/state 标签文本与 JSON 逐字段一致 + 页面标题集合 == JSON 标题集合（集合断言，非裸计数，执行序无关） |
 | E3a | 3 | 点 s1 标题进深潜页 | description 以**纯文本**呈现（含换行）；该节内 `img` 元素数 = 0（XSS 中和，真浏览器对抗位） |
 | E3b | 3 | 点 s2 进深潜页 | 验收对照表 2 行；缺口标红样式在场（执行者实读壳定红标判定，登记） |
-| E3c | 3 | 深潜 s3，选事件流 kind 过滤值 `state_change`（稳定 id `ev-kind`，web.py:447 实测；过滤为纯客户端 JS web.py:469-475） | 可复算确定值断言（s3 事件链 = 3 条：state_change×2 + progress_note×1）：过滤前事件行 = 3；选 state_change 后 = 2 且行全为 state_change（正方向"保留"+负方向"排除"双判别）；对称位（可选）选 progress_note 后 = 1 |
+| E3c | 3 | 深潜 s3，选事件流 kind 过滤值 `state_change`（稳定 id `ev-kind`，web.py:447 实测；过滤为纯客户端 JS web.py:469-475） | 可复算确定值断言（[C3] 实跑口径，plan 修订 4 折入）：s3 **视图事件 = 4 条**——seed 链 3 条（state_change×2 + progress_note×1）+ **服务启动对账确定性追加 1 条**（api/main.py:55 启动 reconcile，s3 awaiting_human -> "waiting" 信号 != active，reconcile.py:27-37/87-110，kind=reconcile severity=info）；kind 多重集钉死 = {state_change×2, progress_note×1, reconcile×1}。断言：过滤前事件行 = 4（逐行 badge 多重集）；选 state_change 后 = 2 且行全为 state_change（reconcile/progress_note 被排除 = 负方向判别增强）；对称位选 progress_note 后 = 1 |
 | E4a | 4 | 顶栏新建两连发：① title `e2e-new1-<ts>` + acceptance 两行 + Jira 链接；② title `e2e-new2-<ts>` 仅 title | 两新标题均出现在看板（poll ≤10s）；① source=jira（fetch /board 核）；② 默认 source（fetch 核） |
 | E4b | 4 | 深潜 s4（CLAIMED）-> archive | 回看板（URL `/`）；「已归档」tab 内 s4 在场 |
 | E4c | 4 | 深潜 s5 -> delete：dialog 先输**错误**标题，再输正确标题 | 第一次：停留深潜页（未离开）；第二次：回看板且 s5 行消失 |
 | E5 | 5 | 看板 s3 行 + 深潜 s3 | 深潜页等待人横幅含 `kanban approve <id>` 静态文案（看板行信号已由 E1 断言） |
-| E6 | 6 | 看板打开状态下，node `fetch POST /requirements`（title `e2e-live-<ts>`） | 新标题 **15s 内**出现在看板（expect.poll；SSE 重拉，禁固定 sleep） |
+| E6 | 6 | 看板打开状态下，node `fetch POST /requirements`（title `e2e-live-<ts>`）后追加 `POST /requirements/{id}/note`（SSE 触发器，[C6]：create 不写事件 = 存量分歧 Q3，见契约三锚.3） | 新标题 **15s 内**出现在看板（expect.poll；页面出现新卡必经 es.onmessage->loadBoard（壳无定时器重拉）= SSE 驱动判据；禁固定 sleep）。断言不因触发器补强而弱化 |
 | E7 | 7 | node `fetch /board?status=CLAIMED` | 返回集 == {s6}（强断言：此时 s4 已归档（E4b 先）、s5 已删（E4c 先）、s1/s2 及 E4a/E6 新建均 OPEN、s3 为 BLOCKED、s7 为 DONE——期望集合由执行序确定，执行者首跑核口径并登记实际） |
 | E8 | a4"三 tab" | 点「已完成」tab | s7（DONE）在场；再回「在板」tab s1 在场（已归档 tab 由 E4b 断言，三 tab 全覆盖） |
 
@@ -349,6 +362,16 @@ Modify 板上 86dfe88f note（状态推进）。
   `{code:not_found}`，HTML 壳不送达）。两选项：a) web.md 为准 = 产品缺陷立项修（深链 404
   送壳+JS 友好文案，或 API 层 content-type 协商返回 HTML 404 页）；b) 实现为准 = 改
   web.md 契约行。裁决前 e2e 不覆盖、套件无该断言。
+- **Q2/Q3 交接（T3 执行期发现的同类存量分歧，主循环代码核死，需 user 裁决）**：
+  - Q2 置顶：web.md:27/46"需要关注需求置顶" vs 四列状态序壳（`renderActive` 无 attention
+    排序，web.py:193-207；`t._attn` 仅供卡片徽章；b05e73b UI 重构起）。两选项：a) web.md
+    为准 = 立项实现 attention 置顶排序；b) 实现为准 = 改 web.md（"按四列状态分组，需要关注
+    以卡片徽章表达"）。裁决前 e2e 不断言置顶序。
+  - Q3 create 无事件：`new_requirement` 无 add_event（operations.py:87-113；壳自述
+    web.py:292）→ agent 新建任务时人面看板不自动刷新（web.md:51"另一进程推进状态 2s 内
+    自动刷新"未覆盖创建场景）。两选项：a) web.md 为准 = create 补 add_event（SSE 触发）；
+    b) 实现为准 = 改 web.md 补"创建不刷新看板，待下一事件触发"（或前端壳加周期重拉）。
+    裁决前 e2e 不断言 create 即刷新（E6 补 note 触发器执行，断言不变）。
 
 **oracle**: 文档与当轮磁盘产物逐项对账（版本/计时/命令可复跑）；板上 note 落账。
 **Commit**: `docs: CI 批次验证正典（tier/重跑规格/盲区/分支保护交接）`
@@ -364,6 +387,8 @@ Modify 板上 86dfe88f note（状态推进）。
 | e2e 不覆盖第 8 项（非 localhost 401） | 后端套件已覆盖，重复 | 同上 |
 | 两壳零产品改动（不加 data-testid） | e2e 选择器漂移是 user 裁决接受的维护面；私改壳 = 域外 | 本表 + T3 纪律 |
 | E4d 深链友好文案（web.md:49） | 存量契约分歧（实现 = 404 JSON，壳不送达；活体探针实测）；Q1 交 user 裁决，裁决前不覆盖、禁按现实现凑断言 | 不修清单本行 + T4 Q1 交接 |
+| Q2 置顶（web.md:27/46"需要关注需求置顶"） | 存量契约分歧（renderActive 无 attention 排序，web.py:193-207 主循环实读；t._attn 仅供卡片徽章）；Q2 交 user 裁决，裁决前 e2e 不断言置顶序（断言 = 镜像现实现，陷阱库 3） | 不修清单本行 + T4 Q2 交接 |
+| Q3 create 无事件（SSE 无触发器） | new_requirement 无 add_event（operations.py:87-113 主循环实读）；Q3 交 user 裁决，裁决前 e2e 不断言"create 即刷新"（E6 补 note 触发器执行，断言不变） | 不修清单本行 + T4 Q3 交接 |
 | e2e 端口/DB 默认值（18765//tmp） | CI-first（GH 全新 VM 无冲突、/tmp 14GB）；本地覆盖走 `E2E_PORT`/`AK_E2E_DB` env，零 config 改动 | 本表 + T3 config 契约 |
 | "无任务时显示（无任务）" | 需空 DB 服务，与 7 种子服务互斥；人工冒烟覆盖 | T4 盲区 |
 | e2e 浏览器下载不加 GH 缓存 | 20-40s 在 15min 预算内，缓存键维护不划算（二期再议） | 同上 |
