@@ -87,4 +87,7 @@ G12（单独立项 3d2f99e4）/ web.py:363 `\\/`（正确形态，不动）/ liv
 
 ## 流程审计（六门）
 
-待 P6 独立流程审者（派发后回填：sessionID / 结论 / 偏差记录）。主循环 ledger: /home/shih/.tmp-ak-m16/m1-6/ledger.md（工作产物不入库，门序/派发/裁决/事故全记录）。
+- P6 独立流程审（ses_e886ce0d9ffei2ZmP4PbSnE6dH，merge 前，未参与实现/plan 审/结果审）: **PASS-WITH-DEVIATIONS**（无 P0/P1，3 P2 登记级，不阻塞合入；报告 m1-6/process-audit.md，工作产物不入库）。
+- 关键核销: 六门门序完整（三轮 plan 审 10 处折入标注逐一在场）；计数链四方交叉（ledger/commit msg/plan/结果审）零矛盾；T1 证据=审者独立复现且时序早于清扫（合法），T2 stash 重建经 git 对象独立复现 + board c1==HEAD 字节相同；user 裁决四项与主循环自裁决四项均落实可实测（容器=T1 态镜像吻合）；四件事故（EDQUOT 中断 / /tmp 清扫 / 服务器重启 / "board 空"误判）全有记录+处置+防再发；tests/ac_cases_k.py diff = +35/0 纯新增零弱化；web.md 三处与代码行为逐行一致；main 未动、push 仅特性分支。
+- P2 偏差（登记级）: ① plan 审 T1 轮 3 P2 中 2 条无显式"折入"标注且原报告灭失（结论存 ledger + c1 commit msg，核销缺口登记）；② plan 审 T3 原报告保留"board 空"错误勘验文本（更正已落 ledger/本文档，P4b+P6 双实测核死）；③ PR body"两轮 P1/P2 全折入"为压缩措辞（详实 T2 轮 2P1+3P2，已修正）。
+- 主循环 ledger: /home/shih/.tmp-ak-m16/m1-6/ledger.md（门序/派发/裁决/事故全记录）。
