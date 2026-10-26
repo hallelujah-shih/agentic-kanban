@@ -158,6 +158,7 @@ docker stop ak-t1-smoke
 7. **置顶顺序**（web.md:27/46）— Q2 裁决前 e2e 不断言置顶序（断言 = 镜像现实现）；E1 仅断言 s3 行 `.wait` 等待人横幅在场
 8. **E4d 深链友好文案**（web.md:49）— Q1 裁决前 e2e 不覆盖，spec 内无该断言
 9. **E6 的 note 触发器形态** — Q3 裁决前 E6 不代表"create 自动刷新"（E6 = create + note 触发 SSE，断言 = 新标题 15s 内上板）
+10. **tests/bench.py / tests/alembic_diff.py** — 独立工具，不在 run_ac 门内，CI 不跑（plan 不修清单）
 
 ## 已知实践登记
 
