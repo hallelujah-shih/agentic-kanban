@@ -349,6 +349,11 @@ def k_web():
            'location.href = "/"' in _op_block, "缺回看板导航")
         ok("k_web(M1-6 A4): handleOpResult 成功路径无 load() 重拉（杜绝死页/静默成功）",
            "load()" not in _op_block, "残留 load() 重拉")
+        # M1-6 T3 description 展示：深潜页必须渲染 description（user 2026-10-26 第三轮：
+        # 写了详细描述详情页完全看不到；M1-2 起 render() 无展示位，设计缺口非回归）。
+        # esc 在场 = XSS 防线（description 是用户输入，全壳无未转义渲染先例）
+        ok("k_web(M1-6 A5): 深潜页描述节以 esc 渲染 description",
+           'esc(s.description)' in raw2 and "描述</h2>" in raw2, "description 未渲染")
         # AC1 数据路径：Web 表单映射的 payload（一行一条 -> {item}）+ jira 映射（spec case 7）
         # token 必带（REST 以 token="sekret" 启动，中间件对全路径强制，T4 红跑实证 401）
         code, body = rest.req("POST", "/requirements", {"title": "k-create",

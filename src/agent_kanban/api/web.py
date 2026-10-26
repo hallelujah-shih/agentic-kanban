@@ -387,6 +387,7 @@ function render(d, s){
     + esc(stateZh(s.state)) + "</span></div>";
   html += "<p class='meta'>id: " + esc(s.requirement_id) + "</p>";
   if (d.history_note) html += "<p class='meta'>" + esc(d.history_note) + "</p>";
+  if (s.description) html += "<div class='sec wide'><h2>描述</h2><div style='white-space:pre-wrap'>" + esc(s.description) + "</div></div>";
   if (s.awaiting_human) {
     var hint = s.awaiting_human.kind === "blocked" ? "解除阻塞: kanban approve " : "人面确认: kanban approve ";
     html += "<div class='wait-banner'>等待人决策: kind=" + esc(s.awaiting_human.kind)

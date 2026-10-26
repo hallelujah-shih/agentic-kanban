@@ -26,7 +26,7 @@
 
 看板页（`/`）：每需求一行紧凑行 = title(链接到深潜壳) + state 标签 + 需要关注信号标签（blocked_subtask/abandoned/milestone_delay/decomposition_added/unexplained/orphaned/drift 等，来自 `_derived_signals` 全口径）+ 风险标签（severity>=attention）+ 进度 done/total + 认领(agent/signal) + awaiting_human。需要关注需求置顶（attention_ids）。顶部 tabs：在板 / 已完成（DONE/REJECTED/CANCELLED）/ 已归档（ARCHIVED）；顶栏「新建」按钮展开内联表单（title 必填 / description / acceptance 一行一条锚 / Jira 链接可选 -> source=jira）；等待人卡片含 CLI 提示（kanban approve <id>）。
 
-深潜页（`/requirements/{id}`，Accept text/html）：标题 + state + 需要关注 + 认领/租约/awaiting_human + 进度、验收对照表（覆盖缺口标红）、子任务清单、里程碑（planned/actual）、决策/风险/偏离列表、需要关注区、事件流（按 kind/severity 过滤，只渲染标题行，无 content/payload 原始输出）、Task 生命周期区（archive/delete）。
+深潜页（`/requirements/{id}`，Accept text/html）：标题 + state + 描述（description 全文，esc 转义 + 保留换行，空则不显示该节；M1-2 起缺失，M1-6 T3 补）+ 需要关注 + 认领/租约/awaiting_human + 进度、验收对照表（覆盖缺口标红）、子任务清单、里程碑（planned/actual）、决策/风险/偏离列表、需要关注区、事件流（按 kind/severity 过滤，只渲染标题行，无 content/payload 原始输出）、Task 生命周期区（archive/delete）。
 
 ## 人面 surface（修订 2026-10-26）
 
