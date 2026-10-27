@@ -24,7 +24,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 
 **报告纪律（agent 侧）**：写给人看的每一段文字（验收自评、decision rationale、deviation 原因、交接说明）必须**简约、大白话、无黑话**，尊重人脑带宽；报告里程碑与关键事件（节点），不报过程流水账。与反淹没互补：反淹没管视图展示什么，本纪律管 agent 写进记录的是什么。in-band 人的决策（人在 AI 会话中做出的决策）由 agent 以 decision/note 事件记录（带 actor provenance）= 预期模式，非可选行为。
 
-**管线原则（蒸馏恰好一次，在生成点）**：蒸馏恰好一次，在生成点——写契约强制一行人话提纲（服务端只校验结构：非空、长度上限；语义质量是写侧责任，服务端不生成人面文字）；存储/展示层忠实不聪明——不二次摘要、不做读侧语义挑选（读侧挑选 = 第二个蒸馏点，违反本原则）；人面记录必带提纲。与报告纪律互补：报告纪律管写什么，本段管蒸馏位置。
+**管线原则（蒸馏恰好一次，在生成点）**：蒸馏恰好一次，在生成点——写契约强制一行人话提纲（服务端只校验结构：非空；长度上限未强制——8KB 单事件 payload 上限作用于 note/content/payload；语义质量是写侧责任，服务端不生成人面文字）；存储/展示层忠实不聪明——不二次摘要、不做读侧语义挑选（读侧挑选 = 第二个蒸馏点，违反本原则）；人面记录必带提纲。与报告纪律互补：报告纪律管写什么，本段管蒸馏位置。
 
 职责边界：看板是记录面 + 关键决策的记录点/审计点，不是控制面，不是共识达成场所。它不管理 worktree、不执行合入、不隔离执行。人面 surface 划分：Web = 只读视图 + task 生命周期（create/archive/delete）；决策操作（approve/release/renew/reopen/note/abandon/set_expectations）= CLI/REST-only（Web 无入口）。
 
@@ -157,10 +157,10 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 | update_subtask | state: todo/in_progress/done/blocked/abandoned | 未结束认领 |
 | add_milestone | title + planned_at | 未结束认领 |
 | update_milestone | state: planned/in_progress/achieved + actual_at | 未结束认领 |
-| add_record | kind = decision / risk / deviation / decomposition / note；decision 必含 alternatives[] + rationale + 拒绝理由；deviation severity 强制 >= attention | 未结束认领 |
+| add_record | title 必填（一行人话提纲，空 -> invalid_record）；kind = decision / risk / deviation / decomposition / note；decision 必含 alternatives[] + rationale + 拒绝理由；deviation severity 强制 >= attention | 未结束认领 |
 | update_progress | 进度备注（不覆盖派生值）；headline 必填（一行人话提纲，缺/空 -> invalid_record） | 未结束认领 |
 | request_review | 设 awaiting_human(kind=review)，持久化验收自评到 subtasks.acceptance[].state，附证据（PR / commit 区间 / 测试摘要，至少一项，缺证据拒绝）+ summary_line 必填（交接一句话，缺/空 -> invalid_record）；review_request 事件 severity=attention；不改状态 | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
-| mark_blocked | 转移 CLAIMED -> BLOCKED + 设 awaiting_human(kind=blocked)，附原因 | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
+| mark_blocked | 转移 CLAIMED -> BLOCKED + 设 awaiting_human(kind=blocked)，附原因（一行人话，缺/空 -> invalid_record） | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
 | list_awaiting | 全部"等你决策"条目，含等待时长 | 读（人面） |
 
 释放不属于 agent 面：MCP 工具面无 release 工具，唯一释放路径为人面 CLI `release`（见 4.2）。
@@ -198,7 +198,7 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 MCP `is_error` + structured content（`{code, message, task_id}`），无 HTTP 码：
 `not_found | illegal_state | already_claimed | no_active_claim | lease_expired | duplicate_subtask | invalid_record | queue_full | db_busy`
 
-每个码有唯一触发条件：`lease_expired` = 对已过期租约 renew；`db_busy` = SQLite 写失败重试 3 次后（7.3）；`queue_full` = claim_task 计数超上限（16）；`invalid_record` = decision 缺 alternatives 或 request_review 缺证据；其余见工具表。
+每个码有唯一触发条件：`lease_expired` = 对已过期租约 renew；`db_busy` = SQLite 写失败重试 3 次后（7.3）；`queue_full` = claim_task 计数超上限（16）；`invalid_record` = 记录结构缺字段（decision 缺 alternatives / request_review 缺证据 / 缺 headline / 缺 summary_line / title 或 reason 为空）；其余见工具表。
 
 ---
 

@@ -59,7 +59,7 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 | no_active_claim | 认领已结束/被释放 | 重新 claim_task |
 | lease_expired | 对过期租约 renew | 无法续，等人处理 |
 | duplicate_subtask | 拆解重复 | 复用已有子任务 |
-| invalid_record | 记录结构缺字段（decision 缺 alternatives / 缺证据 / 缺 headline / 缺 summary_line / title 为空） | 补全字段 |
+| invalid_record | 记录结构缺字段（decision 缺 alternatives / 缺证据 / 缺 headline / 缺 summary_line / title 或 reason 为空） | 补全字段 |
 | queue_full | 并发认领超上限 16 | 等一个释放再认领 |
 | db_busy | SQLite 忙（重试 3 次后） | 稍后重试 |
 
