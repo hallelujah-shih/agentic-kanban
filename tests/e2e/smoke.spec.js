@@ -1,4 +1,4 @@
-// tests/e2e/smoke.spec.js —— e2e 冒烟 12 spec（plan T3 契约表；声明序=执行序，workers=1 共享单服务单 DB）
+// tests/e2e/smoke.spec.js —— e2e 冒烟 15 spec（plan T3 契约表；声明序=执行序，workers=1 共享单服务单 DB）
 //
 // 选择器登记表（壳 = src/agent_kanban/api/web.py board_shell():91 / detail_shell():302，零产品改动）：
 //   看板: #board-root .cols（四列容器，仅在板 tab 渲染成功后存在）/ .card（卡片 <a>）
@@ -7,8 +7,11 @@
 //         #top-count（顶栏计数 "N 个在板需求"）/ #new-btn #new-form #nf-title #nf-acc #nf-jira #nf-msg
 //         .tab[data-tab=active|done|archived]（三 tab）/ .done-row .dt（终态行标题）/ .done-row .pill（状态徽章）
 //   深潜: #detail-root h1（标题）/ div.sec:has(h2 描述)（描述节，inner 为 white-space:pre-wrap div）
-//         .wait-banner（深潜等待人横幅 "等待人决策: kind=.. reason=.. （..: kanban approve <id>）"）
-//         #ev-kind #ev-sev（事件流过滤 select）/ #ev-list .ev（事件行，内含 .badge 文本 "kind/severity"）
+//         .wait-banner（深潜等待人横幅 "等待人决策: .. （..: kanban approve <id>）"，
+//         summary_line 在场优先显，缺失显 reason——web.md 修订版）
+//         #ev-kind #ev-sev（事件流过滤 select）/ #ev-list .ev（事件平铺行，内含 .badge 文本 "kind/severity"）
+//         #ev-list details.evh:not(.bk)（人面事件行；.evh-t = 提纲位文本，空 title 降级显 kind 标签）
+//         #ev-list details.bk（簿记组，summary 文本 "簿记 N"，默认收起；展开 .ev 平铺行）
 //         div.sec:has(h2 验收对照) li（验收对照行）/ li .badge.gap（覆盖缺口徽章，文本 "覆盖缺口"）
 //         button[data-op=archive] / button 文本 "delete" / #op-msg（操作反馈）
 //
@@ -36,9 +39,17 @@
 //      本 spec 在 create 后追加一条 note 事件（POST /requirements/{id}/note，写 kind=note）作 SSE
 //      触发器；断言保持 plan 原文（新标题 15s 内上板，expect.poll 禁固定 sleep）。
 //      页面出现新卡必经 es.onmessage->loadBoard（壳无定时器重拉），即 SSE 驱动。
+// [C7] E1/E7 夹具变更（s9 在板）：s9 = CLAIMED 非终态在板（E9/E10 专用夹具：XSS headline +
+//      直 SQL 两条旧形状事件），seed 扩容＝契约变更 -> E1 在板 6->7、E7 CLAIMED 集合
+//      [s6]->[s6,s9]。红步红因＝期望值未更新（陷阱库 3 预先声明），非壳缺陷；
+//      绿步同步期望值＝夹具扩容的契约推论（非镜像实现凑绿）。
+// [C8] E3c/E11 簿记 3 = state_change×2 + 启动对账 reconcile×1（[C3] s3 链不变）；人面行=1
+//      （progress_note，提纲=seed headline，manifest s3_headline）。E9/E10 s9 人面链=3
+//      （progress_note XSS headline + note 空 title + progress_note 旧 "progress"）；
+//      s9 CLAIMED 活跃租约无 reconcile（与 s3 区别）。
 //
 // 种子：webServer command 先跑 tests/e2e/seed.py 写 <AK_E2E_DB>.seeds.json 清单
-// （s1-s7 必建；预探针触发后备则 s8，e5_target 指向 E5 对象）。
+// （s1-s7 必建 + s9；预探针触发后备则 s8，e5_target 指向 E5 对象）。
 
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
@@ -70,12 +81,12 @@ test('E1 看板渲染与信号', async ({ page }) => {
   const dialogs = [];
   page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss().catch(() => {}); });
   await boardReady(page);
-  // 6 条在板种子标题全部渲染（各恰 1 卡）
-  for (const k of ['s1', 's2', 's3', 's4', 's5', 's6']) {
+  // 7 条在板种子标题全部渲染（各恰 1 卡；含 s9＝夹具扩容契约推论，[C7]）
+  for (const k of ['s1', 's2', 's3', 's4', 's5', 's6', 's9']) {
     await expect(cardByTitle(page, T[k]), `${k} 卡在场`).toHaveCount(1);
   }
-  // 在板总数恰 6（集合等价的计数投影；s7 DONE 不在板）
-  await expect(page.locator('#top-count')).toHaveText('6 个在板需求');
+  // 在板总数恰 7（集合等价的计数投影；s7 DONE 不在板，[C7]）
+  await expect(page.locator('#top-count')).toHaveText('7 个在板需求');
   await expect(cardByTitle(page, T.s7), 's7(DONE) 不在板').toHaveCount(0);
   // s3 看板行信号 = 等待人横幅（[C1]：attention 前提不成立，置顶顺序不断言，交 Q2）
   const s3wait = cardByTitle(page, T.s3).locator('.wait');
@@ -145,24 +156,33 @@ test('E3b 深潜 s2：验收对照 2 行 + 覆盖缺口标记在场', async ({ p
   }
 });
 
-test('E3c 深潜 s3：事件流 kind 过滤（可复算确定值）', async ({ page }) => {
+test('E3c 深潜 s3：事件流提纲优先（人面/簿记分组 + 过滤覆盖分组）', async ({ page }) => {
   await boardReady(page);
   await cardByTitle(page, T.s3).click();
   await expect(page.locator('#detail-root h1')).toHaveText(T.s3);
-  const evs = page.locator('#ev-list .ev');
-  // 过滤前 = 4 行（[C3]：seed 链 state_change×2+progress_note×1 + 启动对账 reconcile×1）
-  await expect(evs, '过滤前事件行=4').toHaveCount(4);
-  const badgesBefore = (await evs.locator('.badge').allTextContents()).sort();
-  expect(badgesBefore).toEqual(['progress_note/info', 'reconcile/info', 'state_change/info', 'state_change/info']);
-  // 选 state_change：=2 且全为该 kind（正方向保留 + 负方向排除 progress_note/reconcile）
+  const human = page.locator('#ev-list details.evh:not(.bk)');
+  const bk = page.locator('#ev-list details.bk');
+  // 默认（无过滤）：人面行 = 1（progress_note，提纲=seed headline）（[C3][C8]：s3 链 4 事件 = 人面 1 + 簿记 3）
+  await expect(human, '人面事件行=1').toHaveCount(1);
+  await expect(human.first().locator('.evh-t'), '提纲=seed headline').toHaveText(SEEDS.s3_headline);
+  await expect(human.first().locator('.badge')).toHaveText('progress_note/info');
+  // 簿记组在场且计数=3，默认收起
+  await expect(bk, '簿记组在场').toHaveCount(1);
+  await expect(bk.locator('summary')).toHaveText('簿记 3');
+  await expect(bk).not.toHaveAttribute('open');
+  // kind 过滤 state_change -> 平铺 2 行（过滤覆盖分组）
   await page.selectOption('#ev-kind', 'state_change');
-  await expect(evs, 'state_change 过滤后=2').toHaveCount(2);
+  const evs = page.locator('#ev-list .ev');
+  await expect(evs, 'state_change 过滤平铺=2').toHaveCount(2);
   for (let i = 0; i < 2; i++) {
     await expect(evs.nth(i).locator('.badge')).toHaveText('state_change/info');
   }
+  // 负方向排除仍有效（progress_note/reconcile 不在场）
+  await expect(page.locator('#ev-list')).not.toContainText('progress_note/info');
+  await expect(page.locator('#ev-list')).not.toContainText('reconcile/info');
   // 对称位：progress_note -> 1
   await page.selectOption('#ev-kind', 'progress_note');
-  await expect(evs, 'progress_note 过滤后=1').toHaveCount(1);
+  await expect(evs, 'progress_note 过滤=1').toHaveCount(1);
   await expect(evs.first().locator('.badge')).toHaveText('progress_note/info');
 });
 
@@ -280,8 +300,10 @@ test('E6 另一进程推进 -> SSE 刷新，新标题 15s 内上板', async ({ p
 test('E7 /board?status=CLAIMED 过滤强断言', async () => {
   const { status, body } = await jget('/board?status=CLAIMED');
   expect(status).toBe(200);
-  // 此时 s4 已归档(E4b)、s5 已删(E4c)、s1/s2 及 E4a/E6 新建均 OPEN、s3 BLOCKED、s7 DONE
-  expect(body.tasks.map((t) => t.requirement_id).sort()).toEqual([SEEDS.s6]);
+  // 此时 s4 已归档(E4b)、s5 已删(E4c)、s1/s2 及 E4a/E6 新建均 OPEN、s3 BLOCKED、s7 DONE、
+  // s9 CLAIMED（夹具扩容契约推论，[C7]：[s6]->[s6,s9]；id 随机序，双侧 sort 后比较）
+  expect(body.tasks.map((t) => t.requirement_id).sort())
+    .toEqual([SEEDS.s6, SEEDS.s9].sort());
 });
 
 test('E8 三 tab：已完成 s7 在场，回在板 s1 在场', async ({ page }) => {
@@ -294,4 +316,58 @@ test('E8 三 tab：已完成 s7 在场，回在板 s1 在场', async ({ page }) 
   await page.click('.tab[data-tab="active"]');
   await expect(page.locator('#board-root .cols')).toBeVisible();
   await expect(cardByTitle(page, T.s1), '回在板 s1 在场').toHaveCount(1);
+});
+
+test('E9 深潜 s9：headline 提纲 + 展开全文 + XSS 中和', async ({ page }) => {
+  const dialogs = [];
+  page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss().catch(() => {}); });
+  await boardReady(page);
+  await cardByTitle(page, T.s9).click();
+  await expect(page.locator('#detail-root h1')).toHaveText(T.s9);
+  // XSS 提纲行在场（转义形态在场 = esc 生效）
+  const row = page.locator('#ev-list details.evh:not(.bk)')
+    .filter({ hasText: '<img src=x onerror=alert(1)>' });
+  await expect(row, 'XSS 提纲行在场').toHaveCount(1);
+  // 无 IMG 元素注入（安全 oracle）
+  await expect(page.locator('img'), '无 IMG 注入').toHaveCount(0);
+  // 默认收起；点开见 content 全文
+  await expect(row).not.toHaveAttribute('open');
+  await row.locator('summary').click();
+  await expect(row, '展开见全文').toContainText('e2e s9 展开全文');
+  expect(dialogs, 'XSS 未触发 dialog').toEqual([]);
+});
+
+test('E10 深潜 s9：旧数据容忍（空 title 显 kind 标签 / 旧 progress 原样 / 不崩）', async ({ page }) => {
+  await boardReady(page);
+  await cardByTitle(page, T.s9).click();
+  await expect(page.locator('#detail-root h1')).toHaveText(T.s9);
+  await expect(page.locator('#detail-root')).not.toContainText('加载失败');
+  // s9 人面链 = 3：progress_note(XSS headline) + note(空 title) + progress_note(旧 "progress")（[C8]）
+  const rows = page.locator('#ev-list details.evh:not(.bk)');
+  await expect(rows, 's9 人面行=3').toHaveCount(3);
+  // 空 title 行：提纲位显 kind 标签
+  const emptyRow = rows.filter({ has: page.locator('.evh-t', { hasText: /^note$/ }) });
+  await expect(emptyRow, '空 title 行提纲=kind 标签').toHaveCount(1);
+  // 旧 "progress" 行：原样显示（不做特殊识别）
+  const progRow = rows.filter({ has: page.locator('.evh-t', { hasText: /^progress$/ }) });
+  await expect(progRow, '旧 progress 行原样').toHaveCount(1);
+});
+
+test('E11 深潜 s3：簿记折叠（计数 + 默认收起 + 展开平铺 3 行）', async ({ page }) => {
+  await boardReady(page);
+  await cardByTitle(page, T.s3).click();
+  await expect(page.locator('#detail-root h1')).toHaveText(T.s3);
+  const bk = page.locator('#ev-list details.bk');
+  await expect(bk, '簿记组在场').toHaveCount(1);
+  // 标题计数=3（[C3][C8]：state_change×2 + reconcile×1），默认收起（closed）
+  await expect(bk.locator('summary')).toHaveText('簿记 3');
+  await expect(bk).not.toHaveAttribute('open');
+  // 人面行未被吞入簿记：s3 人面 = 1
+  await expect(page.locator('#ev-list details.evh:not(.bk)'), '人面行=1').toHaveCount(1);
+  // 展开后 3 平铺行（badge 组成钉死）
+  await bk.locator('summary').click();
+  const rows = bk.locator('.ev');
+  await expect(rows, '展开平铺 3 行').toHaveCount(3);
+  const badges = (await rows.locator('.badge').allTextContents()).sort();
+  expect(badges).toEqual(['reconcile/info', 'state_change/info', 'state_change/info']);
 });

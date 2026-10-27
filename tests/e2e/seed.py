@@ -3,13 +3,17 @@
 
 用法: .venv/bin/python tests/e2e/seed.py <db_path>
 
-复用 tests/ac_lib（CLI + MCP stdio）。7 种子（预探针触发后备则 8）：
+复用 tests/ac_lib（CLI + MCP stdio）。8 种子（预探针触发后备则 9）：
   s1 OPEN+description（对抗内容：<img onerror> + 引号 + 换行，真浏览器 XSS 探针）
   s2 OPEN+acceptance 2 锚 0 子任务（覆盖缺口标红对象）
   s3 claim+mark_blocked+update_progress（事件链=恰好 3：state_change×2+progress_note×1；
      awaiting_human 与 E5/E3c 双对象）
   s4 claim（CLAIMED；archive 对象）  s5 OPEN（delete 对象）
   s6 claim（CLAIMED；status 过滤对象）  s7 claim+approve（DONE；已完成 tab 对象）
+  s9 claim（CLAIMED 非终态在板；E9/E10 专用夹具：update_progress headline=XSS 串 +
+     直 SQL 两条旧形状事件——note title="" 空、progress_note title="progress"
+     payload.note。在板使 E1 6->7、E7 CLAIMED 集合 +s9＝夹具扩容契约推论，
+     期望值同步更新预先声明（陷阱库 3））
 预探针：seed 首跑后核 s3 awaiting_human 仍非空（update_progress 预期不清 marker，
 代码裁决 state_machine.py 转移处唯一清点位）；若被清 -> 后备种子 s8（仅 claim+
 mark_blocked，E5 改用 s8）。两路径写死。
@@ -19,7 +23,10 @@ mark_blocked，E5 改用 s8）。两路径写死。
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tests/
@@ -34,6 +41,10 @@ S2_ANCHORS = [{"item": "e2e 锚A"}, {"item": "e2e 锚B"}]
 S3_REASON = "e2e 阻塞原因"
 S3_NOTE = "e2e 进度注记"
 S3_HEADLINE = "e2e 进度提纲"
+S9_HEADLINE = "<img src=x onerror=alert(1)>"
+S9_NOTE = "e2e s9 展开全文"
+S9_OLD_NOTE_CONTENT = "e2e s9 空提纲旧形状"
+S9_OLD_PROGRESS = "e2e s9 旧形状进度注记"
 AGENT = "e2e-agent"
 
 TITLES = {
@@ -45,6 +56,7 @@ TITLES = {
     "s6": "e2e-s6-claimed-filter",
     "s7": "e2e-s7-claimed-done",
     "s8": "e2e-s8-blocked-fallback",
+    "s9": "e2e-s9-claimed-xss",
 }
 
 
@@ -69,6 +81,7 @@ def main() -> int:
     ids["s5"] = ac_lib.seed_req(db, TITLES["s5"])
     ids["s6"] = ac_lib.seed_req(db, TITLES["s6"])
     ids["s7"] = ac_lib.seed_req(db, TITLES["s7"])
+    ids["s9"] = ac_lib.seed_req(db, TITLES["s9"])
     for k, v in ids.items():
         print(f"seed {k} = {v}  {TITLES[k]}", flush=True)
 
@@ -82,11 +95,47 @@ def main() -> int:
         _claim(mcp, ids["s4"])
         _claim(mcp, ids["s6"])
         _claim(mcp, ids["s7"])
+        _claim(mcp, ids["s9"])
+        mcp.call_ok("update_progress", {"requirement_id": ids["s9"], "note": S9_NOTE,
+                                         "headline": S9_HEADLINE})
     finally:
         mcp.close()
-    print("mcp: s3 claim+blocked+progress / s4 claim / s6 claim / s7 claim", flush=True)
+    print("mcp: s3 claim+blocked+progress / s4 claim / s6 claim / s7 claim / s9 claim+progress(XSS headline)", flush=True)
     ac_lib.cli_ok(db, "approve", "--requirement-id", ids["s7"])
     print("cli: s7 approve -> DONE", flush=True)
+
+    # s9 直 SQL 补两条旧形状事件（BCD 边缘 1 旧数据容忍夹具；bench.py 模式：
+    # seq 递增自 seq_counter 并同步回、ts 同 SQLite DateTime 存储格式）
+    conn = sqlite3.connect(str(db))
+    try:
+        (base_seq,) = conn.execute("SELECT value FROM seq_counter WHERE id=1").fetchone()
+        (claim_id,) = conn.execute(
+            "SELECT id FROM claims WHERE requirement_id=? AND ended_at IS NULL",
+            (ids["s9"],),
+        ).fetchone()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S.%f")
+        old_events = [
+            # 旧形状 1：note 空 title（提纲位降级显 kind 标签对象）
+            {"kind": "note", "title": "", "content": S9_OLD_NOTE_CONTENT, "payload": None},
+            # 旧形状 2：progress_note title 常量 "progress"、note 双写 payload（原样显示对象）
+            {"kind": "progress_note", "title": "progress", "content": S9_OLD_PROGRESS,
+             "payload": {"note": S9_OLD_PROGRESS}},
+        ]
+        for i, ev in enumerate(old_events):
+            conn.execute(
+                "INSERT INTO events (id, requirement_id, claim_id, subtask_id, milestone_id,"
+                " kind, severity, title, content, payload, actor_surface, actor_conn, seq, ts)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (uuid.uuid4().hex, ids["s9"], claim_id, None, None, ev["kind"], "info",
+                 ev["title"], ev["content"],
+                 json.dumps(ev["payload"], ensure_ascii=False) if ev["payload"] is not None else None,
+                 "mcp", "e2e-seed", base_seq + i + 1, now),
+            )
+        conn.execute("UPDATE seq_counter SET value=? WHERE id=1", (base_seq + len(old_events),))
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"sql: s9 旧形状事件×2（note title='' / progress_note title='progress'）", flush=True)
 
     # 预探针：s3 awaiting_human 仍非空？（update_progress 预期不清 marker）
     rows = ac_lib.query(db, "SELECT awaiting_human FROM requirements WHERE id=?", (ids["s3"],))
@@ -109,18 +158,23 @@ def main() -> int:
 
     s3_kinds = [r[0] for r in ac_lib.query(
         db, "SELECT kind FROM events WHERE requirement_id=? ORDER BY seq", (ids["s3"],))]
+    s9_kinds = [r[0] for r in ac_lib.query(
+        db, "SELECT kind FROM events WHERE requirement_id=? ORDER BY seq", (ids["s9"],))]
     manifest = {
         **{k: v for k, v in ids.items() if k != "s8"},
         "s8": ids["s8"],
         "titles": TITLES,
         "s3_awaiting_human": s3_marker,
         "s3_event_kinds": s3_kinds,
+        "s3_headline": S3_HEADLINE,
+        "s9_event_kinds": s9_kinds,
         "e5_target": e5_target,
     }
     out = Path(str(db) + ".seeds.json")
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"manifest -> {out}", flush=True)
     print(f"s3 event kinds = {s3_kinds}", flush=True)
+    print(f"s9 event kinds = {s9_kinds}", flush=True)
     return 0
 
 
