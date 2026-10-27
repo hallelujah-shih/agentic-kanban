@@ -80,7 +80,7 @@ def parse_delegation(raw: str | dict | None) -> dict | None:
   CLI handler 调 `parse_delegation(args.on_behalf)`，非法 -> stderr `invalid_record: <msg>`
   + `return 1`（与 `_invoke` 既有 except 同输出形态，**无 traceback**——对齐 k 用例
   「Traceback not in stderr」CLI 错误面契约）；REST 端点调
-  REST 端点调 `parse_delegation(body.model_dump() if body else None)`（approve/renew
+  `parse_delegation(body.model_dump() if body else None)`（approve/renew
   body 整体即 DelegatedIn）/ `parse_delegation(body.delegated.model_dump() if
   body.delegated else None)`（release/note/abandon/reopen 嵌套字段，§4 两形态分写），
   非法 -> 抛 BusinessError -> 既有映射 422。
