@@ -1297,9 +1297,16 @@ TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python -u tests/ru
 # 期望: 693/693 PASS（若 T1-T4 实际断言数与本计划 69 有出入，以实际为准并回填本节）
 TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp AK_E2E_DB=/home/shih/.tmp-ak-m16/delegated-confirm/ak-e2e.db npx playwright test
 # 期望: 15/15 PASS（Web 面零改动回归；sqlite disk I/O error 先查 /tmp quota＝环境面）
-# docker 双轨（默认轨）：
-TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp docker compose up -d --build kanban && curl -sf localhost:<port>/healthz
-# 期望: build 成功 + healthz 200（端口以 docker-compose.yml 为准）；pypi 轨命令见 docs/ops/ci-verification.md
+# docker 双轨（默认轨，ci-verification.md:82-99 正典——禁 docker compose up：
+# worktree 内 compose 项目名≠生产，host 网络撞生产 8765；走一次性 smoke 容器 18812）:
+docker build -t ak-dc-g4 .
+docker run --rm ak-dc-g4 /app/.venv/bin/python -c "import agent_kanban"
+# 期望: build 成功 + import exit 0
+docker run -d --network host --name ak-dc-smoke -e AGENT_KANBAN_PORT=18812 ak-dc-g4
+curl -sf localhost:18812/healthz
+# 期望: healthz 200
+docker stop ak-dc-smoke
+# pypi 轨命令与办公网 MITM 局限见 docs/ops/ci-verification.md（容器级绿闭合点＝GH docker job）
 ```
 
 - [ ] **Step 5: 提交**
