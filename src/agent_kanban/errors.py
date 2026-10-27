@@ -1,4 +1,4 @@
-"""业务错误（PRD 4.3 九码）。"""
+"""业务错误（PRD 4.3 十码）。"""
 
 from __future__ import annotations
 

@@ -19,7 +19,7 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 ## 认领纪律
 
 - 认领排他：一个需求同时只一个 agent。抢占返回 `already_claimed` + 持有者句柄。
-- 租约：lease 2h / idle 30min（可配置）。**任何 MCP 写操作都是活动**，租约自动续。长时间无活动 -> SUSPECT，过期 -> STALE（人可见告警）。
+- 租约：lease 2h / idle 30min（可配置）。任何 MCP 写操作都是活动（更 last_activity_at，防 SUSPECT）；租约**不自动续**——延长需显式 renew（可据 update_progress 返回的 lease_expires_at 决策）。长时间无活动 -> SUSPECT，过期 -> STALE（人可见告警）。
 - **释放是人的职责**：agent 面无 release 工具。不要试图用 mark_blocked 或伪造状态"退出"；确实要放弃就 `mark_blocked` 说明原因，等人裁决（release / reject）。
 - 重试：同一需求累计重试超 2 次，系统会写 risk 事件并进"需要关注"区——这意味着你要向人说明，而不是继续闷头重试。
 - **重试成本自报**：每次重试时用 `add_record(kind=note)` 报本次重试的成本（token 数 / 耗时），让"重试代价"进事件流——系统只计数不记成本，人靠你的 note 看到一次重试付了多少钱。
@@ -55,6 +55,7 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 |---|---|---|
 | already_claimed | 已被其他 agent 认领 | 换任务 |
 | not_found | 任务不存在 | 查 list_tasks |
+| ambiguous_id | 前缀命中多条需求 | 加长前缀重试 |
 | illegal_state | 状态不对（如非 CLAIMED 时 request_review） | 按状态机纠正 |
 | no_active_claim | 认领已结束/被释放 | 重新 claim_task |
 | lease_expired | 对过期租约 renew | 无法续，等人处理 |

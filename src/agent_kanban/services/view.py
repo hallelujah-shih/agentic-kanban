@@ -59,6 +59,7 @@ async def summary(
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
+    requirement_id = _nid(req.id)
     claim = await session.scalar(
         select(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None))
     )
@@ -469,6 +470,7 @@ async def detail(
     """
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
+    requirement_id = _nid(req.id)
     claim = await session.scalar(
         select(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None))
     )

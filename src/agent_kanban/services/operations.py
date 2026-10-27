@@ -123,6 +123,7 @@ async def set_expectations(
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     old = req.acceptance or []
     new = normalize_anchors(acceptance, old)
     removed = {a.get("id") for a in old if isinstance(a, dict) and a.get("id")} - {
@@ -164,6 +165,7 @@ async def approve(
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     if req.state == "CLAIMED":
         # CLAIMED -> DONE：人确认终态 + claim ended_at 同事务 + 清 marker
         await transition(
@@ -200,11 +202,12 @@ async def release(
     now = now or now_utc()
     if not reason or not str(reason).strip():
         raise BusinessError("invalid_record", "release requires a reason", requirement_id)
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     claim = await session.scalar(
         select(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None))
     )
     if claim is None:
-        await require_requirement(session, requirement_id)
         raise BusinessError("not_found", f"no active claim to release for {requirement_id}", requirement_id)
     await transition(
         session, requirement_id=requirement_id, from_state="CLAIMED", to_state="OPEN",
@@ -271,7 +274,8 @@ async def renew(
     now: datetime | None = None,
 ) -> dict:
     now = now or now_utc()
-    await require_requirement(session, requirement_id)
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     claim = await session.scalar(
         select(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None))
     )
@@ -303,7 +307,8 @@ async def note(
     now: datetime | None = None,
 ) -> dict:
     now = now or now_utc()
-    await require_requirement(session, requirement_id)
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     _check_payload_size(requirement_id, {"content": content}, content)  # PRD §6：单事件 payload < 8KB
     await add_event(
         session, requirement_id=requirement_id, kind="note", severity="info",
@@ -325,7 +330,8 @@ async def reopen(
     """PRD 4.2（审#2-reopen）：`reopen` = DONE->REOPEN（避免死端）；
     `--continue` = REOPEN->OPEN（回到可认领）。REOPEN->CANCELLED 由 abandon 覆盖。"""
     now = now or now_utc()
-    await require_requirement(session, requirement_id)
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     if continue_:
         await transition(
             session, requirement_id=requirement_id, from_state="REOPEN", to_state="OPEN",
@@ -350,6 +356,7 @@ async def abandon(
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     claim = await session.scalar(
         select(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None))
     )
@@ -385,7 +392,8 @@ async def archive_requirement(
     now: datetime | None = None,
 ) -> dict:
     now = now or now_utc()
-    await require_requirement(session, requirement_id)
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     claim = await session.scalar(
         select(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None))
     )
@@ -410,6 +418,7 @@ async def delete_preview(
     actor_conn: str,
 ) -> dict:
     req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     count = await session.scalar(
         select(func.count()).select_from(Event).where(Event.requirement_id == requirement_id)
     )
@@ -424,7 +433,8 @@ async def delete_requirement(
     actor_surface: str,
     actor_conn: str,
 ) -> dict:
-    await require_requirement(session, requirement_id)
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     # FK 序：events（FK 指向 claims/subtasks/milestones）-> subtasks/milestones/claims -> requirement；
     # 不写事件（整链随属主消失，I2：链永不半断的推广形态）
     await session.execute(delete(Event).where(Event.requirement_id == requirement_id))
@@ -446,7 +456,8 @@ async def claim_task(
     now: datetime | None = None,
 ) -> dict:
     now = now or now_utc()
-    await require_requirement(session, requirement_id)
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     active = await count_active_claims(session)
     if active >= MAX_ACTIVE_CLAIMS:
         raise BusinessError(
@@ -519,6 +530,8 @@ async def add_subtask(
     now: datetime | None = None,
 ) -> dict:
     now = now or now_utc()
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     claim = await get_active_claim(session, requirement_id)
     norm_title = normalize_title(title)
     dup = await session.scalar(
@@ -561,6 +574,8 @@ async def update_subtask(
     now: datetime | None = None,
 ) -> dict:
     now = now or now_utc()
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     claim = await get_active_claim(session, requirement_id)
     if state not in SUBTASK_STATES:
         raise BusinessError("invalid_record", f"invalid subtask state: {state}", requirement_id)
@@ -615,6 +630,8 @@ async def add_milestone(
     now: datetime | None = None,
 ) -> dict:
     now = now or now_utc()
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     claim = await get_active_claim(session, requirement_id)
     planned = _parse_iso(planned_at, "planned_at")
     ms = Milestone(
@@ -643,6 +660,8 @@ async def update_milestone(
     now: datetime | None = None,
 ) -> dict:
     now = now or now_utc()
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     claim = await get_active_claim(session, requirement_id)
     if state not in MILESTONE_STATES:
         raise BusinessError("invalid_record", f"invalid milestone state: {state}", requirement_id)
@@ -679,6 +698,8 @@ async def add_record(
     now: datetime | None = None,
 ) -> dict:
     now = now or now_utc()
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     claim = await get_active_claim(session, requirement_id)
     if kind not in RECORD_KINDS:
         raise BusinessError("invalid_record", f"invalid record kind: {kind}", requirement_id)
@@ -718,6 +739,8 @@ async def update_progress(
     headline: str | None = None,
 ) -> dict:
     now = now or now_utc()
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     claim = await get_active_claim(session, requirement_id)
     if headline is None or not str(headline).strip():
         raise BusinessError(
@@ -733,7 +756,7 @@ async def update_progress(
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
     await lease_svc.touch_activity(session, requirement_id, now)
-    return {"requirement_id": requirement_id}
+    return {"requirement_id": requirement_id, "lease_expires_at": claim.lease_expires_at.isoformat()}
 
 
 async def request_review(
@@ -749,6 +772,7 @@ async def request_review(
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     if req.state != "CLAIMED":
         raise BusinessError("illegal_state", f"request_review requires state=CLAIMED, got {req.state}", requirement_id)
     claim = await get_active_claim(session, requirement_id, requirement=req)
@@ -832,6 +856,7 @@ async def mark_blocked(
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
     if req.state != "CLAIMED":
         raise BusinessError("illegal_state", f"mark_blocked requires state=CLAIMED, got {req.state}", requirement_id)
     claim = await get_active_claim(session, requirement_id, requirement=req)

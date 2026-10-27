@@ -158,7 +158,7 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 | add_milestone | title + planned_at | 未结束认领 |
 | update_milestone | state: planned/in_progress/achieved + actual_at | 未结束认领 |
 | add_record | title 必填（一行人话提纲，空 -> invalid_record）；kind = decision / risk / deviation / decomposition / note；decision 必含 alternatives[] + rationale + 拒绝理由；deviation severity 强制 >= attention | 未结束认领 |
-| update_progress | 进度备注（不覆盖派生值）；headline 必填（一行人话提纲，缺/空 -> invalid_record） | 未结束认领 |
+| update_progress | 进度备注（不覆盖派生值）；headline 必填（一行人话提纲，缺/空 -> invalid_record）；返回 lease_expires_at（租约到期时间，仅通知不延长租约——延长用 renew） | 未结束认领 |
 | request_review | 设 awaiting_human(kind=review)，持久化验收自评到 subtasks.acceptance[].state，附证据（PR / commit 区间 / 测试摘要，至少一项，缺证据拒绝）+ summary_line 必填（交接一句话，缺/空 -> invalid_record）；review_request 事件 severity=attention；不改状态 | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
 | mark_blocked | 转移 CLAIMED -> BLOCKED + 设 awaiting_human(kind=blocked)，附原因（一行人话，为空 -> invalid_record） | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
 | list_awaiting | 全部"等你决策"条目，含等待时长 | 读（人面） |
@@ -196,9 +196,11 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 ### 4.3 错误码
 
 MCP `is_error` + structured content（`{code, message, task_id}`），无 HTTP 码：
-`not_found | illegal_state | already_claimed | no_active_claim | lease_expired | duplicate_subtask | invalid_record | queue_full | db_busy`
+`not_found | illegal_state | already_claimed | no_active_claim | lease_expired | duplicate_subtask | invalid_record | queue_full | db_busy | ambiguous_id`
 
-每个码有唯一触发条件：`lease_expired` = 对已过期租约 renew；`db_busy` = SQLite 写失败重试 3 次后（7.3）；`queue_full` = claim_task 计数超上限（16）；`invalid_record` = 记录结构缺字段（decision 缺 alternatives / request_review 缺证据 / 缺 headline / 缺 summary_line / title 或 reason 为空）；其余见工具表。
+每个码有唯一触发条件：`ambiguous_id` = requirement_id 短前缀（8~31 hex）命中 >=2 条需求（0 命中 -> not_found）；`lease_expired` = 对已过期租约 renew；`db_busy` = SQLite 写失败重试 3 次后（7.3）；`queue_full` = claim_task 计数超上限（16）；`invalid_record` = 记录结构缺字段（decision 缺 alternatives / request_review 缺证据 / 缺 headline / 缺 summary_line / title 或 reason 为空）；其余见工具表。
+
+requirement_id 输入统一归一（strip + 大小写不敏感 + 连字符去除）；8~31 位 hex 唯一前缀可解析（>=2 命中 -> ambiguous_id）；32 位全 id 精确匹配优先；<8 位或非 hex -> not_found；MCP/REST/CLI 三面同源；响应的 requirement_id 与 ambiguous_id 错误候选列表为 32-hex 形态，not_found 消息与错误 task_id 保留原始输入。
 
 ---
 

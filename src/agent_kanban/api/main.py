@@ -35,6 +35,7 @@ REST_ERROR_STATUS = {
     "no_active_claim": 409,
     "duplicate_subtask": 409,
     "queue_full": 409,
+    "ambiguous_id": 409,
 }
 
 

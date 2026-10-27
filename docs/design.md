@@ -132,7 +132,7 @@ agent 与人 inline 交互的结果（批准方案、纠偏、解答问题）由
 | mark_blocked | 声明阻塞：转移 CLAIMED -> BLOCKED + 设置 awaiting_human(kind=blocked)，附原因 | 交接（含状态转移） |
 | list_awaiting | 全部"等你决策"条目，含等待时长 | 读（人面） |
 
-错误码：`not_found | illegal_state | already_claimed | no_active_claim | lease_expired | duplicate_subtask | invalid_record | queue_full | db_busy`。MCP `is_error` + structured content，无 HTTP 码。
+错误码：`not_found | illegal_state | already_claimed | no_active_claim | lease_expired | duplicate_subtask | invalid_record | queue_full | db_busy | ambiguous_id`。MCP `is_error` + structured content，无 HTTP 码。
 
 工具面的写操作统一前置校验：`no_active_claim`（agent 面）或交互面（人）。这使每个记录可追溯到一个认领或一次人工操作。
 
