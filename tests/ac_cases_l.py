@@ -195,8 +195,10 @@ def l_tool_self_desc():
     # in-process import：worktree src 优先（.venv editable 指向主仓 src，显式置顶防漂移）
     import asyncio
     import sys
-    # .venv editable 指向主仓 src：置顶 worktree src 并清掉已被先前用例载入的
-    # agent_kanban 模块缓存，确保 in-process import 落在本 worktree
+    # .venv editable 指向主仓 src：裸 import 会影子主仓（T0 同类），故置顶 worktree
+    # src；purge 为防御——当前套件无其他用例 in-process 载入 agent_kanban（已核，
+    # insert 单独即够），但任一未来 in-process import 都会把本用例静默打回主仓，
+    # 清缓存防该漂移
     sys.path.insert(0, str(REPO_ROOT / "src"))
     for mod in [m for m in sys.modules if m == "agent_kanban" or m.startswith("agent_kanban.")]:
         del sys.modules[mod]
