@@ -61,3 +61,46 @@ def rest_actor() -> tuple[str, str]:
     """REST 面（PRD 5.1 枚举无 rest，用 conn 区分传输）：surface='cli'（人面语义），
     conn='rest:<短随机>'（服务端派生）。"""
     return "cli", f"rest:{uuid.uuid4().hex[:8]}"
+
+
+DELEGATION_KINDS = ("statement", "action")
+DELEGATION_EXAMPLE = "statement:user said PR merged in session"
+
+
+def parse_delegation(raw: str | dict | None) -> dict | None:
+    """受托参数单点校验（spec §2.1）：CLI 传 raw string（"kind:basis"），REST 传
+    dict（{kind,basis}）。None -> None（无参现行为）。结构非法 -> invalid_record，
+    消息含参数名（括注 CLI flag 供两面自纠）+ 正确示例（agent 一次自纠）。"""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        if ":" not in raw:
+            raise BusinessError(
+                "invalid_record",
+                f'delegated (CLI --on-behalf) must be "kind:basis" '
+                f"(kind in statement|action), e.g. \"{DELEGATION_EXAMPLE}\"",
+            )
+        kind_raw, _, basis_raw = raw.partition(":")
+    else:  # dict（REST：pydantic 已保证 kind/basis 为 str 或键缺失）
+        kind_raw = raw.get("kind")
+        basis_raw = raw.get("basis")
+        if not isinstance(kind_raw, str) or not isinstance(basis_raw, str):
+            raise BusinessError(
+                "invalid_record",
+                f'delegated (CLI --on-behalf) must be "kind:basis" '
+                f"(kind in statement|action), e.g. \"{DELEGATION_EXAMPLE}\"",
+            )
+    kind = kind_raw.strip().lower()
+    basis = basis_raw.strip()
+    if kind not in DELEGATION_KINDS:
+        raise BusinessError(
+            "invalid_record",
+            f'delegated kind must be statement|action, got "{kind_raw}", '
+            f'e.g. "{DELEGATION_EXAMPLE}"',
+        )
+    if not basis:
+        raise BusinessError(
+            "invalid_record",
+            f'delegated basis must be non-empty, e.g. "{DELEGATION_EXAMPLE}"',
+        )
+    return {"kind": kind, "basis": basis}
