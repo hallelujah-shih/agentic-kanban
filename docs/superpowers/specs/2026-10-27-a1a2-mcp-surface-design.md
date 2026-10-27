@@ -1,7 +1,7 @@
 # Spec: 批 2 A1 短 id 前缀匹配 + A2 update_progress 返回租约态
 
 **日期**: 2026-10-27
-**状态**: 对抗审查：第 1 轮 REJECT（3 P1 + 6 P2）全修正（v2）；第 2 轮 APPROVE-WITH-FIXES（新增 P1-4 读回形态 + P2-7/P2-8）全折入（v3，2026-10-27）-> resume 原审者续审中
+**状态**: 对抗审查共识达成（2026-10-27，终态 APPROVE，3 轮同一审者）：第 1 轮 REJECT（3 P1 + 6 P2）全修正（v2）；第 2 轮 APPROVE-WITH-FIXES（P1-4 读回形态 + P2-7/P2-8）全折入（v3）；第 3 轮 3 项（N1 PRD 句自洽 / N2 用例 7 括注 / N3 BCD Who 连字符）折入（v3.1，审者声明不复审）。待 user 审阅 spec
 **分支/worktree**: a1a2-mcp（基于 main 8a60111，.worktree/a1a2-mcp）
 **BCD**: `docs/business-contracts/a1a2-mcp-surface.md`（7 节齐；user 裁决 2026-10-27 设计草稿全批，四决策点按建议值：8 hex 最小前缀 / 仅 requirement_id / ambiguous_id REST=409 / A2 仅 lease_expires_at）
 **板上任务**: 396f583730514ab5a3963dd58563bdcd
@@ -113,7 +113,7 @@ return {"requirement_id": requirement_id, "lease_expires_at": claim.lease_expire
 
 ## 5. 契约同步面（逐文件，v2 扩至 9 处）
 
-1. **PRD §4.3**：错误码列表行（:199）加 `ambiguous_id`；「每个码有唯一触发条件」段加 `ambiguous_id = requirement_id 短前缀（8~31 hex）命中 >=2 条需求（0 命中 -> not_found）`；§4.3 末加 id 解析口径句：「requirement_id 输入统一归一（strip + 大小写不敏感 + 连字符去除）；8~31 位 hex 唯一前缀可解析（>=2 命中 -> ambiguous_id）；32 位全 id 精确匹配优先；<8 位或非 hex -> not_found；MCP/REST/CLI 三面同源；响应/错误中的 id 均为 32-hex 形态」。
+1. **PRD §4.3**：错误码列表行（:199）加 `ambiguous_id`；「每个码有唯一触发条件」段加 `ambiguous_id = requirement_id 短前缀（8~31 hex）命中 >=2 条需求（0 命中 -> not_found）`；§4.3 末加 id 解析口径句：「requirement_id 输入统一归一（strip + 大小写不敏感 + 连字符去除）；8~31 位 hex 唯一前缀可解析（>=2 命中 -> ambiguous_id）；32 位全 id 精确匹配优先；<8 位或非 hex -> not_found；MCP/REST/CLI 三面同源；响应的 requirement_id 与 ambiguous_id 错误候选列表为 32-hex 形态，not_found 消息与错误 task_id 保留原始输入」。
 2. **PRD §4.1**：update_progress 行语义加「返回 lease_expires_at（租约到期时间，仅通知不延长租约——延长用 renew）」。
 3. **api/main.py**：REST_ERROR_STATUS 加 `"ambiguous_id": 409`。
 4. **server.py docstring**：10 个带 requirement_id 工具（get_task_detail/claim_task/add_subtask/update_subtask/add_milestone/update_milestone/add_record/update_progress/request_review/mark_blocked）：参数行 requirement_id 注明「32 位全 id 或 8~31 位唯一前缀（空白/大小写/连字符不敏感）」；错误行 not_found 处加 `ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）`。update_progress docstring 加返回行：「返回: requirement_id（32 位全 id）+ lease_expires_at（租约到期时间；本操作不延长租约，续租用 renew）」。
@@ -133,7 +133,7 @@ return {"requirement_id": requirement_id, "lease_expires_at": claim.lease_expire
 4. 0 命中前缀 -> `not_found`（消息含原始输入，形态同现行为）。
 5. <8 位（4/7 位）/ 非 hex / 空串 -> `not_found`。
 6. 全 id 回归：小写存在 -> 命中；不存在 -> not_found（精确路径）。
-7. 归一面：大写 32 位全 id -> 命中（新行为断言）；大写前缀 -> 命中；带首尾空白 -> 命中；36 连字符全 id -> 命中且返回 echo 为 32-hex（现行为保持，审 P2-8）。
+7. 归一面：大写 32 位全 id -> 命中（新行为断言）；大写前缀 -> 命中；带首尾空白 -> 命中；36 连字符全 id -> 命中且返回 echo 为 32-hex（命中结果保持；echo 归一 32-hex，审 P2-8）。
 8. 跨面一致性：同一唯一前缀经 MCP 面与 REST 面调用同结果（同目标/同错误码）。
 9. 返回 echo（非 A2 工具，审 P2-5）：claim_task 前缀输入 -> 返回 requirement_id 为 32 位 hex。
 
@@ -182,3 +182,4 @@ return {"requirement_id": requirement_id, "lease_expires_at": claim.lease_expire
   - P2-8：连字符归一裁决＝接纳（`s.replace("-","")`）；36 连字符全 id 现行为命中（实测），归一后走精确匹配＝行为不变；§4 矩阵加行；用例 7 补形态；§5.1 PRD 句补「连字符去除 + 响应 id 均 32-hex」。
   - 勘误：§5.4「8+ 位」->「8~31 位」；步骤 1 not_found 消息统一钉 raw。
   - BCD 同步：What/强 5 钉 norm_id 归一形态；强 2/Policy 3 归一措辞加连字符；修订记录一行。
+- v3.1（2026-10-27）：第 3 轮续审 3 项折入（审者声明折入即共识、不复审）：N1 §5.1 PRD 句自洽（响应 id/候选列表 32-hex；not_found 消息与 task_id 保留原始输入）+ BCD 强 2 同句；N2 用例 7 括注改「命中结果保持；echo 归一 32-hex」；N3 BCD Who 归一列举补连字符。

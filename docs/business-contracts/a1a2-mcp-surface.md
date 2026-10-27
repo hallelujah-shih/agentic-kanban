@@ -55,7 +55,7 @@
 
 1. **agent（MCP 工具面主调用方）**：凡带 requirement_id 的参数（MCP 10 个带 id 工具）均可用 8+ 位前缀；update_progress 返回多一个租约到期字段。
 2. **人（CLI/REST 面）**：CLI 命令与 REST 路由同 choke point 生效（三面同源）；ambiguous_id 错误信息含候选集，人面排障可读。
-3. **未来调用方（契约稳定面）**：MCP 单向门只增——新错误码、新返回字段、更宽的解析输入；既有行为（小写全 id 精确匹配、not_found 语义）逐字不变（大小写/空白统一归一属同类 additive 放宽）。
+3. **未来调用方（契约稳定面）**：MCP 单向门只增——新错误码、新返回字段、更宽的解析输入；既有行为（小写全 id 精确匹配、not_found 语义）逐字不变（大小写/空白/连字符统一归一属同类 additive 放宽）。
 
 ### How（影响路径）
 
@@ -205,7 +205,7 @@ Requirement / Claim 聚合不变。无新表、无新列、无索引变更（前
 ### 强不变量（违反即业务失败）
 
 1. **宁拒不猜**：前缀命中 ≥2 条必返 ambiguous_id，任何解析路径不得静默选择候选。违反后果：事件/状态变更落进错误需求，审计链污染（回溯判据失效）。
-2. **小写 32 位全 id 行为逐字不变**：精确匹配路径、not_found 语义、错误信息形态均不回归；空白/大小写/连字符统一归一属与 prefix 同类 additive 放宽（大写全 id 从 not_found 变命中；36 连字符全 id 现行为命中、归一后保持命中）；响应/错误中 id 均为 32-hex 形态（norm_id 归一）。违反后果：存量 agent 自动化/CLI 脚本断裂。
+2. **小写 32 位全 id 行为逐字不变**：精确匹配路径、not_found 语义、错误信息形态均不回归；空白/大小写/连字符统一归一属与 prefix 同类 additive 放宽（大写全 id 从 not_found 变命中；36 连字符全 id 现行为命中、归一后保持命中）；响应的 requirement_id 与 ambiguous_id 候选列表为 32-hex 形态（norm_id 归一），not_found 消息与错误 task_id 保留原始输入。违反后果：存量 agent 自动化/CLI 脚本断裂。
 3. **单向门纯 additive**：契约变化仅＝新错误码 ambiguous_id + update_progress 新返回字段 + 解析输入放宽；不删不改任何既有码、字段、工具、参数。违反后果：既有调用方断裂，单向门纪律失守。
 4. **租约语义零改动**：activity 只更 last_activity_at（ADR 0006）；A2 返回是通知，不延长 lease_expires_at。违反后果：租约模型隐式变更，signal 推导与 renew 工具语义漂移。
 5. **三面同源单点 + 传播规则**：id 前缀解析唯一实现＝require_requirement choke point（前缀逻辑全仓唯一）；21 个取 id 函数入口重绑定 `norm_id(req.id)`（32-hex 形态）、下游用全 id（spec §2.1 清单），MCP/REST/CLI 同语义。违反后果：同输入跨面行为漂移，或解析结果不传播/形态不归一导致 FK 违例、假 no_active_claim、读面静默空、echo 36 连字符回归。
