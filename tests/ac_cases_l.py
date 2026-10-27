@@ -5,7 +5,7 @@ oracle 纪律：断言引 BCD distill-pipeline §1 裁决 1/§3 Commands 1-4/§4
 
 覆盖（五元组）：
 - 裁决 1(a) update_progress 必填 headline -> l_headline
-- 强不变量 3 人面记录必带提纲 -> l_headline / l_summary_line / l_record_title
+- 强不变量 3 人面记录必带提纲 -> l_headline / l_summary_line / l_record_title / l_blocked_reason_empty
 - 裁决 5/Scenario 2 交接一句话 -> l_summary_line
 - Scenario 3 阻塞原因进追加链 -> l_blocked_reason_chain
 - Premortem 1 带内兜底 -> l_tool_self_desc
@@ -16,7 +16,7 @@ R3 读侧（T2，plan distill-pipeline T2 节）：
 - Policy 4 人/机分类单点同源 -> l_audience
 - 强不变量 1 蒸馏不破坏 export 全量 -> l_export_stable（回归 oracle）
 
-无半态断言（BCD 边缘 2 Then，审 r1 P2-1）：三个错误路径用例的每个错误分支
+无半态断言（BCD 边缘 2 Then，审 r1 P2-1）：四个错误路径用例的每个错误分支
 写前后 events 计数相等 + 需求行 awaiting_human/state 未变，防「先写事件再抛错」
 的实现使错误码绿而留半态。
 
@@ -203,6 +203,37 @@ def l_blocked_reason_chain():
                     "AND title='CLAIMED -> BLOCKED'", (rid,))
     pl2 = json.loads(ev2[0]["payload"])
     ok("l_blocked(iii): approve 后事件链 reason 仍在（追加链不抹）", pl2.get("reason") == reason, str(pl2))
+
+
+def l_blocked_reason_empty():
+    print("== R1.6: mark_blocked reason 必填一行人话（空/纯空白 -> invalid_record）+ 错误无半态")
+    db = new_db()
+    rid = seed_req(db, "l-blocked-empty")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    # (i) reason="" -> invalid_record，message 含 reason（指明修法）；无半态
+    n0 = _count(db, rid)
+    snap0 = _req_snap(db, rid)
+    code, msg = _call_err2(m, "mark_blocked", {"requirement_id": rid, "reason": ""})
+    ok("l_blocked_empty(i): reason='' -> invalid_record", code == "invalid_record", code)
+    ok("l_blocked_empty(i): message 含 reason（指明修法）", "reason" in msg, msg)
+    ok("l_blocked_empty(i): 无半态——events 计数不变", _count(db, rid) == n0, f"{n0}->{_count(db, rid)}")
+    ok("l_blocked_empty(i): 无半态——需求行未变（state 仍 CLAIMED、awaiting_human 未设）",
+       _req_snap(db, rid) == snap0, str(_req_snap(db, rid)))
+    # (ii) reason 仅空白 -> invalid_record；无半态
+    n1 = _count(db, rid)
+    snap1 = _req_snap(db, rid)
+    code, msg = _call_err2(m, "mark_blocked", {"requirement_id": rid, "reason": "   "})
+    ok("l_blocked_empty(ii): reason 仅空白 -> invalid_record", code == "invalid_record", code)
+    ok("l_blocked_empty(ii): message 含 reason", "reason" in msg, msg)
+    ok("l_blocked_empty(ii): 无半态——events 计数不变", _count(db, rid) == n1, f"{n1}->{_count(db, rid)}")
+    ok("l_blocked_empty(ii): 无半态——需求行未变（state 仍 CLAIMED、awaiting_human 未设）",
+       _req_snap(db, rid) == snap1, str(_req_snap(db, rid)))
+    # (iii) 正常 reason 不误伤（CLAIMED -> BLOCKED 照旧）
+    m.call_ok("mark_blocked", {"requirement_id": rid, "reason": "等 user 裁决 X"})
+    row = query(db, "SELECT state FROM requirements WHERE id=?", (rid,))[0]
+    ok("l_blocked_empty(iii): 正常 reason -> BLOCKED", row["state"] == "BLOCKED", row["state"])
+    m.close()
 
 
 def l_tool_self_desc():

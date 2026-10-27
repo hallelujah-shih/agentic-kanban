@@ -78,7 +78,7 @@ async def add_subtask(
 ) -> CallToolResult:
     """拆解子任务（写 decomposition 事件）。
     参数: requirement_id, title, ordinal, acceptance（可选，验收项列表）。
-    错误: no_active_claim / invalid_record（title 重复）。
+    错误: no_active_claim / duplicate_subtask（title 重复）。
     """
     return await _call(
         ctx, "add_subtask", requirement_id=requirement_id, title=title, ordinal=ordinal,

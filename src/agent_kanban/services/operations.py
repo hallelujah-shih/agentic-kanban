@@ -835,6 +835,13 @@ async def mark_blocked(
     if req.state != "CLAIMED":
         raise BusinessError("illegal_state", f"mark_blocked requires state=CLAIMED, got {req.state}", requirement_id)
     claim = await get_active_claim(session, requirement_id, requirement=req)
+    if not str(reason).strip():
+        raise BusinessError(
+            "invalid_record",
+            'mark_blocked requires reason: one-line human-readable reason. '
+            'e.g. reason="等 user 裁决"',
+            requirement_id,
+        )
     await transition(
         session, requirement_id=requirement_id, from_state="CLAIMED", to_state="BLOCKED",
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
