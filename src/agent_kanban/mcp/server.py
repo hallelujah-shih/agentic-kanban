@@ -67,7 +67,7 @@ async def get_task_detail(requirement_id: str, ctx: Context | None = None) -> Ca
 async def claim_task(requirement_id: str, agent_name: str, ctx: Context | None = None) -> CallToolResult:
     """认领一个 OPEN 需求（状态 -> CLAIMED）；同一 agent 最多并发持有 16 个。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, agent_name。
-    错误: no_active_claim（已被认领）/ illegal_state（非 OPEN）/ queue_full（超 16）/ ambiguous_id（前缀命中多条，加长前缀重试）。
+    错误: no_active_claim（已被认领）/ illegal_state（非 OPEN）/ queue_full（超 16）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     """
     return await _call(ctx, "claim_task", requirement_id=requirement_id, agent_name=agent_name)
 
@@ -78,7 +78,7 @@ async def add_subtask(
 ) -> CallToolResult:
     """拆解子任务（写 decomposition 事件）。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, title, ordinal, acceptance（可选，验收项列表）。
-    错误: no_active_claim / duplicate_subtask（title 重复）/ ambiguous_id（前缀命中多条，加长前缀重试）。
+    错误: no_active_claim / duplicate_subtask（title 重复）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     """
     return await _call(
         ctx, "add_subtask", requirement_id=requirement_id, title=title, ordinal=ordinal,
@@ -91,7 +91,7 @@ async def update_subtask(
 ) -> CallToolResult:
     """更新子任务状态（todo/in_progress/done/blocked/abandoned）。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, subtask_id, state。
-    错误: no_active_claim / not_found / ambiguous_id（前缀命中多条，加长前缀重试）/ invalid_record（非法 state）。
+    错误: no_active_claim / not_found / ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）/ invalid_record（非法 state）。
     """
     return await _call(
         ctx, "update_subtask", requirement_id=requirement_id, subtask_id=subtask_id, state=state
@@ -103,7 +103,7 @@ async def add_milestone(
 ) -> CallToolResult:
     """新增里程碑（写 decomposition 事件）。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, title, planned_at（可选，ISO-8601）。
-    错误: no_active_claim / invalid_record / ambiguous_id（前缀命中多条，加长前缀重试）。
+    错误: no_active_claim / invalid_record / ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     """
     return await _call(
         ctx, "add_milestone", requirement_id=requirement_id, title=title, planned_at=planned_at
@@ -116,7 +116,7 @@ async def update_milestone(
 ) -> CallToolResult:
     """更新里程碑状态（planned/in_progress/achieved）。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, milestone_id, state, actual_at（可选）。
-    错误: no_active_claim / not_found / ambiguous_id（前缀命中多条，加长前缀重试）/ invalid_record。
+    错误: no_active_claim / not_found / ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）/ invalid_record。
     """
     return await _call(
         ctx, "update_milestone", requirement_id=requirement_id, milestone_id=milestone_id,
@@ -130,7 +130,7 @@ async def add_record(
 ) -> CallToolResult:
     """记录一条人面事件（decision/risk/deviation/note/decomposition）。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, kind, title（一行人话提纲）, content, severity, payload。
-    错误: no_active_claim / invalid_record（kind 非法或 title 为空）/ ambiguous_id（前缀命中多条，加长前缀重试）。
+    错误: no_active_claim / invalid_record（kind 非法或 title 为空）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     记录契约: title 必写一行人话提纲（报节点不报流水账），缺/空 -> invalid_record。
     """
     return await _call(
@@ -144,7 +144,7 @@ async def update_progress(
 ) -> CallToolResult:
     """记一条进度备注（progress_note 事件）。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, note, headline（一行人话提纲）。
-    错误: no_active_claim / invalid_record（缺 headline）/ ambiguous_id（前缀命中多条，加长前缀重试）。
+    错误: no_active_claim / invalid_record（缺 headline）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     记录契约: headline 必写一行人话提纲（报节点不报流水账），缺/空 -> invalid_record。
     返回: requirement_id（32 位全 id）+ lease_expires_at（租约到期时间；本操作不延长租约，续租用 renew）。
     """
@@ -160,7 +160,7 @@ async def request_review(
     """交接评审：置 awaiting_human(kind=review)，写 review_request 事件（severity=attention）。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, evidence（pr_url/commit_range/test_summary 至少一项）,
           assessments, summary_line（交接一句话：做了什么/先看哪）。
-    错误: illegal_state（非 CLAIMED）/ invalid_record（缺 evidence 或 summary_line）/ ambiguous_id（前缀命中多条，加长前缀重试）。
+    错误: illegal_state（非 CLAIMED）/ invalid_record（缺 evidence 或 summary_line）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     记录契约: summary_line 必写「做了什么/先看哪」一句话，缺/空 -> invalid_record。
     """
     return await _call(
@@ -175,7 +175,7 @@ async def mark_blocked(
 ) -> CallToolResult:
     """标记阻塞：CLAIMED -> BLOCKED；reason 进追加链（state_change 事件）+ awaiting_human(kind=blocked)。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, reason（一行人话阻塞原因）, evidence（可选）。
-    错误: illegal_state（非 CLAIMED）/ no_active_claim / invalid_record（空 reason）/ ambiguous_id（前缀命中多条，加长前缀重试）。
+    错误: illegal_state（非 CLAIMED）/ no_active_claim / invalid_record（空 reason）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     记录契约: reason 必写一行人话原因（报节点不报流水账），进事件链可回溯。
     """
     return await _call(

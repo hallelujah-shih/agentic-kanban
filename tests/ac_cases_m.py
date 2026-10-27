@@ -138,7 +138,7 @@ def m_prefix_invalid():
     _seed(db, "a1b2c3d4" + "f" * 24)
     m = MCP(db).start()
     try:
-        for raw in ("abcd", "1234567", "1234567g", ""):
+        for raw in ("a1b2c3d", "abcd", "1234567", "1234567g", ""):
             code, _ = _call_err2(m, "get_task_detail", {"requirement_id": raw})
             ok(f"m5: {raw!r} -> not_found", code == "not_found", code)
     finally:
