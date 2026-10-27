@@ -29,6 +29,7 @@ def ac11():
     st2 = m.call_ok("add_subtask", {"requirement_id": rid, "title": "impl2", "ordinal": 2,
                                     "acceptance": [{"item": "y works", "links_to": "a2"}]})
     m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "t"},
+                                  "summary_line": "ac11 交接",
                                  "assessments": [
                                      {"subtask_id": st1["subtask_id"], "items": [{"item": "x works", "state": "met"}]},
                                      {"subtask_id": st2["subtask_id"], "items": [{"item": "y works", "state": "not_met"}]},
@@ -146,7 +147,8 @@ def ac13():
     m = MCP(db).start()
     m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
     prog_secret = "PROGRESS_SECRET_" + "x" * 2000
-    m.call_ok("update_progress", {"requirement_id": rid, "note": prog_secret})
+    m.call_ok("update_progress", {"requirement_id": rid, "note": prog_secret,
+                                   "headline": "c 进度提纲"})
     long_content = "RISK_LONG_" + "y" * 1500
     m.call_ok("add_record", {"requirement_id": rid, "kind": "risk", "title": "risk1",
                              "severity": "attention", "content": long_content})
@@ -201,6 +203,7 @@ def ac15():
     m.call_ok("add_record", {"requirement_id": rid, "kind": "risk", "title": "risk-1",
                              "severity": "attention", "content": "some risk detail"})
     m.call_ok("request_review", {"requirement_id": rid,
+                                 "summary_line": "ac12 交接",
                                  "evidence": {"pr_url": "https://github.com/x/pr/1",
                                               "commit_range": "abc123..def456", "test_summary": "all pass"},
                                  "assessments": []})
@@ -263,9 +266,11 @@ def ac17():
     m = MCP(db).start()
     r = seed_req(db, "ac17")
     m.call_ok("claim_task", {"requirement_id": r, "agent_name": "a"})
-    code, _ = m.call_err("request_review", {"requirement_id": r, "evidence": {}})
+    code, _ = m.call_err("request_review", {"requirement_id": r, "evidence": {},
+                                             "summary_line": "ac17 交接"})
     ok("ac17: 缺全部证据 -> invalid_record", code == "invalid_record", code)
-    res = m.call_ok("request_review", {"requirement_id": r, "evidence": {"commit_range": "a..b"}})
+    res = m.call_ok("request_review", {"requirement_id": r, "evidence": {"commit_range": "a..b"},
+                                        "summary_line": "ac17 交接"})
     ok("ac17: 至少一项证据 -> 成功", (res.get("awaiting_human") or {}).get("kind") == "review", str(res))
     m.close()
 
@@ -433,7 +438,8 @@ def rest_api():
     m = MCP(db2).start()
     r1 = seed_req(db2, "rest-reopen")
     m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})
-    m.call_ok("request_review", {"requirement_id": r1, "evidence": {"test_summary": "t"}})
+    m.call_ok("request_review", {"requirement_id": r1, "evidence": {"test_summary": "t"},
+                                  "summary_line": "c 交接"})
     m.close()
     rest2 = REST(db2, extra={"AGENT_KANBAN_BUSY_TIMEOUT_MS": "50"}).start()
     try:
@@ -461,7 +467,8 @@ def cli_m0():
     m = MCP(db).start()
     r1 = seed_req(db, "reopen1")
     m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})
-    m.call_ok("request_review", {"requirement_id": r1, "evidence": {"test_summary": "t"}})
+    m.call_ok("request_review", {"requirement_id": r1, "evidence": {"test_summary": "t"},
+                                  "summary_line": "c 交接"})
     cli_ok(db, "approve", "--requirement-id", r1)
     res = cli_ok(db, "reopen", "--requirement-id", r1)
     ok("cli: reopen DONE->REOPEN", res["state"] == "REOPEN", str(res))

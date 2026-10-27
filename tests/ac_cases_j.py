@@ -40,7 +40,8 @@ def export_csv():
                              "severity": "attention"})
     m.call_ok("add_record", {"requirement_id": r1, "kind": "deviation", "title": "偏离",
                              "severity": "attention"})
-    m.call_ok("update_progress", {"requirement_id": r1, "note": "p1"})
+    m.call_ok("update_progress", {"requirement_id": r1, "note": "p1",
+                                   "headline": "j 进度提纲"})
     m.call_ok("add_record", {"requirement_id": r1, "kind": "note", "title": "csv-escape",
                              "content": ESCAPE_CONTENT})
     m.close()

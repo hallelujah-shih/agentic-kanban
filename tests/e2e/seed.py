@@ -33,6 +33,7 @@ S1_DESC = (
 S2_ANCHORS = [{"item": "e2e 锚A"}, {"item": "e2e 锚B"}]
 S3_REASON = "e2e 阻塞原因"
 S3_NOTE = "e2e 进度注记"
+S3_HEADLINE = "e2e 进度提纲"
 AGENT = "e2e-agent"
 
 TITLES = {
@@ -76,7 +77,8 @@ def main() -> int:
     try:
         _claim(mcp, ids["s3"])
         mcp.call_ok("mark_blocked", {"requirement_id": ids["s3"], "reason": S3_REASON})
-        mcp.call_ok("update_progress", {"requirement_id": ids["s3"], "note": S3_NOTE})
+        mcp.call_ok("update_progress", {"requirement_id": ids["s3"], "note": S3_NOTE,
+                                         "headline": S3_HEADLINE})
         _claim(mcp, ids["s4"])
         _claim(mcp, ids["s6"])
         _claim(mcp, ids["s7"])

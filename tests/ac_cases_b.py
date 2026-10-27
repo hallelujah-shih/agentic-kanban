@@ -42,7 +42,9 @@ def ac6():
     def write_worker(i: int):
         barrier.wait()
         for k in range(25):
-            res = writers[i].call("update_progress", {"requirement_id": r2, "note": f"w{i}-{k}"})
+            res = writers[i].call("update_progress",
+                                  {"requirement_id": r2, "note": f"w{i}-{k}",
+                                   "headline": f"h{i}-{k}"})
             if res.get("isError"):
                 outcomes.append(json.loads(res["content"][0]["text"])["code"])
             else:
@@ -118,7 +120,8 @@ def ac8():
     m = MCP(db, extra={"AGENT_KANBAN_LEASE_SECONDS": "-1"}).start()
     for i, r in enumerate(reqs):
         m.call_ok("claim_task", {"requirement_id": r, "agent_name": f"a{i}"})
-    m.call_ok("request_review", {"requirement_id": reqs[0], "evidence": {"test_summary": "s"}})
+    m.call_ok("request_review", {"requirement_id": reqs[0], "evidence": {"test_summary": "s"},
+                                  "summary_line": "ac8 交接"})
     code, _ = m.call_err("claim_task", {"requirement_id": r17, "agent_name": "b"})
     ok("ac8: 第 17 认领 -> queue_full（含 STALE/等待中）", code == "queue_full", code)
     n = query(db, "SELECT COUNT(*) c FROM claims WHERE ended_at IS NULL", ())
@@ -150,7 +153,8 @@ def ac16():
     ok("ac16: 工具面无 release", "release" not in m.list_tools())
     r1 = seed_req(db, "ac16")
     m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})
-    m.call_ok("request_review", {"requirement_id": r1, "evidence": {"test_summary": "t"}})
+    m.call_ok("request_review", {"requirement_id": r1, "evidence": {"test_summary": "t"},
+                                  "summary_line": "ac16 交接"})
     res = cli_ok(db, "release", "--requirement-id", r1, "--reason", "handoff")
     ok("ac16: release 回 OPEN", res["state"] == "OPEN", json.dumps(res))
     rel = [e for e in query(db, "SELECT kind, payload FROM events WHERE requirement_id=? ORDER BY seq", (r1,))
@@ -183,7 +187,8 @@ def matrix():
     ok("m: approve 不存在 -> not_found", code == "not_found", code)
     r = seed_req(db, "m-invalid")
     m.call_ok("claim_task", {"requirement_id": r, "agent_name": "a"})
-    code, _ = m.call_err("request_review", {"requirement_id": r, "evidence": {}})
+    code, _ = m.call_err("request_review", {"requirement_id": r, "evidence": {},
+                                             "summary_line": "m 交接"})
     ok("m: request_review 缺证据 -> invalid_record（死期 M0 唯一例外）", code == "invalid_record", code)
 
     # db_busy：第二连接持锁 + 极小 busy_timeout -> 写重试 3 次后
@@ -212,6 +217,7 @@ def extras():
     st = m.call_ok("add_subtask", {"requirement_id": r, "title": "impl", "ordinal": 1,
                                    "acceptance": [{"item": "works"}]})
     m.call_ok("request_review", {"requirement_id": r, "evidence": {"test_summary": "t"},
+                                  "summary_line": "e 交接",
                                  "assessments": [{"subtask_id": st["subtask_id"],
                                                   "items": [{"item": "works", "state": "met"}]}]})
     d = m.call_ok("get_task_detail", {"requirement_id": r})

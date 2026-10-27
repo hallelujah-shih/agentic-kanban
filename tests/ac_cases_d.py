@@ -91,10 +91,12 @@ def p2_payload_8kb():
     big = "x" * 9000
     code, _ = cli_err(db, "note", "--requirement-id", r, "--content", big)
     ok("P2-1: note content >8KB -> invalid_record", code == "invalid_record", code)
-    code, _ = m.call_err("update_progress", {"requirement_id": r, "note": big})
+    code, _ = m.call_err("update_progress", {"requirement_id": r, "note": big,
+                                              "headline": "d 8KB 提纲"})
     ok("P2-1: update_progress note >8KB -> invalid_record", code == "invalid_record", code)
     small = "y" * 7000
-    res = m.call_ok("update_progress", {"requirement_id": r, "note": small})
+    res = m.call_ok("update_progress", {"requirement_id": r, "note": small,
+                                         "headline": "d 8KB 提纲"})
     ok("P2-1: update_progress <8KB 成功", res["requirement_id"] == r, str(res))
     res = cli_ok(db, "note", "--requirement-id", r, "--content", small)
     ok("P2-1: note <8KB 成功", res["requirement_id"] == r, str(res))

@@ -88,7 +88,8 @@ def ac2():
     ma.call_ok("claim_task", {"requirement_id": ra, "agent_name": "agent-a"})
     sig_a = ma.call_ok("get_task_detail", {"requirement_id": ra})["claim"]["signal"]
     ok("ac2: 过期无标记=STALE", sig_a == "stale", sig_a)
-    ma.call_ok("request_review", {"requirement_id": ra, "evidence": {"test_summary": "s"}})
+    ma.call_ok("request_review", {"requirement_id": ra, "evidence": {"test_summary": "s"},
+                                   "summary_line": "ac2 交接"})
     sig_a2 = ma.call_ok("get_task_detail", {"requirement_id": ra})["claim"]["signal"]
     ok("ac2: 过期有标记=等待中", sig_a2 == "waiting", sig_a2)
     ok("ac2: STALE != 等待中", sig_a != sig_a2)
@@ -124,7 +125,8 @@ def ac3():
 
     r1 = seed_req(db, "ac3-claimed")
     m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})
-    m.call_ok("request_review", {"requirement_id": r1, "evidence": {"test_summary": "t"}})
+    m.call_ok("request_review", {"requirement_id": r1, "evidence": {"test_summary": "t"},
+                                  "summary_line": "ac3 交接"})
     res = cli_ok(db, "approve", "--requirement-id", r1)
     ok("ac3: approve(CLAIMED)->DONE", res["state"] == "DONE", json.dumps(res))
     d = m.call_ok("get_task_detail", {"requirement_id": r1})
@@ -163,7 +165,9 @@ def ac3():
     r7 = seed_req(db, "ac3-blocked-review")
     m.call_ok("claim_task", {"requirement_id": r7, "agent_name": "a"})
     m.call_ok("mark_blocked", {"requirement_id": r7, "reason": "x"})
-    code, _ = m.call_err("request_review", {"requirement_id": r7, "evidence": {"test_summary": "t"}})
+    code, _ = m.call_err("request_review",
+                         {"requirement_id": r7, "evidence": {"test_summary": "t"},
+                          "summary_line": "ac3 交接"})
     ok("ac3: BLOCKED 上 request_review->illegal_state", code == "illegal_state", code)
     code, _ = m.call_err("mark_blocked", {"requirement_id": r2, "reason": "x"})
     ok("ac3: mark_blocked(OPEN)->illegal_state", code == "illegal_state", code)

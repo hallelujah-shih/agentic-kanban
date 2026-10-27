@@ -63,6 +63,7 @@ def ac10():
                              "severity": "info", "content": "风险被压级，不应出现在摘要风险列表"})
     # 验收自评：Y 状态可见
     m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "t"},
+                                 "summary_line": "e 交接",
                                  "assessments": [{"subtask_id": st["subtask_id"],
                                                   "items": [{"item": "窄验收项 Y：登录按钮可点击", "state": "met"}]}]})
     m.close()
@@ -110,7 +111,8 @@ def reconcile_ac():
     r0 = seed_req(db, "mcp-no-reconcile")
     m0 = MCP(db).start()
     m0.call_ok("claim_task", {"requirement_id": r0, "agent_name": "a"})
-    m0.call_ok("request_review", {"requirement_id": r0, "evidence": {"test_summary": "t"}})
+    m0.call_ok("request_review", {"requirement_id": r0, "evidence": {"test_summary": "t"},
+                                 "summary_line": "reconcile 交接"})
     m0.close()
     ok("reconcile: MCP server 启动不写 reconcile 事件（审#10）",
        _count_events(db, r0, "reconcile") == 0, "")
@@ -130,7 +132,8 @@ def reconcile_ac():
     r2 = seed_req(db, "awaiting-2")
     m2 = MCP(db).start()
     m2.call_ok("claim_task", {"requirement_id": r2, "agent_name": "waiting-agent"})
-    m2.call_ok("request_review", {"requirement_id": r2, "evidence": {"test_summary": "t"}})
+    m2.call_ok("request_review", {"requirement_id": r2, "evidence": {"test_summary": "t"},
+                                 "summary_line": "reconcile 交接"})
     m2.close()
     _backdate_last_activity(db, 40)
     rep2 = cli_ok(db, "reconcile")
