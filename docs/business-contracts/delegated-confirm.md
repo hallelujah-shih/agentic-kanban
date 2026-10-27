@@ -236,7 +236,7 @@
 
 1. **L0 人决定源**：任何终态/确认迁移（DONE/REJECTED/CANCELLED/release->OPEN）必须有已发生的人的决定（statement 或 agent 结构性做不了的 action）为源；agent 只翻译、不产生。执行面＝协议层（SKILL.md）+ 审计面（delegated + basis 板面可读）+ 人重裁权；无机器强制（威胁模型 C）。违反后果：唯一可信终态源被污染，看板核心资产（可回溯性）失效。
 2. **不可能性即门禁**：delete/archive 等破坏性/非确认操作、set_expectations（无事件载体）均无受托参数入口（CLI/REST 结构性缺席）；MCP 12 工具面无受托入口（agent 自身动作恒 surface=mcp，结构性不可标 delegated）。违反后果：agent 可代执行破坏性操作/自我标代执行，审计模型崩塌。
-3. **受托面与 payload 配对**：surface=delegated 与 payload.delegated={kind,basis} 结构有效（kind ∈ {statement, action}，basis 非空）当且仅当同时成立；服务端单点派生（同函数落值）。违反后果：审计配对断裂，回溯失锚。
+3. **受托面与 payload 配对**：写事件的 6 个人面操作写出的事件，surface=delegated 与 payload.delegated={kind,basis} 结构有效（kind ∈ {statement, action}，basis 非空）当且仅当同时成立（正向系统级：surface=delegated 只能由 cli/rest 派生层置出；MCP add_record 自由 payload 例外与审计主键＝actor_surface=delegated，见 §3 配对规则）；服务端单点派生（同一调用点同批落值）。违反后果：审计配对断裂，回溯失锚。
 4. **单向门纯 additive**：无受托参数路径、MCP 面、状态机、租约语义、错误码集、REST 无 body 调用、既有 surface 值行为、Web 面均逐字不变；invalid_record 新触发实例为 additive（每码唯一触发条件纪律保持）。违反后果：存量调用方断裂，单向门纪律失守。
 5. **零输入宁拒不猜**：0 待决＝提示零写；恰 1＝执行；多条 + 交互＝列号选（越界输入＝拒绝）；多条 + 非交互＝拒绝。一切拒绝分支零写。违反后果：错任务终态变更。
 
@@ -254,4 +254,5 @@
 - 2026-10-27 创建（主循环）。来源：user 2026-10-27 会话两段原话（零输入痛点 + 收尾协议）+ 四决策点裁决（Q1 确认源 / Q2 委托范围 / Q3 审计形态 / Q4 兜底面，user「可以」）+ 现状代码取证（identity.py 服务端派生先例 / cli.py:280 approve required / requirements.py REST 面 + ReopenIn|None 先例 / web.py 详情页仅 archive/delete / awaiting_human 列 + list_awaiting 读路径 operations.py:936 / events.payload JSON 列 / PRD §29/§4.2/§4.3/§5.1/§5.2）。
 - 2026-10-27 v2 修订（PM 评审拆分，user 裁决「按照你的建议实施」）：C-c Web 待决页整体移出本批（§1 解读表/我的解读/待澄清 4、§2 Why/Who/How/What、§3 Policy 8/9、§4 原 Scenario 4 留档、§5 差异表、§6 新增失败原因 6、§7 软约束 2/强 4）；本批范围收窄＝受托面（delegated）+ CLI 零输入 + agent 收尾协议，Web 面/PRD §29/§4.2 零改动。依据：docs/ops/pm-review-2026-10-27.md（零观察到确认需求；序倒置——G3 基线周先行，M1 以 G3/AC14 跑完为准）。
 - 2026-10-27 v2.1 修订（spec 取证折入，与 spec 2026-10-27-delegated-confirm-design.md 对齐）：D1——set_expectations 不写事件（operations.py:115 取证），受托标记无载体，从受托面移出（Q2/What 2/Domain Events/Commands/强 2；属审计模型结构性推论，非范围扩大）；展示面措辞收窄——「板面显『代执行（依据：…）』」明确为既有通用渲染透传（view detail 事件行 `by delegated:cli` + export/REST JSON payload.delegated），完整措辞渲染随 G3 后 Web 待决页统一（Q3/Who 3/Scenario 1 Then/差异表/失败原因 1、2）。
-- 2026-10-27 v2.2 修订（对抗审查第 1 轮发现折入，与 spec v2 对齐）：配对规则收窄（§3 配对规则 + 强 3 预防）——正向系统级保证 + 反向限定 6 op 独占 kind，MCP add_record 自由 payload 登记例外，审计主键＝actor_surface=delegated；计数修正——How 2 / What 3/4 的「7 命令/7 端点」-> 6/6（set_expectations 结构性缺席已列，原计数误含）；REST body 形态钉死——Q3 / What 4 / 例 5：approve/renew 顶层 body {kind,basis}，其余端点嵌套可选字段；零输入候选列表加状态（Policy 6 / 边缘场景 2 / 例 4：短 id + 状态 + 标题，BLOCKED 候选可区分）。
+- 2026-10-27 v2.2 修订（对抗审查第 1 轮发现折入，与 spec v2 对齐）：配对规则收窄（§3 配对规则 + §7 强 3 + Premortem 4 预防）——正向系统级保证 + 反向限定 6 op 独占 kind，MCP add_record 自由 payload 登记例外，审计主键＝actor_surface=delegated；计数修正——How 2 / What 3/4 的「7 命令/7 端点」-> 6/6（set_expectations 结构性缺席已列，原计数误含）；REST body 形态钉死——Q3 / What 4 / 例 5：approve/renew 顶层 body {kind,basis}，其余端点嵌套可选字段；零输入候选列表加状态（Policy 6 / 边缘场景 2 / 例 4：短 id + 状态 + 标题，BLOCKED 候选可区分）。
+- 2026-10-27 v2.2 续（第 2 轮续审残留闭合）：§7 强 3 命题收窄至 6 个人面操作写出的事件（正向系统级 + add_record 例外与审计主键引 §3），与 §3 配对规则同口径（第 1 轮 R3 残留项；上条 v2.2 所称「强 3 预防」实为 Premortem 4 预防行，归位更正）。

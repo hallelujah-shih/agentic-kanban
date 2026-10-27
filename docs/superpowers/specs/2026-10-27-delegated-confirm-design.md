@@ -80,8 +80,10 @@ def parse_delegation(raw: str | dict | None) -> dict | None:
   CLI handler 调 `parse_delegation(args.on_behalf)`，非法 -> stderr `invalid_record: <msg>`
   + `return 1`（与 `_invoke` 既有 except 同输出形态，**无 traceback**——对齐 k 用例
   「Traceback not in stderr」CLI 错误面契约）；REST 端点调
-  `parse_delegation(body.delegated.model_dump() if body.delegated else None)`，非法 ->
-  抛 BusinessError -> 既有映射 422。
+  REST 端点调 `parse_delegation(body.model_dump() if body else None)`（approve/renew
+  body 整体即 DelegatedIn）/ `parse_delegation(body.delegated.model_dump() if
+  body.delegated else None)`（release/note/abandon/reopen 嵌套字段，§4 两形态分写），
+  非法 -> 抛 BusinessError -> 既有映射 422。
 - **surface 值与 delegated 参数同一调用点同批落值**（`_invoke` / `_run` 收已 parse 的
   dict）——配对不变量的结构耦合点。
 - MCP 面：`server.py` 零改动，工具包装器不传 `delegated` -> 恒 None -> surface 恒 mcp。
@@ -200,7 +202,7 @@ class DelegatedIn(BaseModel):
 | CLI `release --all-stale`（无 --on-behalf） | 逐项释放，payload={reason:"stale",agent_name} | **逐字不变** |
 | REST 各端点：无 body / 既有 body | surface=cli，无 payload.delegated | **逐字不变**（可选字段默认 None） |
 | REST `POST /approve`、`POST /renew` 无 body | 200（现无 body 参数） | **逐字不变**（`X \| None = None` 先例） |
-| REST `POST /approve`、`POST /renew` 携任意非 conform 非空 body（如 `{"foo":1}`） | 200（body 被忽略） | **422**（body 参数化后 pydantic 校验）——已知行为变化，仓内无受害方（核毕）；n17b 钉 |
+| REST `POST /approve`、`POST /renew` 携任何 present 的非 conform body（`{"foo":1}` / 空对象 `{}`） | 200（body 被忽略） | **422**（body 参数化后 pydantic 校验）——已知行为变化，仓内无受害方（核毕）；n17b 钉 |
 | REST archive / delete 携 delegated 体 | 200（体被忽略） | 不变（仍忽略）：surface=cli、无 payload.delegated（n18） |
 | MCP 12 工具 | surface=mcp | **零改动**——12 工具本就不调 6 个人面写 op（server.py:205-218 工具清单：agent 面 op），结构性零触达 |
 | system 面（retry_limit / reconcile 事件） | actor_surface=system | 不受派生层影响（不经 cli/rest 路径） |
@@ -283,7 +285,7 @@ harness 事实（v1 审查 R1 实证修正）：`cli()`（ac_lib.py:51-56）走�
 | n15 | `POST /note` body `{content, delegated}` | note 事件 delegated |
 | n16 | `POST /reopen` body `{delegated}` | 200；state_change delegated |
 | n17 | `POST /approve` body `{"kind":"foo","basis":"x"}`（顶层形态，kind 越枚举） | 422 invalid_record；零写 |
-| n17b | `POST /approve` body `{"foo":1}`（非 conform 非空 body，R4） | 422；零写（兼容矩阵登记的行为变化锚） |
+| n17b | `POST /approve` body `{"foo":1}`（present 非 conform body，R4；`{}` 同路径不另立用例） | 422；零写（兼容矩阵登记的行为变化锚） |
 | n18 | `POST /archive` body `{"delegated":{...}}`（结构门禁） | 200 ARCHIVED；state_change 事件 surface=**cli**、payload **无** delegated |
 
 **D3 CLI 零输入**
@@ -372,3 +374,8 @@ e2e：无新增（Web 面零改动），既有 15/15 全回归。基线 624/624 
   - 事实表 #7 行号勘误：PRD invalid_record 实例清单在 :201（:199 是码枚举行）。
   - 主循环自查（审者未及）：n12/n17 body wrapper 与 §4 顶层 DelegatedIn 签名矛盾，
     统一为顶层 kind/basis。
+- 2026-10-27 v2.1（第 2 轮续审 APPROVE-WITH-FIXES 折入，N6/N7 注记级）：§2.2 REST
+  parse 表达式按 §4 两形态分写（approve/renew `body.model_dump()` vs 嵌套端点
+  `body.delegated.model_dump()`）；§5 矩阵行「非空 body」改「任何 present 的非
+  conform body（含空对象 {}）」，n17b 措辞同步（`{}` 同路径不另立用例）。BCD 侧
+  R3 残留（§7 强 3 裸 iff）于 BCD 续条闭合。
