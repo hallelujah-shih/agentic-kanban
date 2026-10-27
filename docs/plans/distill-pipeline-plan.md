@@ -42,7 +42,7 @@
 
 1. `ln -s /home/shih/test/AgenticKanban/.venv .worktree/distill-pipeline/.venv`
    （主仓 .venv 存在；.gitignore:6,19 覆盖，不进版本库）。
-2. **P0 环境修正（T0 实测发现，实测证据 t0-shadow-probe.log）**：.venv 内
+2. **P0 环境修正（T0 实测发现，实证在 ledger T0 节）**：.venv 内
    agent_kanban 是 editable 安装（`_editable_impl_agent_kanban.pth` 固定指向
    主仓 `/home/shih/test/AgenticKanban/src`）。run_ac 侧无碍（ac_lib 自设
    `env["PYTHONPATH"]=SRC`，SRC 按 ac_lib 自身位置解析＝worktree src）；但
@@ -94,8 +94,8 @@
   `awaiting_human={"reason","evidence","since","kind"}`（:747-752，无一句话）；
   事件 payload={"evidence"}（:755）。
 - operations.py:798-823 `mark_blocked`：reason 只落 awaiting_human（:817-820），
-  事件链无痕；transition 调用（:810-814）不传任何 payload。
-- operations.py `add_record`（~:660-700）：title 签名必填但无空串校验（`""` 可写）。
+  事件链无痕；transition 调用（:813-816）不传任何 payload。
+- operations.py `add_record`（:668-700）：title 签名必填但无空串校验（`""` 可写）。
 - state_machine.py:34-74 `transition`：无 payload 参数；:74 写 `payload={"from": from_state, "to": to_state}`。
 - mcp/server.py:51-133：12 工具包装器，全部无 docstring；build_server :136-154
   `MCPServer(name=..., version=...)` 无 instructions。SDK 已实测支持：
@@ -164,6 +164,10 @@
      severity=="attention" 且 payload.summary_line 在场。
    - `l_record_title`：add_record(kind=note, title="") -> invalid_record；
      title="   " -> invalid_record；正常 title 成功。
+   - **无半态断言（BCD 边缘 2 Then，审 r1 P2-1）**：上述三个用例的每个
+     错误路径分支都加事件链不变断言——写前 `SELECT COUNT(*) FROM events WHERE
+     requirement_id=?` 与写后相等（且需求行 awaiting_human/state 未变）；
+     防「先写事件再抛错」的实现使错误码绿而留半态。
    - `l_blocked_reason_chain`：claim -> mark_blocked(reason="等 user 裁决 X") ->
      DB 直查 state_change(CLAIMED->BLOCKED) payload 含 reason=="等 user 裁决 X"；
      CLI approve -> awaiting_human 清除；事件链 reason 仍在（审计可回溯）。
@@ -244,8 +248,10 @@
    - `detail()` 加 `event_limit: int | None = None`。选取口径（写进 docstring）：
      全链 all_events（现 :463-465，reconstruct_states 永远用全链 :466 不动）->
      as_of 过滤（:469-471 现口径）-> 若 event_limit 非空：取**最新 N**
-     （all_events 已 seq 升序，`filtered[-event_limit:]`）-> 再套 kinds/severities
-     过滤（先 limit 后 filter，结果可 < N，口径钉死）-> 输出保持 seq 升序。
+     （all_events 已 seq 升序，`filtered[-event_limit:]`；**加守卫
+     `if event_limit and event_limit > 0`**——`[-0:]` 切片陷阱，审 r1 疑点 4）
+     -> 再套 kinds/severities 过滤（先 limit 后 filter，结果可 < N，口径钉死）
+     -> 输出保持 seq 升序。
    - 事件行（:506-514）加 `"audience": event_audience(e.kind)`。
 2. **operations.py**：
    - `get_task_detail`（:928-939）改委托 view.detail：函数内惰性
@@ -259,10 +265,15 @@
    - `l_audience`：12 kind 逐一断言（5 簿记/7 人面，与 BCD §3 kind 集一致）；
      未知 kind "future_x" -> "human"。
    - `l_latest_first`：直 SQL 种子 250 条事件（bench.py 种子模式：seq 同步
-     seq_counter、datetime 经绑定参数、payload 形状对齐）。
-     get_task_detail -> 恰好 200 条、seq 区间 [51,250]（最新 200，含最新）、
-     输出 seq 升序；export(fmt=json) -> 250 条全量。负判别：seq 51 之前的事件
-     不在 get_task_detail 结果（非「随机丢」）。
+     seq_counter、datetime 经绑定参数、payload 形状对齐）。**种子组成钉死
+     （审 r1 P2-2，防判别力空真）**：250 条全 kind=note（人面）；severity 按
+     seq 奇偶交替（偶=info、奇=attention）；边界事件固定 title：seq 50="e50"
+     （info）、seq 51="e51"（attention）、seq 250="e250"（info）。
+     断言：get_task_detail -> 恰好 200 条、seq 区间 [51,250]（含 e51/e250、
+     不含 e50）、输出 seq 升序；kinds=["note"] 过滤后仍 200（先 limit 后
+     filter 口径）；**低 severity 负判别**：seq 52/54（info 人面事件）在结果
+     内（读侧不按 severity 过滤，Premortem 4 反向判别非空真）；
+     export(fmt=json) -> 250 条全量。
    - `l_export_stable`（回归 oracle，红绿性质不同，见下）：fixture DB（直 SQL：
      1 需求 + 1 claim(ended, release_reason) + 1 subtask + 1 milestone + 事件集含
      旧形状 progress_note(title="progress", payload.note)、decision(结构化 payload)、
@@ -291,8 +302,10 @@
 
 - 快反：`TMPDIR=... .venv/bin/python tests/run_ac.py --only l_latest_first,l_audience,l_export_stable`
 - 全量：`TMPDIR=... .venv/bin/python -u tests/run_ac.py`（521 + N1 + N2）
-- 生产 DB 只读冒烟（可选，主循环做）：新代码对 `/home/shih/.agent-kanban/kanban.db`
-  跑 `export_data` 单需求导出成功（只读，不改生产）。
+- 生产 DB 只读冒烟（**P5 必做**，主循环做；审 r1 P2-5：强不变量 5「现成调用
+  可读」在真实存量数据上的承接，E10 只有合成旧形状夹具）：新代码对
+  `/home/shih/.agent-kanban/kanban.db` 跑 `export_data` 单需求导出成功（只读，
+  不改生产）；若确不跑，ledger 记跳过理由 + 补偿承接说明。
 
 ### 任务级不修
 
@@ -324,7 +337,8 @@
 
 - web.py：_THEME :13-53（保留）；board_shell :91-299（卡片 wait div :186-187 显
   awaiting_human.reason）；detail_shell :302-524（平铺同级盒子零层级；事件流
-  renderEvents :473-490 只渲 title 行 + kind badge；决策备选死链 :439；
+  renderEvents :473-490 只渲 title 行 + kind badge；决策备选「（N 个备选）」
+  不可交互 span :439（拒绝理由不可见）；
   wait-banner :391-396 显 reason + approve 静态文案）。
 - e2e：E3c :148-168（断言事件行=4、badge 排序、kind 过滤 2/1——绑旧壳 DOM）、
   E5 :246-256（wait-banner 文案）。
@@ -351,8 +365,11 @@
      approve 静态文案保留。needs_attention 面板保留现结构（层0 内）。
    - 层1 蒸馏：验收对照表（既有）+ 决策/风险/偏离区；决策行改 `<details>`：
      summary＝title，展开＝choice/rationale/alternatives（逐条 option +
-     rejected_reason 可读列表）——修 :439 死链（现点展开是无效链接）。
+     rejected_reason 可读列表）——修 :439 不可交互占位（现只显示「（N 个备选）」
+     计数，拒绝理由不可见）。
    - 层2 次要：子任务/里程碑区下移（内容不变）。
+   - **保留 load() fetch 失败分支的深链 404 友好文案**（web.md 冒烟项 4 口径
+     不变，审 r1 P2-3）。
    - 事件流：按 web.md 新契约渲染（audience 分两组；JS 无分类表——只信服务端
      audience 字段）；title 为空/纯空白 -> 提纲位显 kind 标签（旧数据容忍）；
      旧 title="progress" 原样显示（不做特殊识别）。
@@ -376,6 +393,10 @@
      progress_note title="progress" payload.note。断言：空 title 行提纲位显 kind
      标签；旧 "progress" 行原样显 "progress"；页面不崩（深潜 200 + 其余断言绿）。
    - E11 新增（簿记折叠）：s3 簿记组标题计数=3、默认收起（closed）、展开后 3 行。
+   - **E1/E7 期望值更新（审 r1 P1-1，陷阱库 3 预先声明：s9 = CLAIMED 非终态
+     在板，seed 扩容＝夹具变更，期望值同步更新）**：E1 在板总数 6 -> 7；
+     E7 /board?status=CLAIMED id 集合 [SEEDS.s6] -> [SEEDS.s6, SEEDS.s9]
+     （已 sort，序无关）。E2 为集合自适应断言，不受影响。
    - 基线 12 -> 15。
 5. **tests/e2e/seed.py**：新增 s9（REST create + claim + update_progress(headline=
    XSS 串) + 直 SQL 两条旧形状事件）；seeds.json 增 s9 id + S9 常量导出给 spec；
@@ -383,9 +404,16 @@
 
 ### 红绿
 
-- 红（`t3-red.log`）：E3c 改写版（现壳无簿记组）、E9/E10/E11（新断言对旧壳全红）。
+- 红（`t3-red.log`），红因两类显性区分：
+  - **壳变更红**：E3c 改写版（现壳无簿记组）、E9/E10/E11（新断言对旧壳全红）。
+  - **夹具变更红（seed 扩容，陷阱库 3 声明）**：E1（在板总数 6->7）、
+    E7（CLAIMED 集合 +s9）——旧壳上 s9 在场即红，红因是期望值未更新，
+    非壳缺陷。
   红步先确认 s9 seed 在**旧壳**上不崩（壳容忍未知事件行——现状 title-only 渲染
   天然容忍，若红步出现 s9 页面白屏，是 seed 问题先修 seed）。
+  红步验收口径（15 条 spec 全集）：红集合 == {E1, E7, E3c, E9, E10, E11}
+  （6 条）；绿集合 == {E2, E3a, E3b, E4a, E4b, E4c, E5, E6, E8}（9 条）——
+  E5 按旧断言在红步应绿，若绿步需微调选择器则 E5 归入壳变更面。
 - 绿：e2e 15/15 + 全量套件（T2 后基线）不回退 + web_shell AC 用例绿。
 
 ### 验证命令
@@ -453,7 +481,10 @@
      （kind -> human/bookkeeping，未登记 kind 归人面）。
 3. **AGENTS.md**（worktree 内 tracked 副本）：基线数字改当轮实测值——
    全量套件 `521/521` -> 实测（521+N1+N2）；e2e `12/12` -> `15/15`；
-   最高 tier 组成行同步两个数字。
+   最高 tier 组成行同步两个数字。**证据锚（审 r1 P2-4，防自证）**：全量数字
+   以 P5 最高 tier（全量+e2e+docker 双轨）全绿跑日志为准，日志路径记 ledger，
+   P6 流程审计逐字对账日志与 AGENTS.md 数字（e2e 15/15 由 T3 固定，
+   仅全量数字需锚）。
 4. 交叉引用核验：PRD 新 BCD 引用行路径存在；web.md（T3 已改）与 PRD §5.3
    表述一致；SKILL.md 与 MCP description 措辞一致（逐句 diff 自查）。
 
