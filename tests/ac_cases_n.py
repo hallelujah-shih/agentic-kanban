@@ -409,3 +409,153 @@ def n27():
        len(evs) == 1 and evs[0]["actor_surface"] == "delegated"
        and evs[0]["payload"].get("delegated") == {"kind": "action", "basis": "export 面"},
        str(evs))
+
+
+def n12():
+    db = new_db()
+    rid = seed_req(db, "rest approve")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.close()
+    rest = REST(db).start()
+    try:
+        code, body = rest.req("POST", f"/requirements/{rid}/approve",
+                              body={"kind": "statement", "basis": "user 会话原话"})
+        ok("n12: 顶层 body -> 200", code == 200, f"{code} {body}")
+    finally:
+        rest.stop()
+    row = query(db, "SELECT actor_surface, actor_conn, payload FROM events WHERE kind='approval' AND requirement_id=?", (rid,))[0]
+    ok("n12: delegated + rest: 前缀 + payload 落值",
+       row["actor_surface"] == "delegated" and str(row["actor_conn"]).startswith("rest:")
+       and json.loads(row["payload"]).get("delegated") == {"kind": "statement", "basis": "user 会话原话"},
+       str(dict(row)))
+
+
+def n13():
+    db = new_db()
+    rid = seed_req(db, "rest regress")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.close()
+    rest = REST(db).start()
+    try:
+        code, body = rest.req("POST", f"/requirements/{rid}/approve")
+        ok("n13: 无 body -> 200（回归）", code == 200, f"{code} {body}")
+    finally:
+        rest.stop()
+    row = query(db, "SELECT actor_surface, payload FROM events WHERE kind='approval' AND requirement_id=?", (rid,))[0]
+    ok("n13: surface=cli + payload 无 delegated",
+       row["actor_surface"] == "cli" and "delegated" not in json.loads(row["payload"]), str(dict(row)))
+
+
+def n14():
+    db = new_db()
+    rid = seed_req(db, "rest release")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.close()
+    rest = REST(db).start()
+    try:
+        code, body = rest.req("POST", f"/requirements/{rid}/release",
+                              body={"reason": "方向不对",
+                                    "delegated": {"kind": "action", "basis": "user 自行关闭 PR"}})
+        ok("n14: 嵌套 delegated -> 200 OPEN", code == 200 and body.get("state") == "OPEN", f"{code} {body}")
+    finally:
+        rest.stop()
+    row = query(db, "SELECT actor_surface, payload FROM events WHERE kind='release' AND requirement_id=?", (rid,))[0]
+    ok("n14: release 事件 delegated",
+       row["actor_surface"] == "delegated"
+       and json.loads(row["payload"]).get("delegated") == {"kind": "action", "basis": "user 自行关闭 PR"},
+       str(dict(row)))
+
+
+def n15():
+    db = new_db()
+    rid = seed_req(db, "rest note")
+    rest = REST(db).start()
+    try:
+        code, body = rest.req("POST", f"/requirements/{rid}/note",
+                              body={"content": "REST 更正",
+                                    "delegated": {"kind": "statement", "basis": "user 指正"}})
+        ok("n15: 嵌套 delegated -> 200", code == 200, f"{code} {body}")
+    finally:
+        rest.stop()
+    row = query(db, "SELECT actor_surface, payload FROM events WHERE kind='note' AND requirement_id=?", (rid,))[0]
+    ok("n15: note 事件 delegated + content 共存",
+       row["actor_surface"] == "delegated" and json.loads(row["payload"]) == {
+           "content": "REST 更正", "delegated": {"kind": "statement", "basis": "user 指正"}}, str(dict(row)))
+
+
+def n16():
+    db = new_db()
+    rid = seed_req(db, "rest reopen")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "s"}, "summary_line": "交接"})
+    m.close()
+    cli_ok(db, "approve", "--requirement-id", rid)  # -> DONE
+    rest = REST(db).start()
+    try:
+        code, body = rest.req("POST", f"/requirements/{rid}/reopen",
+                              body={"delegated": {"kind": "statement", "basis": "user 要重做"}})
+        ok("n16: reopen 嵌套 delegated -> 200 REOPEN",
+           code == 200 and body.get("state") == "REOPEN", f"{code} {body}")
+    finally:
+        rest.stop()
+    sc = [r for r in query(db, "SELECT actor_surface, payload FROM events WHERE kind='state_change' AND requirement_id=?", (rid,))
+          if json.loads(r["payload"]).get("to") == "REOPEN"]
+    ok("n16: state_change->REOPEN delegated",
+       len(sc) == 1 and sc[0]["actor_surface"] == "delegated"
+       and json.loads(sc[0]["payload"]).get("delegated") == {"kind": "statement", "basis": "user 要重做"},
+       str([dict(x) for x in sc]))
+
+
+def n17():
+    db = new_db()
+    rid = seed_req(db, "rest invalid kind")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.close()
+    before = query(db, "SELECT COUNT(*) AS n FROM events WHERE requirement_id=?", (rid,))[0]["n"]
+    rest = REST(db).start()
+    try:
+        code, body = rest.req("POST", f"/requirements/{rid}/approve",
+                              body={"kind": "foo", "basis": "x"})
+        ok("n17: kind 越枚举 -> 422 invalid_record",
+           code == 422 and (isinstance(body, dict) and body.get("code") == "invalid_record"), f"{code} {body}")
+    finally:
+        rest.stop()
+    after = query(db, "SELECT COUNT(*) AS n FROM events WHERE requirement_id=?", (rid,))[0]["n"]
+    ok("n17: 零写", before == after, f"{before} -> {after}")
+
+
+def n17b():
+    db = new_db()
+    rid = seed_req(db, "rest nonconform body")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.close()
+    before = query(db, "SELECT COUNT(*) AS n FROM events WHERE requirement_id=?", (rid,))[0]["n"]
+    rest = REST(db).start()
+    try:
+        code, body = rest.req("POST", f"/requirements/{rid}/approve", body={"foo": 1})
+        ok("n17b: 非 conform body -> 422（登记行为变化，R4）", code == 422, f"{code} {body}")
+    finally:
+        rest.stop()
+    after = query(db, "SELECT COUNT(*) AS n FROM events WHERE requirement_id=?", (rid,))[0]["n"]
+    ok("n17b: 零写", before == after, f"{before} -> {after}")
+
+
+def n18():
+    db = new_db()
+    rid = seed_req(db, "rest structural gate")
+    rest = REST(db).start()
+    try:
+        code, body = rest.req("POST", f"/requirements/{rid}/archive",
+                              body={"delegated": {"kind": "statement", "basis": "x"}})
+        ok("n18: archive 携 delegated 体 -> 200（体被忽略）", code == 200, f"{code} {body}")
+    finally:
+        rest.stop()
+    row = query(db, "SELECT actor_surface, payload FROM events WHERE kind='state_change' AND requirement_id=?", (rid,))[0]
+    ok("n18: state_change surface=cli + payload 无 delegated（结构门禁）",
+       row["actor_surface"] == "cli" and "delegated" not in json.loads(row["payload"]), str(dict(row)))
