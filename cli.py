@@ -71,6 +71,20 @@ def _cmd_approve(args: argparse.Namespace) -> int:
     except BusinessError as exc:
         print(f"{exc.code}: {exc.message}", file=sys.stderr)
         return 1
+    if args.requirement_id is None:
+        cands = _zero_input_candidates()
+        if cands is None:
+            return 1
+        if not cands:
+            print("无待决项")
+            return 0
+        if len(cands) == 1:
+            args.requirement_id = cands[0]["requirement_id"]
+        else:
+            rid = _pick_zero_input(cands)
+            if rid is None:
+                return 1
+            args.requirement_id = rid
     return _invoke("approve", requirement_id=args.requirement_id, delegated=delegated)
 
 
@@ -82,6 +96,23 @@ def _cmd_release(args: argparse.Namespace) -> int:
         return 1
     if args.all_stale:
         return _invoke("release_all_stale", delegated=delegated)
+    if args.requirement_id is None:
+        if not args.reason or not str(args.reason).strip():
+            print("invalid_record: release requires a reason", file=sys.stderr)
+            return 1
+        cands = _zero_input_candidates()
+        if cands is None:
+            return 1
+        if not cands:
+            print("无待决项")
+            return 0
+        if len(cands) == 1:
+            args.requirement_id = cands[0]["requirement_id"]
+        else:
+            rid = _pick_zero_input(cands)
+            if rid is None:
+                return 1
+            args.requirement_id = rid
     return _invoke("release", requirement_id=args.requirement_id, reason=args.reason,
                    delegated=delegated)
 
@@ -291,6 +322,51 @@ def _cmd_reconcile(args: argparse.Namespace) -> int:
     return 0
 
 
+def _zero_input_candidates() -> list[dict] | None:
+    """零输入候选读（spec §3.2）：list_awaiting（awaiting_human 标记，板唯一等待面；
+    operations.py:936 既有读路径，is_write=False）。失败已按 _invoke 形态输出 -> None。"""
+    surface, conn = cli_actor()
+    try:
+        result = asyncio.run(
+            run_op(
+                get_session_factory(), ops.list_awaiting, is_write=False,
+                actor_surface=surface, actor_conn=conn,
+            )
+        )
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return None
+    return result.get("awaiting") or []
+
+
+def _print_awaiting_list(cands: list[dict], *, file) -> None:
+    print("多条待决项，请用 --requirement-id 指定目标:", file=file)
+    for i, c in enumerate(cands, 1):
+        print(f"  {i}. {c['requirement_id'][:8]} [{c['state']}] {c['title']}", file=file)
+
+
+def _pick_zero_input(cands: list[dict]) -> str | None:
+    """多条候选分支（宁拒不猜，BCD 强 5）：非 tty -> stderr 列表拒；tty -> 编号选择
+    （非数字/越界/EOF -> 拒）。拒绝返回 None。行含 state（BLOCKED 被 approve 是解阻
+    而非 DONE，列表必须可区分——R6）。"""
+    if not sys.stdin.isatty():
+        _print_awaiting_list(cands, file=sys.stderr)
+        return None
+    _print_awaiting_list(cands, file=sys.stdout)
+    sys.stdout.write("输入序号: ")
+    sys.stdout.flush()
+    line = sys.stdin.readline()
+    try:
+        idx = int(line.strip())
+    except ValueError:
+        print("无效选择，未写入", file=sys.stderr)
+        return None
+    if not (1 <= idx <= len(cands)):
+        print("无效选择，未写入", file=sys.stderr)
+        return None
+    return cands[idx - 1]["requirement_id"]
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-kanban",
@@ -315,7 +391,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.set_defaults(handler=_cmd_set_expectations)
 
     p = sub.add_parser("approve", help="按当前状态确认（CLAIMED->DONE / BLOCKED->CLAIMED）")
-    p.add_argument("--requirement-id", required=True)
+    p.add_argument("--requirement-id")
     p.add_argument("--on-behalf", metavar='"kind:basis"',
                    help="受托代执行（kind: statement|action，basis 一行指向依据）")
     p.set_defaults(handler=_cmd_approve)

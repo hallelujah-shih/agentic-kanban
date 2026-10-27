@@ -296,3 +296,116 @@ def n28():
     ok("n28: set_expectations --on-behalf -> exit2（D1 结构性缺席）",
        res2.returncode == 2 and "unrecognized arguments" in res2.stderr,
        f"rc={res2.returncode} stderr={res2.stderr[:200]}")
+
+
+def _run_cli_nul(db: Path, args: list[str]) -> subprocess.CompletedProcess:
+    """CLI 子进程钉 stdin=DEVNULL（零输入非 tty 确定性，R1；ac_cases_k._run_cli 同模式）。"""
+    return subprocess.run(
+        [str(VENV_PY), str(CLI), *args],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        env=env_for(db), cwd=str(REPO_ROOT), timeout=TIMEOUT,
+    )
+
+
+def n19():
+    db = new_db()
+    res = _run_cli_nul(db, ["approve"])
+    ok("n19: 0 待决 -> exit0 + 无待决项 + 零写",
+       res.returncode == 0 and "无待决项" in res.stdout
+       and query(db, "SELECT COUNT(*) AS n FROM events")[0]["n"] == 0,
+       f"rc={res.returncode} stdout={res.stdout[:100]}")
+
+
+def n20():
+    db = new_db()
+    [rid] = _mk_awaiting(db, 1)
+    res = _run_cli_nul(db, ["approve"])
+    ok("n20: 恰1 -> 直执 DONE", res.returncode == 0
+       and json.loads(res.stdout).get("state") == "DONE",
+       f"rc={res.returncode} stdout={res.stdout[:200]}")
+    row = query(db, "SELECT actor_surface FROM events WHERE kind='approval'")[0]
+    ok("n20: 无 on-behalf -> surface=cli（等价显式 id）", row["actor_surface"] == "cli", str(dict(row)))
+
+
+def n21():
+    db = new_db()
+    m = MCP(db).start()
+    r1 = seed_req(db, "z21-blocked")
+    m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})
+    m.call_ok("mark_blocked", {"requirement_id": r1, "reason": "等人裁决"})
+    m.close()
+    m2 = MCP(db).start()
+    r2 = seed_req(db, "z21-claimed")
+    m2.call_ok("claim_task", {"requirement_id": r2, "agent_name": "b"})
+    m2.call_ok("request_review",
+               {"requirement_id": r2, "evidence": {"test_summary": "s"}, "summary_line": "交接"})
+    m2.close()
+    before = query(db, "SELECT COUNT(*) AS n FROM events")[0]["n"]
+    res = _run_cli_nul(db, ["approve"])
+    after = query(db, "SELECT COUNT(*) AS n FROM events")[0]["n"]
+    ok("n21: 多条非tty -> exit1 拒绝零写", res.returncode == 1 and before == after,
+       f"rc={res.returncode} stderr={res.stderr[:300]}")
+    ok("n21: 列表含两候选 + [STATE] + --requirement-id 提示 + 无Traceback",
+       r1[:8] in res.stderr and "[BLOCKED]" in res.stderr
+       and r2[:8] in res.stderr and "[CLAIMED]" in res.stderr
+       and "--requirement-id" in res.stderr and "Traceback" not in res.stderr,
+       res.stderr[:400])
+
+
+def n22():
+    db = new_db()
+    _mk_awaiting(db, 1)
+    before = query(db, "SELECT COUNT(*) AS n FROM events")[0]["n"]
+    res = _run_cli_nul(db, ["release"])
+    after = query(db, "SELECT COUNT(*) AS n FROM events")[0]["n"]
+    ok("n22: 零输入 release 无 --reason -> invalid_record 零写（DB 读取前 fail-fast）",
+       res.returncode == 1 and "release requires a reason" in res.stderr and before == after,
+       f"rc={res.returncode} stderr={res.stderr[:200]}")
+
+
+def n23():
+    db = new_db()
+    [rid] = _mk_awaiting(db, 1)
+    res = _run_cli_nul(db, ["release", "--reason", "方向不对"])
+    ok("n23: 零输入 release --reason -> OPEN",
+       res.returncode == 0 and json.loads(res.stdout).get("state") == "OPEN",
+       f"rc={res.returncode} stdout={res.stdout[:200]}")
+    row = query(db, "SELECT release_reason FROM claims WHERE requirement_id=?", (rid,))[0]
+    ok("n23: release_reason 落值", row["release_reason"] == "方向不对", str(dict(row)))
+
+
+def n24():
+    """零输入 + 受托组合（agent 主流程）。"""
+    db = new_db()
+    _mk_awaiting(db, 1)
+    res = _run_cli_nul(db, ["approve", "--on-behalf", "statement:user 表态收尾"])
+    ok("n24: 零输入+受托 -> DONE", res.returncode == 0
+       and json.loads(res.stdout).get("state") == "DONE",
+       f"rc={res.returncode} stdout={res.stdout[:200]}")
+    row = query(db, "SELECT actor_surface, payload FROM events WHERE kind='approval'")[0]
+    ok("n24: approval 事件 delegated+basis",
+       row["actor_surface"] == "delegated"
+       and json.loads(row["payload"]).get("delegated") == {"kind": "statement", "basis": "user 表态收尾"},
+       str(dict(row)))
+
+
+def n26():
+    db = new_db()
+    [rid] = _mk_awaiting(db, 1)
+    _run_cli_nul(db, ["approve", "--on-behalf", "statement:展示面"])
+    res = cli(db, "view", "detail", "--requirement-id", rid)  # 文本渲染，非 JSON
+    ok("n26: view detail 事件行 by delegated:cli（既有通用渲染透传，零改动）",
+       res.returncode == 0 and "by delegated:cli" in res.stdout, res.stdout[-500:])
+
+
+def n27():
+    db = new_db()
+    [rid] = _mk_awaiting(db, 1)
+    _run_cli_nul(db, ["approve", "--on-behalf", "action:export 面"])
+    res = cli_ok(db, "export", "--format", "json")
+    reqs = [q for q in res["requirements"] if q["requirement_id"] == rid]
+    evs = [e for e in reqs[0]["events"] if e["kind"] == "approval"]
+    ok("n27: export json approval 行 actor_surface=delegated + payload.delegated",
+       len(evs) == 1 and evs[0]["actor_surface"] == "delegated"
+       and evs[0]["payload"].get("delegated") == {"kind": "action", "basis": "export 面"},
+       str(evs))
