@@ -52,6 +52,14 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   + docs/adr/0000-known-gaps.md；canary 用例＝e2e R2 历史坏壳（f764794^ web.py，
   ci-verification.md「红绿正典」）。
 
+## 批次纪律（2026-10-27 PM 评审裁决，依据 docs/ops/pm-review-2026-10-27.md）
+
+- 定位口径：个人 agent-ops 基础设施（非市场产品）；不为第二用户建东西
+  （多用户/协作/外部对接永不进范围）。
+- 每批判据：它让三问（PRD §1 C1）更可答（outcome），还是只减 builder 摩擦？
+  后者仅在卡住正在运行的循环时合格。
+- M1 完成以 G3 试用/AC14 跑完为准（known-gaps G3）；试用裁决前不排纯人体工学批次。
+
 ## 主循环纪律
 
 - 编辑文件前用 repr 核目标区精确空白（read 行号前缀不等于文件缩进，猜缩进会致

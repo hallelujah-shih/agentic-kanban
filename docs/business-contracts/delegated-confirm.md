@@ -2,8 +2,8 @@
 
 **作者**: 主循环（delegated-confirm 批）
 **日期**: 2026-10-27
-**关联**: docs/PRD.md §29（职责边界）§4.2（Web 窗口）§4.3（错误码）§5.1（actor 模型）§5.2（自报声明）；ADR 0002（服务端派生 actor 先例）；skills/agent-kanban/SKILL.md（agent 收尾协议落点）；docs/adr/0000-known-gaps.md（G11：cli.py 涉改，合入后 `uv sync --reinstall-package agent-kanban`）；docs/business-contracts/a1a2-mcp-surface.md（A1 id 解析语义，本批复用）
-**状态**: v1 设计草稿已全批（2026-10-27 user，四决策点 + 整合设计均回「可以」）；待对抗审查
+**关联**: docs/PRD.md §29（职责边界）§4.2（Web 窗口）§4.3（错误码）§5.1（actor 模型）§5.2（自报声明）；ADR 0002（服务端派生 actor 先例）；skills/agent-kanban/SKILL.md（agent 收尾协议落点）；docs/adr/0000-known-gaps.md（G11：cli.py 涉改，合入后 `uv sync --reinstall-package agent-kanban`；G3：Web 待决页推迟的判据来源）；docs/business-contracts/a1a2-mcp-surface.md（A1 id 解析语义，本批复用）；docs/ops/pm-review-2026-10-27.md（v2 拆分裁决）
+**状态**: v2（2026-10-27 PM 评审拆分：Web 待决页移出本批、推迟至 G3 后，user 裁决「按照你的建议实施」）；待对抗审查
 **板上任务**: bcd3a69074b641dba70a08afbce1ac05（CLAIMED，main-loop）
 
 ---
@@ -16,7 +16,7 @@
 >
 > 「用户告诉你做了，或者你自己检测做了，就应该更新状态」（收尾协议）
 
-（诚实标注：第一句为会话记录引文片段，完整上下文＝「人确认闭环」批的立项讨论；收尾协议为 user 2026-10-27 会话指示，当批即生效——本会话板上三条 DONE（396f5837/5bd38af7/c53a151a）即 agent 依该协议代执行（先 note 留依据、再 approve），属临时权宜流程。四决策点 + 整合设计为主循环据两段原话起草的 v1 设计，user 全批。）
+（诚实标注：第一句为会话记录引文片段，完整上下文＝「人确认闭环」批的立项讨论；收尾协议为 user 2026-10-27 会话指示，当批即生效——本会话板上三条 DONE（396f5837/5bd38af7/c53a151a）即 agent 依该协议代执行（先 note 留依据、再 approve），属临时权宜流程。四决策点 + 整合设计为主循环据两段原话起草的 v1 设计，user 全批；v2 经 PM 评审拆分（见修订记录）。）
 
 ### 可能的解读（互斥，业务目标分歧）
 
@@ -24,21 +24,21 @@
 |---|---|---|---|
 | C-a. agent 代执行收尾协议产品化（一等受托面） | 现行权宜流程（前置 note + approve）产品化：受托标记与依据落在事件自身，板面可辨「人做的」与「agent 代做的」 | 收尾协议原话；四决策点 Q1-Q3 全部围绕确认源/委托范围/审计 | 原话 + 裁决原文 |
 | C-b. 人面收尾输入人体工学 | `cli.py approve` 不抄 32 位 id 即可用 | 第一句原话 | 原话 |
-| C-c. Web 确认入口 | 待决任务在 Web 一键确认（Web 现无决策操作入口） | 无直接原话（整合设计内派生面，随全批成立） | 裁决原文（设计级） |
+| C-c. Web 确认入口 | 待决任务在 Web 一键确认（Web 现无决策操作入口） | 无直接原话（整合设计内派生面）；**2026-10-27 PM 评审裁决：零观察到的确认需求，推迟至 G3 后**（pm-review 裁决 2） | 裁决原文（设计级，已裁撤出本批） |
 | C-d. 服务端自动检测人的动作 | 系统自接 GitHub webhook 检测 PR merge 等事件、自动推进状态 | 无 | 无（明确非目标，YAGNI） |
 
-**互斥对**：C-d vs C-a（「action」确认的来源机制：服务端自动检测 vs agent 声明 + 人核——d 是外部系统对接架构，a 是协议 + 审计架构，实现面完全不同）；C-b vs C-c（兜底面：仅 CLI vs CLI + Web，c 为 b 的超集）。
+**互斥对**：C-d vs C-a（「action」确认的来源机制：服务端自动检测 vs agent 声明 + 人核——d 是外部系统对接架构，a 是协议 + 审计架构，实现面完全不同）；C-b vs C-c（兜底面：仅 CLI vs CLI + Web，c 为 b 的超集；v2 裁撤 c 后本批取 b）。
 
 ### 我的解读
 
-**C-a + C-b + C-c**（整合设计，user 全批）；C-d 显式非目标。理由：(1) 收尾协议原话的「告诉你 / 检测」对应确认源 statement / action 两种 kind——「检测」指 agent 检测人的工作面动作（远端 PR merge），非服务端检测；(2) 零输入原话只点名 CLI；Web 待决页是同一痛点（人不能在 Web 确认）的派生面，被全批覆盖；(3) C-d 需外部系统对接（GitHub webhook），依赖面与信任边界扩出不符合本批档位（单用户、无外部服务）。
+**C-a + C-b**（v2 范围，user 裁决）。v1 曾含 C-c（Web 待决页），2026-10-27 PM 评审发现零观察到的需求（历史所有确认＝agent 代跑 CLI 或 user 跑 CLI，从未有人要求在浏览器点确认），裁决推迟至 G3 试用出「人实际在哪确认」数据后。C-d 显式非目标。理由：(1) 收尾协议原话的「告诉你 / 检测」对应确认源 statement / action 两种 kind——「检测」指 agent 检测人的工作面动作（远端 PR merge），非服务端检测；(2) 零输入原话只点名 CLI；(3) C-d 需外部系统对接（GitHub webhook），依赖面与信任边界扩出不符合本批档位（单用户、无外部服务）。
 
-### 待澄清项（已裁决，2026-10-27 user「可以」）
+### 待澄清项（已裁决）
 
-1. **Q1 确认源（kind）**：`statement`（人的会话表态）+ `action`（人的工作面动作中 agent 结构性做不了的，如远端 PR merge；本地仓检测不算——本地仓 ff 折入是 agent 自己的动作，防自我认证）。
-2. **Q2 委托范围**：宽松——非破坏人面操作（approve/release/reopen/renew/note/abandon/set_expectations）皆可代执行，两种 kind 均收；delete/archive 等破坏性/非确认操作结构性无受托参数（不可能性即门禁）。
-3. **Q3 审计形态**：一等受托面——`actor_surface` 加 `delegated`（服务端派生：人面 + 有效受托参数才落此值，沿用 PRD §5.1/ADR 0002 服务端派生先例）；`payload.delegated={kind,basis}` 结构化（payload JSON 列既有，零 schema 变更）；CLI `--on-behalf "<kind>:<basis>"`；REST body 可选 delegated 字段；板面显「代执行（依据：…）」；MCP 12 工具面零改动（无受托参数，agent 自身动作恒 mcp）；错误码零新增（误用 -> invalid_record 新触发实例）。
-4. **Q4 兜底面**：CLI 零输入（approve/release 无 --requirement-id：恰 1 条待决直接执行、多条列号选、0 条提示）+ Web 待决页（PRD §29 定位显式重裁＝只读 + 生命周期 + 待决；复用既有 REST /approve /release 端点，零新端点零新信任边界；按钮＝人亲手，surface 为 cli（rest:）而非 delegated）。
+1. **Q1 确认源（kind）**（2026-10-27 user「可以」）：`statement`（人的会话表态）+ `action`（人的工作面动作中 agent 结构性做不了的，如远端 PR merge；本地仓检测不算——本地仓 ff 折入是 agent 自己的动作，防自我认证）。
+2. **Q2 委托范围**（2026-10-27 user「可以」）：宽松——非破坏人面操作（approve/release/reopen/renew/note/abandon/set_expectations）皆可代执行，两种 kind 均收；delete/archive 等破坏性/非确认操作结构性无受托参数（不可能性即门禁）。
+3. **Q3 审计形态**（2026-10-27 user「可以」）：一等受托面——`actor_surface` 加 `delegated`（服务端派生：人面 + 有效受托参数才落此值，沿用 PRD §5.1/ADR 0002 服务端派生先例）；`payload.delegated={kind,basis}` 结构化（payload JSON 列既有，零 schema 变更）；CLI `--on-behalf "<kind>:<basis>"`；REST body 可选 delegated 字段；板面显「代执行（依据：…）」；MCP 12 工具面零改动（无受托参数，agent 自身动作恒 mcp）；错误码零新增（误用 -> invalid_record 新触发实例）。
+4. **Q4 兜底面**（2026-10-27 user「可以」，v2 修订）：CLI 零输入（approve/release 无 --requirement-id：恰 1 条待决直接执行、多条列号选、0 条提示）。**Web 待决页 v1 原在 Q4 内，2026-10-27 PM 评审裁决移出本批**（零观察到需求；PRD §29 定位本批不重裁）——推迟至 G3 试用出数据后再定（known-gaps G3 / pm-review 裁决 2）。
 
 ---
 
@@ -46,21 +46,21 @@
 
 ### Why（业务目标）
 
-人确认闭环是看板唯一可信终态源（PRD §5.2：需求级 DONE＝人确认，唯一可信终态）。现状痛点三点：(1) agent 代执行收尾（权宜：前置 note 留依据 + approve）的受托标记与依据散落两事件，回溯需人工关联，且 surface=cli 与人亲手不可辨；(2) 人面收尾每次须抄 32 位 id（cli.py:280 required=True）；(3) Web 面无决策操作入口（PRD §29），确认被迫回 CLI。目标＝收尾动作在三面都是最低摩擦操作 + 代执行动作有一等审计。**不是**服务端事件检测（C-d），**不是** MCP 面变更，**不是**状态机/租约变更。
+人确认闭环是看板唯一可信终态源（PRD §5.2：需求级 DONE＝人确认，唯一可信终态）。现状痛点三点：(1) agent 代执行收尾（权宜：前置 note 留依据 + approve）的受托标记与依据散落两事件，回溯需人工关联，且 surface=cli 与人亲手不可辨；(2) 人面收尾每次须抄 32 位 id（cli.py:280 required=True）；(3) Web 面无决策操作入口（PRD §29），确认被迫回 CLI。目标＝痛点 (1)(2) 消除：收尾动作在人面是最低摩擦操作 + 代执行动作有一等审计。痛点 (3) 的修复面（Web 待决页）经 2026-10-27 PM 评审推迟至 G3 后（本批 Web 面零改动）。**不是**服务端事件检测（C-d），**不是** MCP 面变更，**不是**状态机/租约变更，**不是** Web 面变更。
 
 ### Who（受影响方）
 
-1. **人（CLI/Web 收尾面）**：`cli.py approve` / `cli.py release` 可零参；Web 待决任务详情页有 approve/release 按钮。
+1. **人（CLI 收尾面）**：`cli.py approve` / `cli.py release` 可零参。
 2. **agent（代执行收尾协议）**：SKILL.md 增收尾协议（pull 触发：会话内 list_awaiting；kind 判据；代执行流；不再要求前置 note——受托痕在事件自身）。
 3. **审计者（回溯/export 面）**：surface=delegated + basis 板面直读；export 事件行 `by delegated:cli` + payload.delegated。
-4. **存量调用方（契约稳定面）**：无受托参数路径逐字不变；MCP 面不变；错误码集不变。
+4. **存量调用方（契约稳定面）**：无受托参数路径逐字不变；MCP 面不变；错误码集不变；Web 面不变。
 
 ### How（影响路径）
 
 1. 受托面：人面（CLI 进程 / REST conn）+ 结构有效受托参数 -> actor_surface=delegated，且该命令写的事件带 payload.delegated（surface 与 payload 同一函数落值，结构耦合防失配）。
 2. CLI：7 命令加 `--on-behalf "<kind>:<basis>"`；approve/release 的 --requirement-id 改可选（零输入＝客户端编排：既有 list_awaiting 读 -> 解析 -> 携全 id 调既有写接口，服务端零新接口）。
-3. Web：详情页（既有壳）在 awaiting_human 态渲染 approve/release 按钮 -> 既有 POST 端点。
-4. 契约同步：PRD §5.1（surface 枚举 + 派生规则）§4.2 Web 表 §29（职责边界重裁）§4.3（invalid_record 实例清单）；SKILL.md 收尾协议。
+3. Web：本批零改动（待决页推迟至 G3 后，裁决见修订记录与 pm-review）。
+4. 契约同步：PRD §5.1（surface 枚举 + 派生规则）§4.3（invalid_record 实例清单）；SKILL.md 收尾协议。§29/§4.2（Web 定位）本批不动。
 
 ### What（具体交付物）
 
@@ -68,11 +68,10 @@
 2. `services/operations.py`：7 操作（approve/release/release_all_stale/note/renew/reopen/abandon/set_expectations）加可选受托参数，写事件时落 payload。
 3. `cli.py`：--on-behalf（7 命令）+ approve/release 零输入模式（G11：合入后 `uv sync --reinstall-package agent-kanban`）。
 4. `api/requirements.py`：7 端点 body 可选 delegated 字段（approve 端点新增可选 body，ReopenIn | None 先例 requirements.py:111）。
-5. `api/web.py`：详情页 awaiting 态 -> approve/release 按钮（release 须 reason，既有 invalid_record 语义）。
-6. `mcp/server.py`：**零改动**（无受托参数、无新工具）。
-7. 契约文档：PRD 四处 + skills/agent-kanban/SKILL.md 收尾协议。
-8. 测试：AC（受托派生/配对/零输入三分支 + 非交互拒绝/结构非法拒绝/REST 字段/无参回归）+ e2e（Web 待决按钮）。
-9. 本 BCD + spec。
+5. `api/web.py` / `mcp/server.py`：**零改动**（Web 待决页推迟；MCP 无受托参数、无新工具）。
+6. 契约文档：PRD 两处（§5.1/§4.3）+ skills/agent-kanban/SKILL.md 收尾协议。
+7. 测试：AC（受托派生/配对/零输入三分支 + 非交互拒绝/结构非法拒绝/REST 字段/无参回归）；e2e 无新增（既有 15 用例回归即可，Web 面未动）。
+8. 本 BCD + spec。
 
 ---
 
@@ -106,8 +105,8 @@
 5. **不可能性即门禁**：delete/archive/new/reconcile/prune 等无受托参数入口（CLI 不加 flag、REST body 模型无字段、MCP 无参数）——「代执行硬删」结构性不可能。
 6. **零输入宁拒不猜**：0 待决＝提示零写；恰 1＝直接执行；多条＝交互列号选（带标题）；多条 + 非交互通道（非 tty）＝拒绝（列候选 + 提示携 --requirement-id）。解析复用既有 id 路径（A1 语义）。
 7. **错误码零新增**：误用（格式非法 / kind 越枚举 / basis 空）-> invalid_record 新触发实例（PRD §4.3 清单 additive 更新；「每个码有唯一触发条件」纪律保持：invalid_record＝记录结构字段缺失/非法，实例清单只增）。
-8. **Web 待决定位重裁（PRD §29/§4.2）**：Web＝只读视图 + task 生命周期（create/archive/delete）+ **待决操作入口（approve/release，限 awaiting_human 任务详情页）**；按钮＝人亲手，surface=cli + conn=rest:（非 delegated）。
-9. **单向门纯 additive**：无受托参数路径、MCP 面、状态机、租约语义、错误码集、REST 无 body 调用、既有 surface 值行为均逐字不变。
+8. **Web 面本批零改动**：待决页（approve/release 按钮 + §29 定位重裁）整体推迟至 G3 后（2026-10-27 PM 评审裁决：零观察到需求）；PRD §29/§4.2 本批不重裁。
+9. **单向门纯 additive**：无受托参数路径、MCP 面、状态机、租约语义、错误码集、REST 无 body 调用、既有 surface 值行为、Web 面均逐字不变。
 
 ---
 
@@ -127,11 +126,6 @@
 - Given: 板上恰 1 条 awaiting（标题「人确认闭环…」）
 - When: `cli.py approve`（无参数）
 - Then: 直接对其执行（等价于携全 id 调用，事件形态与 Scenario 1/2 的无受托参数版一致）
-
-### Scenario 4（happy path：Web 待决按钮）
-- Given: awaiting 任务详情页（HTML）
-- When: 人点击 approve
-- Then: POST /{id}/approve（surface=cli、conn=rest:<8hex>、非 delegated），state=DONE，页面重拉显 DONE
 
 ### 边缘场景 1（零输入，0 条）
 - Given: 板无 awaiting
@@ -162,6 +156,9 @@
 - Given: 某任务经代执行 approve 至 DONE（kind=statement，basis 指向某会话表态）
 - When: 人后续发现 basis 与事实不符（人未说过该话）
 - Then: 既有重裁路径不变——`reopen` + `note`（人亲手，surface=cli）更正；代执行事件自身不可编辑（append-only），更正链可回溯
+
+### 移出本批的场景（v2，推迟至 G3 后）
+- 原 Scenario 4（Web 待决按钮：awaiting 详情页 approve/release 按钮 -> 既有 POST 端点，surface=cli+rest:）——零观察到需求，随 C-c 整体推迟；场景留档供后续批次引用。
 
 ---
 
@@ -194,7 +191,7 @@
 |---|---|---|---|---|
 | agent 代执行收尾 | 受托标记 + 依据在同一条事件，板面直读「代执行（依据：…）」 | surface=cli 与人亲手不可辨；依据散落前置 note 事件（权宜流程） | 能力缺口（本批填平） | 受托面（Q3） |
 | 人面收尾零输入 | `cli.py approve` 即执行 | --requirement-id required=True（cli.py:280） | 能力缺口（本批填平） | 零输入（Q4） |
-| Web 确认 | 待决任务 Web 一键确认 | 决策操作 CLI/REST-only（PRD §29；web 详情页仅 archive/delete） | 定位重裁 | 待决页（Q4） |
+| Web 确认 | 待决任务 Web 一键确认 | 决策操作 CLI/REST-only（PRD §29；web 详情页仅 archive/delete） | 定位重裁 | 待决页（C-c/Q4 原含）——**推迟至 G3 后**（零观察到需求，2026-10-27 PM 评审裁决） |
 | 审计区分 | 「人做的」vs「agent 代做的」可机辨 | surface 仅 mcp/cli/system 三值（agent 跑 CLI 与人跑 CLI 不可辨） | 能力缺口（本批填平） | delegated 值（Q3） |
 
 ---
@@ -226,6 +223,11 @@
 - 预防: body＝`DelegatedIn | None`（ReopenIn | None 先例，requirements.py:111）；AC 含无 body 回归用例。
 - 残余: 无。
 
+### 失败原因 6（范围蔓延维度）：推迟的 Web 面「顺手」复活
+- 失败序列: 实施期或后续批次以「反正 REST 端点都在」为由把 Web 待决按钮加回来 -> 未经 G3 数据验证的需求占用维护面 -> 单用户工具范围纪律失守。
+- 预防: BCD §7 软约束 2 钉「Web 待决页推迟至 G3 后」；spec 非目标含 Web 面零改动；AGENTS.md 批次纪律（每批判据＝三问 outcome vs builder 摩擦）。
+- 残余: 纪律约束非机器约束，靠 spec 盲审锚点兜底。
+
 ---
 
 ## 7. 业务不变量
@@ -235,13 +237,13 @@
 1. **L0 人决定源**：任何终态/确认迁移（DONE/REJECTED/CANCELLED/release->OPEN）必须有已发生的人的决定（statement 或 agent 结构性做不了的 action）为源；agent 只翻译、不产生。执行面＝协议层（SKILL.md）+ 审计面（delegated + basis 板面可读）+ 人重裁权；无机器强制（威胁模型 C）。违反后果：唯一可信终态源被污染，看板核心资产（可回溯性）失效。
 2. **不可能性即门禁**：delete/archive 等破坏性/非确认操作无受托参数入口（CLI/REST 结构性缺席）；MCP 12 工具面无受托入口（agent 自身动作恒 surface=mcp，结构性不可标 delegated）。违反后果：agent 可代执行破坏性操作/自我标代执行，审计模型崩塌。
 3. **受托面与 payload 配对**：surface=delegated 与 payload.delegated={kind,basis} 结构有效（kind ∈ {statement, action}，basis 非空）当且仅当同时成立；服务端单点派生（同函数落值）。违反后果：审计配对断裂，回溯失锚。
-4. **单向门纯 additive**：无受托参数路径、MCP 面、状态机、租约语义、错误码集、REST 无 body 调用、既有 surface 值行为均逐字不变；invalid_record 新触发实例为 additive（每码唯一触发条件纪律保持）。违反后果：存量调用方断裂，单向门纪律失守。
+4. **单向门纯 additive**：无受托参数路径、MCP 面、状态机、租约语义、错误码集、REST 无 body 调用、既有 surface 值行为、Web 面均逐字不变；invalid_record 新触发实例为 additive（每码唯一触发条件纪律保持）。违反后果：存量调用方断裂，单向门纪律失守。
 5. **零输入宁拒不猜**：0 待决＝提示零写；恰 1＝执行；多条 + 交互＝列号选（越界输入＝拒绝）；多条 + 非交互＝拒绝。一切拒绝分支零写。违反后果：错任务终态变更。
 
 ### 软约束（违反可容忍）
 
 1. **basis 声明级**：不做机器验证（PRD §5.2 自报声明哲学，与 reported by 同边界）。违反后果：无（若未来做验证属独立演进）。
-2. **Web 待决仅两按钮**：只 approve/release（限 awaiting_human 详情页）；不扩成全管理页。违反后果：Web 面膨胀，偏离「记录面不是控制面」定位。
+2. **Web 待决页推迟至 G3 后**：本批 Web 面零改动（含 PRD §29/§4.2 定位不重裁）；将来做时只 approve/release 两按钮（限 awaiting_human 详情页），不扩成全管理页，且须 G3 试用数据（人实际在哪确认）为前置。违反后果：未经需求验证的面占用维护面，偏离「记录面不是控制面」定位与单用户范围纪律。
 3. **不做服务端事件检测/webhook**：YAGNI，演进点登记 known-gaps。违反后果：（若未来做）外部依赖 + 信任边界扩大，需单独评审。
 4. **零 schema 变更**：不加表/列/索引。违反后果：部署/迁移面扩大，与本批档位不符。
 
@@ -250,3 +252,4 @@
 ## 修订记录
 
 - 2026-10-27 创建（主循环）。来源：user 2026-10-27 会话两段原话（零输入痛点 + 收尾协议）+ 四决策点裁决（Q1 确认源 / Q2 委托范围 / Q3 审计形态 / Q4 兜底面，user「可以」）+ 现状代码取证（identity.py 服务端派生先例 / cli.py:280 approve required / requirements.py REST 面 + ReopenIn|None 先例 / web.py 详情页仅 archive/delete / awaiting_human 列 + list_awaiting 读路径 operations.py:936 / events.payload JSON 列 / PRD §29/§4.2/§4.3/§5.1/§5.2）。
+- 2026-10-27 v2 修订（PM 评审拆分，user 裁决「按照你的建议实施」）：C-c Web 待决页整体移出本批（§1 解读表/我的解读/待澄清 4、§2 Why/Who/How/What、§3 Policy 8/9、§4 原 Scenario 4 留档、§5 差异表、§6 新增失败原因 6、§7 软约束 2/强 4）；本批范围收窄＝受托面（delegated）+ CLI 零输入 + agent 收尾协议，Web 面/PRD §29/§4.2 零改动。依据：docs/ops/pm-review-2026-10-27.md（零观察到确认需求；序倒置——G3 基线周先行，M1 以 G3/AC14 跑完为准）。
