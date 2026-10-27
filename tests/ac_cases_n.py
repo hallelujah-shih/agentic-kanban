@@ -69,3 +69,230 @@ def n_parse():
     e = _err(parse_delegation, {"kind": "statement"})
     ok("n_parse(10): dict 缺 basis -> invalid_record",
        e is not None and e.code == "invalid_record", str(getattr(e, "message", e)))
+
+
+def _ev_rows(db: Path, rid: str):
+    return query(db, "SELECT kind, actor_surface, actor_conn, payload FROM events WHERE requirement_id=?", (rid,))
+
+
+def _pl(r):
+    return json.loads(r["payload"]) if r["payload"] else {}
+
+
+def n1():
+    """delegated approve（CLAIMED->DONE 两条事件均带 payload.delegated）。"""
+    db = new_db()
+    rid = seed_req(db, "delegated approve")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.close()
+    res = cli_ok(db, "approve", "--requirement-id", rid, "--on-behalf", "statement:测试表态")
+    ok("n1: approve --on-behalf exit0 + DONE", res.get("state") == "DONE", str(res))
+    rows = _ev_rows(db, rid)
+    ap = [r for r in rows if r["kind"] == "approval"]
+    want = {"kind": "statement", "basis": "测试表态"}
+    ok("n1: approval 事件 delegated+cli+payload",
+       len(ap) == 1 and ap[0]["actor_surface"] == "delegated" and ap[0]["actor_conn"] == "cli"
+       and _pl(ap[0]).get("delegated") == want and _pl(ap[0]).get("state") == "DONE", str([dict(x) for x in ap]))
+    sc = [r for r in rows if r["kind"] == "state_change" and _pl(r).get("to") == "DONE"]
+    ok("n1: state_change(CLAIMED->DONE) delegated+payload",
+       len(sc) == 1 and sc[0]["actor_surface"] == "delegated" and _pl(sc[0]).get("delegated") == want,
+       str([dict(x) for x in sc]))
+
+
+def n2():
+    db = new_db()
+    rid = seed_req(db, "delegated release")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.close()
+    res = cli_ok(db, "release", "--requirement-id", rid, "--reason", "x",
+                 "--on-behalf", "action:PR merged (abc123)")
+    ok("n2: release --on-behalf OPEN", res.get("state") == "OPEN", str(res))
+    rows = _ev_rows(db, rid)
+    rel = [r for r in rows if r["kind"] == "release"]
+    want = {"kind": "action", "basis": "PR merged (abc123)"}
+    ok("n2: release 事件 delegated(action)+reason",
+       len(rel) == 1 and rel[0]["actor_surface"] == "delegated" and _pl(rel[0]).get("delegated") == want
+       and _pl(rel[0]).get("reason") == "x", str([dict(x) for x in rel]))
+    sc = [r for r in rows if r["kind"] == "state_change" and _pl(r).get("to") == "OPEN"]
+    ok("n2: state_change(CLAIMED->OPEN) delegated",
+       len(sc) == 1 and sc[0]["actor_surface"] == "delegated" and _pl(sc[0]).get("delegated") == want,
+       str([dict(x) for x in sc]))
+    row = query(db, "SELECT release_reason FROM claims WHERE requirement_id=?", (rid,))[0]
+    ok("n2: release_reason 不变", row["release_reason"] == "x", str(dict(row)))
+
+
+def n3():
+    db = new_db()
+    rid = seed_req(db, "delegated note/renew")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.close()
+    cli_ok(db, "note", "--requirement-id", rid, "--content", "note 内容", "--on-behalf", "statement:user 指示")
+    r1 = query(db, "SELECT actor_surface, payload FROM events WHERE kind='note' AND requirement_id=?", (rid,))[0]
+    ok("n3: note 事件 delegated + content 共存",
+       r1["actor_surface"] == "delegated" and json.loads(r1["payload"]) == {
+           "content": "note 内容", "delegated": {"kind": "statement", "basis": "user 指示"}}, str(dict(r1)))
+    cli_ok(db, "renew", "--requirement-id", rid, "--on-behalf", "action:user 工作面操作")
+    r2 = query(db, "SELECT actor_surface, payload FROM events WHERE kind='renew' AND requirement_id=?", (rid,))[0]
+    ok("n3: renew 事件 delegated（新增 payload）",
+       r2["actor_surface"] == "delegated" and json.loads(r2["payload"]) == {
+           "delegated": {"kind": "action", "basis": "user 工作面操作"}}, str(dict(r2)))
+
+
+def n4():
+    db = new_db()
+    rid = seed_req(db, "delegated reopen/abandon")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "s"}, "summary_line": "交接"})
+    m.close()
+    cli_ok(db, "approve", "--requirement-id", rid)  # CLAIMED->DONE（无受托）
+    cli_ok(db, "reopen", "--requirement-id", rid, "--on-behalf", "statement:user 说重做")
+    sc1 = [r for r in _ev_rows(db, rid) if r["kind"] == "state_change" and _pl(r).get("to") == "REOPEN"]
+    ok("n4: reopen state_change delegated",
+       len(sc1) == 1 and sc1[0]["actor_surface"] == "delegated"
+       and _pl(sc1[0]).get("delegated") == {"kind": "statement", "basis": "user 说重做"}, str([dict(x) for x in sc1]))
+    cli_ok(db, "abandon", "--requirement-id", rid, "--to-state", "REJECTED", "--on-behalf", "statement:user 拒绝")
+    sc2 = [r for r in _ev_rows(db, rid) if r["kind"] == "state_change" and _pl(r).get("to") == "REJECTED"]
+    ok("n4: abandon state_change delegated",
+       len(sc2) == 1 and sc2[0]["actor_surface"] == "delegated"
+       and _pl(sc2[0]).get("delegated") == {"kind": "statement", "basis": "user 拒绝"}, str([dict(x) for x in sc2]))
+
+
+def n5():
+    db = new_db()
+    ms = MCP(db, extra={"AGENT_KANBAN_LEASE_SECONDS": "-1"}).start()  # STALE 确定性（ac_cases_c 先例）
+    stale = []
+    for i in range(2):
+        r = seed_req(db, f"stale-delegated-{i}")
+        ms.call_ok("claim_task", {"requirement_id": r, "agent_name": "s"})
+        stale.append(r)
+    ms.close()
+    res = cli_ok(db, "release", "--all-stale", "--on-behalf", "action:批量代执行")
+    ok("n5: 2 STALE 全 ok（部分失败语义不变）",
+       len(res["released"]) == 2 and all(x["ok"] for x in res["released"]), str(res))
+    for r in stale:
+        row = query(db, "SELECT actor_surface, payload FROM events WHERE kind='release' AND requirement_id=?", (r,))[0]
+        ok(f"n5[{r[:8]}]: release 事件 delegated(action)",
+           row["actor_surface"] == "delegated"
+           and json.loads(row["payload"]).get("delegated") == {"kind": "action", "basis": "批量代执行"},
+           str(dict(row)))
+
+
+def _bad_flag_case(flag: str, label: str):
+    """n6-n8 共用：0/1/2 待决三形态下非法 flag 均先拒（parse 先于读候选，R5）。
+    断言用 DELEGATION_EXAMPLE（spec §2.1 三种非法消息均含该示例；kind/basis 形态
+    消息逐字为 'delegated kind must be ...' / 'delegated basis must be ...'，
+    不含 on-behalf 字样，勿按它断言）。"""
+    from agent_kanban.services.identity import DELEGATION_EXAMPLE
+    for n in (0, 1, 2):
+        db = new_db()
+        _mk_awaiting(db, n)
+        # T2 阶段 approve --requirement-id 仍 required（T3 才改可选）：携真实 id，
+        # id 不参与解析（parse 是 handler 首语句，先于任何 DB 操作）。
+        rid = seed_req(db, f"{label}-rid")
+        before = query(db, "SELECT COUNT(*) AS n FROM events")[0]["n"]
+        res = cli(db, "approve", "--requirement-id", rid, "--on-behalf", flag)
+        after = query(db, "SELECT COUNT(*) AS n FROM events")[0]["n"]
+        ok(f"{label}[{n}待决]: {flag!r} -> invalid_record 零写 exit1 无Traceback",
+           res.returncode == 1 and res.stderr.strip().startswith("invalid_record")
+           and DELEGATION_EXAMPLE in res.stderr and "Traceback" not in res.stderr
+           and before == after,
+           f"rc={res.returncode} stderr={res.stderr[:200]}")
+
+
+def n6():
+    _bad_flag_case("foo", "n6")  # 无冒号
+
+
+def n7():
+    _bad_flag_case("badkind:x", "n7")  # kind 越枚举
+
+
+def n8():
+    _bad_flag_case("statement:", "n8")  # basis 空
+
+
+def n9():
+    db = new_db()
+    rid = seed_req(db, "regress no-flag")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.close()
+    cli_ok(db, "approve", "--requirement-id", rid)  # 无 --on-behalf
+    row = query(db, "SELECT actor_surface, payload FROM events WHERE kind='approval' AND requirement_id=?", (rid,))[0]
+    p = json.loads(row["payload"])
+    ok("n9: 无 on-behalf 回归 surface=cli + payload 逐字 {state:DONE}",
+       row["actor_surface"] == "cli" and p == {"state": "DONE"}, str(dict(row)))
+
+
+def n10():
+    """MCP 结构性门禁：12 工具 schema 无受托字段 + mcp 写恒 surface=mcp。"""
+    db = new_db()
+    m = MCP(db).start()
+    tools = m.rpc("tools/list", {}).get("tools", [])
+    ok("n10: 12 工具", len(tools) == 12, str(len(tools)))
+    bad = [t["name"] for t in tools if "delegated" in json.dumps(t.get("inputSchema", {}))
+           or "on_behalf" in json.dumps(t.get("inputSchema", {}))]
+    ok("n10: inputSchema 无 on_behalf/delegated 字段", not bad, str(bad))
+    rid = seed_req(db, "mcp gate")
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.call_ok("add_record", {"requirement_id": rid, "kind": "note", "title": "委托讨论",
+                             "payload": {"delegated": {"kind": "statement", "basis": "讨论引用"}}})
+    m.close()
+    row = query(db, "SELECT actor_surface, payload FROM events WHERE kind='note' AND requirement_id=?", (rid,))[0]
+    ok("n10: mcp 写 surface=mcp；add_record 自由 payload 例外真实存在（R3 登记）",
+       row["actor_surface"] == "mcp" and json.loads(row["payload"]).get("delegated") is not None, str(dict(row)))
+
+
+def n11():
+    """配对不变量：正向全表 + 反向限定独占 kind（spec §2.3，R3 收窄）。"""
+    REVERSE_KINDS = ("approval", "release", "renew", "state_change")
+    db = new_db()
+    m = MCP(db).start()
+    r1 = seed_req(db, "pair delegated")
+    m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})
+    m.close()
+    cli_ok(db, "approve", "--requirement-id", r1, "--on-behalf", "statement:pair 表态")
+    r2 = seed_req(db, "pair plain")
+    m2 = MCP(db).start()
+    m2.call_ok("claim_task", {"requirement_id": r2, "agent_name": "b"})
+    m2.close()
+    cli_ok(db, "approve", "--requirement-id", r2)
+    r3 = seed_req(db, "pair mcp free payload")
+    m3 = MCP(db).start()
+    m3.call_ok("claim_task", {"requirement_id": r3, "agent_name": "c"})
+    m3.call_ok("add_record", {"requirement_id": r3, "kind": "note", "title": "委托讨论",
+                              "payload": {"delegated": {"kind": "statement", "basis": "x"}}})
+    m3.close()
+    rows = query(db, "SELECT kind, actor_surface, payload FROM events")
+
+    def valid_d(r):
+        d = (json.loads(r["payload"]) if r["payload"] else {}).get("delegated")
+        return isinstance(d, dict) and d.get("kind") in ("statement", "action") \
+            and bool(str(d.get("basis", "")).strip())
+
+    fwd = [dict(r) for r in rows if r["actor_surface"] == "delegated" and not valid_d(r)]
+    ok("n11: 正向全表（delegated -> 有效 payload.delegated）", not fwd, str(fwd))
+    rev = [dict(r) for r in rows if r["kind"] in REVERSE_KINDS
+           and bool((json.loads(r["payload"]) if r["payload"] else {}).get("delegated"))
+           and r["actor_surface"] != "delegated"]
+    ok("n11: 反向（独占 kind 含 delegated 键 -> surface=delegated；kind=note 共享不在限定内）",
+       not rev, str(rev))
+
+
+def n28():
+    """受托参数结构性缺席面（CLI：argparse exit 2）。"""
+    db = new_db()
+    rid = seed_req(db, "structural gate")
+    res1 = cli(db, "delete", "--requirement-id", rid, "--on-behalf", "x")
+    ok("n28: delete --on-behalf -> exit2 unrecognized arguments",
+       res1.returncode == 2 and "unrecognized arguments" in res1.stderr,
+       f"rc={res1.returncode} stderr={res1.stderr[:200]}")
+    res2 = cli(db, "set_expectations", "--requirement-id", rid, "--acceptance", "[]",
+               "--on-behalf", "x")
+    ok("n28: set_expectations --on-behalf -> exit2（D1 结构性缺席）",
+       res2.returncode == 2 and "unrecognized arguments" in res2.stderr,
+       f"rc={res2.returncode} stderr={res2.stderr[:200]}")

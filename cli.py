@@ -16,11 +16,15 @@ from agent_kanban.db import get_session_factory, now_utc, run_op
 from agent_kanban.errors import BusinessError
 from agent_kanban.services import operations as ops
 from agent_kanban.services import reconcile, view
-from agent_kanban.services.identity import cli_actor
+from agent_kanban.services.identity import cli_actor, parse_delegation
 
 
-def _invoke(op_name: str, *, is_write: bool = True, **kwargs: object) -> int:
+def _invoke(op_name: str, *, is_write: bool = True, delegated: dict | None = None,
+            **kwargs: object) -> int:
     surface, conn = cli_actor()
+    if delegated is not None:
+        surface = "delegated"
+        kwargs["delegated"] = delegated
     try:
         result = asyncio.run(
             run_op(
@@ -62,25 +66,53 @@ def _cmd_set_expectations(args: argparse.Namespace) -> int:
 
 
 def _cmd_approve(args: argparse.Namespace) -> int:
-    return _invoke("approve", requirement_id=args.requirement_id)
+    try:
+        delegated = parse_delegation(args.on_behalf)
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    return _invoke("approve", requirement_id=args.requirement_id, delegated=delegated)
 
 
 def _cmd_release(args: argparse.Namespace) -> int:
+    try:
+        delegated = parse_delegation(args.on_behalf)
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
     if args.all_stale:
-        return _invoke("release_all_stale")
-    return _invoke("release", requirement_id=args.requirement_id, reason=args.reason)
+        return _invoke("release_all_stale", delegated=delegated)
+    return _invoke("release", requirement_id=args.requirement_id, reason=args.reason,
+                   delegated=delegated)
 
 
 def _cmd_renew(args: argparse.Namespace) -> int:
-    return _invoke("renew", requirement_id=args.requirement_id)
+    try:
+        delegated = parse_delegation(args.on_behalf)
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    return _invoke("renew", requirement_id=args.requirement_id, delegated=delegated)
 
 
 def _cmd_note(args: argparse.Namespace) -> int:
-    return _invoke("note", requirement_id=args.requirement_id, content=args.content)
+    try:
+        delegated = parse_delegation(args.on_behalf)
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    return _invoke("note", requirement_id=args.requirement_id, content=args.content,
+                   delegated=delegated)
 
 
 def _cmd_abandon(args: argparse.Namespace) -> int:
-    return _invoke("abandon", requirement_id=args.requirement_id, to_state=args.to_state)
+    try:
+        delegated = parse_delegation(args.on_behalf)
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    return _invoke("abandon", requirement_id=args.requirement_id, to_state=args.to_state,
+                   delegated=delegated)
 
 
 def _cmd_archive(args: argparse.Namespace) -> int:
@@ -118,7 +150,13 @@ def _cmd_delete(args: argparse.Namespace) -> int:
 
 
 def _cmd_reopen(args: argparse.Namespace) -> int:
-    return _invoke("reopen", requirement_id=args.requirement_id, continue_=args.continue_)
+    try:
+        delegated = parse_delegation(args.on_behalf)
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    return _invoke("reopen", requirement_id=args.requirement_id, continue_=args.continue_,
+                   delegated=delegated)
 
 
 def _cmd_export(args: argparse.Namespace) -> int:
@@ -278,26 +316,36 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("approve", help="按当前状态确认（CLAIMED->DONE / BLOCKED->CLAIMED）")
     p.add_argument("--requirement-id", required=True)
+    p.add_argument("--on-behalf", metavar='"kind:basis"',
+                   help="受托代执行（kind: statement|action，basis 一行指向依据）")
     p.set_defaults(handler=_cmd_approve)
 
     p = sub.add_parser("release", help="释放认领（唯一释放路径，人面）；--all-stale 批量释放 STALE")
     p.add_argument("--requirement-id")
     p.add_argument("--reason")
     p.add_argument("--all-stale", action="store_true")
+    p.add_argument("--on-behalf", metavar='"kind:basis"',
+                   help="受托代执行（kind: statement|action，basis 一行指向依据）")
     p.set_defaults(handler=_cmd_release)
 
     p = sub.add_parser("renew", help="续租")
     p.add_argument("--requirement-id", required=True)
+    p.add_argument("--on-behalf", metavar='"kind:basis"',
+                   help="受托代执行（kind: statement|action，basis 一行指向依据）")
     p.set_defaults(handler=_cmd_renew)
 
     p = sub.add_parser("note", help="人追加更正/质疑（note 事件）")
     p.add_argument("--requirement-id", required=True)
     p.add_argument("--content", required=True)
+    p.add_argument("--on-behalf", metavar='"kind:basis"',
+                   help="受托代执行（kind: statement|action，basis 一行指向依据）")
     p.set_defaults(handler=_cmd_note)
 
     p = sub.add_parser("abandon", help="REJECTED / CANCELLED（同事务处置认领）")
     p.add_argument("--requirement-id", required=True)
     p.add_argument("--to-state", required=True, choices=["REJECTED", "CANCELLED"])
+    p.add_argument("--on-behalf", metavar='"kind:basis"',
+                   help="受托代执行（kind: statement|action，basis 一行指向依据）")
     p.set_defaults(handler=_cmd_abandon)
 
     p = sub.add_parser("archive", help="归档（任一状态 -> ARCHIVED 终态；同事务结束未结束认领）")
@@ -312,6 +360,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("reopen", help="DONE->REOPEN；--continue REOPEN->OPEN（回到可认领）")
     p.add_argument("--requirement-id", required=True)
     p.add_argument("--continue", dest="continue_", action="store_true")
+    p.add_argument("--on-behalf", metavar='"kind:basis"',
+                   help="受托代执行（kind: statement|action，basis 一行指向依据）")
     p.set_defaults(handler=_cmd_reopen)
 
     p = sub.add_parser("export", help="全量导出（JSON/Markdown/CSV，无 LIMIT）")
