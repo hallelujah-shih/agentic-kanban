@@ -41,6 +41,7 @@ async def transition(
     actor_conn: str,
     claim_id: str | None = None,
     now: datetime | None = None,
+    event_payload: dict | None = None,
 ) -> str:
     now = now or now_utc()
     edge = (from_state, to_state)
@@ -65,13 +66,16 @@ async def transition(
         await session.execute(
             update(Requirement).where(Requirement.id == requirement_id).values(awaiting_human=None)
         )
+    payload = {"from": from_state, "to": to_state}
+    if event_payload:
+        payload.update(event_payload)
     await add_event(
         session,
         requirement_id=requirement_id,
         kind="state_change",
         severity="info",
         title=f"{from_state or '?'} -> {to_state}",
-        payload={"from": from_state, "to": to_state},
+        payload=payload,
         actor_surface=actor_surface,
         actor_conn=actor_conn,
         claim_id=claim_id,

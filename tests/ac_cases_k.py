@@ -295,7 +295,8 @@ def k_web():
     secret = "K_WEB_SECRET_xyz"
     m = MCP(db).start()
     m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
-    m.call_ok("update_progress", {"requirement_id": rid, "note": secret})
+    m.call_ok("update_progress", {"requirement_id": rid, "note": secret,
+                                   "headline": "k 进度提纲"})
     m.close()
     rest = REST(db, token="sekret").start()
     try:

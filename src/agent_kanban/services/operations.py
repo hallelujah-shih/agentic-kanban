@@ -682,6 +682,13 @@ async def add_record(
     claim = await get_active_claim(session, requirement_id)
     if kind not in RECORD_KINDS:
         raise BusinessError("invalid_record", f"invalid record kind: {kind}", requirement_id)
+    if title is None or not str(title).strip():
+        raise BusinessError(
+            "invalid_record",
+            'add_record requires title: one-line human outline. '
+            'e.g. title="选型 SQLite WAL 而非 busy 重试"',
+            requirement_id,
+        )
     severity = severity or "info"
     if severity not in SEVERITIES:
         raise BusinessError("invalid_record", f"invalid severity: {severity}", requirement_id)
@@ -708,13 +715,21 @@ async def update_progress(
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
+    headline: str | None = None,
 ) -> dict:
     now = now or now_utc()
     claim = await get_active_claim(session, requirement_id)
+    if headline is None or not str(headline).strip():
+        raise BusinessError(
+            "invalid_record",
+            'update_progress requires headline: one-line human outline. '
+            'e.g. headline="修了 test_view 竞态"',
+            requirement_id,
+        )
     _check_payload_size(requirement_id, {"note": note}, note)  # PRD §6：单事件 payload < 8KB
     await add_event(
         session, requirement_id=requirement_id, kind="progress_note", severity="info",
-        title="progress", content=note, payload={"note": note},
+        title=str(headline).strip(), content=note, payload={"note": note},
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
     await lease_svc.touch_activity(session, requirement_id, now)
@@ -730,6 +745,7 @@ async def request_review(
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
+    summary_line: str | None = None,
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
@@ -743,16 +759,25 @@ async def request_review(
             "request_review requires at least one evidence item (pr_url/commit_range/test_summary)",
             requirement_id,
         )
+    if summary_line is None or not str(summary_line).strip():
+        raise BusinessError(
+            "invalid_record",
+            'request_review requires summary_line: one line of what was done / where to look first. '
+            'e.g. summary_line="重做了记录管线，先看事件流"',
+            requirement_id,
+        )
     await _persist_self_assessment(session, requirement_id, assessments or [], now)
     req.awaiting_human = {
         "reason": "review requested",
         "evidence": evidence,
         "since": now.isoformat(),
         "kind": "review",
+        "summary_line": str(summary_line).strip(),
     }
     await add_event(
-        session, requirement_id=requirement_id, kind="review_request", severity="info",
-        title="review requested", payload={"evidence": evidence},
+        session, requirement_id=requirement_id, kind="review_request", severity="attention",
+        title="review requested",
+        payload={"evidence": evidence, "summary_line": str(summary_line).strip()},
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
     await lease_svc.touch_activity(session, requirement_id, now)
@@ -810,9 +835,17 @@ async def mark_blocked(
     if req.state != "CLAIMED":
         raise BusinessError("illegal_state", f"mark_blocked requires state=CLAIMED, got {req.state}", requirement_id)
     claim = await get_active_claim(session, requirement_id, requirement=req)
+    if not str(reason).strip():
+        raise BusinessError(
+            "invalid_record",
+            'mark_blocked requires reason: one-line human-readable reason. '
+            'e.g. reason="等 user 裁决"',
+            requirement_id,
+        )
     await transition(
         session, requirement_id=requirement_id, from_state="CLAIMED", to_state="BLOCKED",
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
+        event_payload={"reason": reason},
     )
     await session.execute(
         update(Requirement).where(Requirement.id == requirement_id).values(
@@ -856,75 +889,6 @@ async def list_tasks(
     return {"tasks": tasks}
 
 
-async def _requirement_detail(
-    session: AsyncSession,
-    requirement_id: str,
-    *,
-    event_limit: int | None,
-    now: datetime | None = None,
-) -> dict:
-    """需求深潜数据组装（MCP get_task_detail 与 export 共用）。event_limit=None 全量（G8 P2-4）。"""
-    now = now or now_utc()
-    req = await require_requirement(session, requirement_id)
-    claim = await session.scalar(
-        select(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None))
-    )
-    subtasks = (await session.scalars(
-        select(Subtask).where(Subtask.requirement_id == requirement_id).order_by(Subtask.ordinal)
-    )).all()
-    milestones = (await session.scalars(
-        select(Milestone).where(Milestone.requirement_id == requirement_id).order_by(Milestone.created_at)
-    )).all()
-    stmt = select(Event).where(Event.requirement_id == requirement_id).order_by(Event.seq)
-    if event_limit is not None:
-        stmt = stmt.limit(event_limit)
-    events = (await session.scalars(stmt)).all()
-    return {
-        "requirement_id": norm_id(req.id),
-        "title": req.title,
-        "description": req.description,
-        "source": req.source,
-        "source_ref": req.source_ref,
-        "state": req.state,
-        "acceptance": req.acceptance,
-        "awaiting_human": req.awaiting_human,
-        "claim": _claim_view(claim, req.awaiting_human, now),
-        "claims": [
-            {k: v for k, v in (_claim_view(c, None, now) or {}).items()}
-            for c in (
-                await session.scalars(
-                    select(Claim).where(Claim.requirement_id == requirement_id).order_by(Claim.started_at)
-                )
-            ).all()
-        ],
-        "subtasks": [
-            {
-                "subtask_id": norm_id(s.id), "ordinal": s.ordinal, "title": s.title, "state": s.state,
-                "acceptance": s.acceptance, "milestone_id": norm_id(s.milestone_id) if s.milestone_id else None,
-                "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat(),
-            }
-            for s in subtasks
-        ],
-        "milestones": [
-            {
-                "milestone_id": norm_id(m.id), "title": m.title, "state": m.state,
-                "planned_at": m.planned_at.isoformat() if m.planned_at else None,
-                "actual_at": m.actual_at.isoformat() if m.actual_at else None,
-            }
-            for m in milestones
-        ],
-        "events": [
-            {
-                "seq": e.seq, "kind": e.kind, "severity": e.severity, "title": e.title,
-                "content": e.content, "payload": e.payload,
-                "actor_surface": e.actor_surface, "actor_conn": e.actor_conn,
-                "claim_id": norm_id(e.claim_id) if e.claim_id else None, "ts": e.ts.isoformat(),
-            }
-            for e in events
-        ],
-    }
-
-
 async def get_task_detail(
     session: AsyncSession,
     *,
@@ -933,9 +897,14 @@ async def get_task_detail(
     actor_conn: str,
     now: datetime | None = None,
 ) -> dict:
+    """需求深潜数据（委托 view.detail 单一源）：关键事件 = 最新 200（event_limit=200，
+    先 limit 后 filter，输出 seq 升序；R3，BCD distill-pipeline 裁决 3）。"""
+    from .view import detail as _view_detail
+
     now = now or now_utc()
-    return await _requirement_detail(
-        session, requirement_id, event_limit=200, now=now,
+    return await _view_detail(
+        session, requirement_id=requirement_id, event_limit=200,
+        actor_surface=actor_surface, actor_conn=actor_conn, now=now,
     )
 
 
@@ -981,20 +950,26 @@ async def export_data(
     now: datetime | None = None,
 ) -> dict | str:
     """PRD 4.2 export：JSON / Markdown / CSV 全量导出（G8 P2-4：独立全量查询，无 LIMIT）。"""
+    from .view import detail as _view_detail
+
     now = now or now_utc()
     if fmt not in ("json", "markdown", "csv"):
         raise BusinessError("invalid_record", f"invalid export format: {fmt}", None)
     if requirement_id:
         data = {
-            "requirement": await _requirement_detail(
-                session, requirement_id, event_limit=None, now=now,
+            "requirement": await _view_detail(
+                session, requirement_id=requirement_id, event_limit=None,
+                actor_surface=actor_surface, actor_conn=actor_conn, now=now,
             )
         }
     else:
         rows = (await session.scalars(select(Requirement).order_by(Requirement.created_at))).all()
         data = {
             "requirements": [
-                await _requirement_detail(session, r.id, event_limit=None, now=now) for r in rows
+                await _view_detail(
+                    session, requirement_id=r.id, event_limit=None,
+                    actor_surface=actor_surface, actor_conn=actor_conn, now=now,
+                ) for r in rows
             ]
         }
     if fmt == "markdown":

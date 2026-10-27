@@ -37,6 +37,16 @@ from .operations_util import TERMINAL_STATES
 # 完整历史见导出归档（PRD §6 回溯承诺限于保留窗口 + C7 措辞对齐）。
 HISTORY_NOTE = "该需求事件已按保留窗口清理，完整历史见导出归档"
 
+# R3（BCD distill-pipeline §3 Policy 4）：人/机分类单点派生——所有读点同源，
+# 禁各读点字符串匹配 kind + payload 形状。未登记 kind -> "human"（保守：宁可人面
+# 多显示，不把人面记录藏进簿记，防未来 kind 漂移时静默藏记录）。
+BOOKKEEPING_KINDS = {"state_change", "decomposition", "reconcile", "release", "renew"}
+
+
+def event_audience(kind: str) -> str:
+    """kind -> audience 分类单点（"bookkeeping" / "human"，BCD §3 Policy 4）。"""
+    return "bookkeeping" if kind in BOOKKEEPING_KINDS else "human"
+
 
 # ---------------------------------------------------------------- 摘要
 async def summary(
@@ -448,7 +458,15 @@ async def detail(
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
+    event_limit: int | None = None,
 ) -> dict:
+    """深潜数据（web 深潜/REST 与 MCP get_task_detail、export 单一源）。
+
+    事件选取口径：reconstruct_states 永远用全链 -> as_of 过滤 -> 若 event_limit 非空：
+    取最新 N（all_events 已 seq 升序，filtered[-event_limit:]；守卫 event_limit>0，
+    防 [-0:] 切片陷阱）-> 再套 kinds/severities 过滤（先 limit 后 filter，结果可 < N）
+    -> 输出保持 seq 升序。event_limit=None 全量（export 口径，无 LIMIT）。
+    """
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
     claim = await session.scalar(
@@ -465,10 +483,15 @@ async def detail(
     )).all()
     states = reconstruct_states(all_events, as_of=as_of)
 
-    events: list[Event] = []
+    as_of_events: list[Event] = []
     for e in all_events:
         if as_of is not None and e.ts > as_of:
             continue
+        as_of_events.append(e)
+    if event_limit and event_limit > 0:
+        as_of_events = as_of_events[-event_limit:]
+    events: list[Event] = []
+    for e in as_of_events:
         if kinds is not None and e.kind not in kinds:
             continue
         if severities is not None and e.severity not in severities:
@@ -505,8 +528,8 @@ async def detail(
         ],
         "events": [
             {
-                "seq": e.seq, "kind": e.kind, "severity": e.severity, "title": e.title,
-                "content": e.content, "payload": e.payload,
+                "seq": e.seq, "kind": e.kind, "severity": e.severity, "audience": event_audience(e.kind),
+                "title": e.title, "content": e.content, "payload": e.payload,
                 "actor_surface": e.actor_surface, "actor_conn": e.actor_conn,
                 "claim_id": _nid(e.claim_id) if e.claim_id else None, "ts": e.ts.isoformat(),
                 "state_at_event": states.get(e.seq),

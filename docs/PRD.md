@@ -6,6 +6,7 @@
 读者: 实现者、后续维护者、评审者
 关联: docs/design.md（设计理由）、docs/adr/（决策与残余登记）
 BCD 引用: docs/business-contracts/g9b-retry-limit.md（G9-b 重试成本超限判定，判定源 user 裁决 = 系统派生计数，M1-4 前置产出）
+BCD 引用: docs/business-contracts/distill-pipeline.md（记录管线蒸馏重构：提纲契约 + queue_full=16 + 关键事件最新优先有界 + 管线原则入 §0 + 深潜提纲优先，2026-10-27 五项裁决）
 
 ---
 
@@ -22,6 +23,8 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 **单一事件源（指引优先）**：完整内容留在其源头（Jira 详情、代码、会话原文），看板只存指针（链接/引用）+ 摘要。登记是 URL+摘要 还是完整详情并不重要，**做好指引更重要**；需要完整内容时由 agent 从源头获取。与反淹没互补：反淹没 = 不默认展示，本原则 = 不留存、只指引。
 
 **报告纪律（agent 侧）**：写给人看的每一段文字（验收自评、decision rationale、deviation 原因、交接说明）必须**简约、大白话、无黑话**，尊重人脑带宽；报告里程碑与关键事件（节点），不报过程流水账。与反淹没互补：反淹没管视图展示什么，本纪律管 agent 写进记录的是什么。in-band 人的决策（人在 AI 会话中做出的决策）由 agent 以 decision/note 事件记录（带 actor provenance）= 预期模式，非可选行为。
+
+**管线原则（蒸馏恰好一次，在生成点）**：蒸馏恰好一次，在生成点——写契约强制一行人话提纲（服务端只校验结构：非空；长度上限未强制——8KB 单事件 payload 上限作用于 note/content/payload；语义质量是写侧责任，服务端不生成人面文字）；存储/展示层忠实不聪明——不二次摘要、不做读侧语义挑选（读侧挑选 = 第二个蒸馏点，违反本原则）；人面记录必带提纲。与报告纪律互补：报告纪律管写什么，本段管蒸馏位置。
 
 职责边界：看板是记录面 + 关键决策的记录点/审计点，不是控制面，不是共识达成场所。它不管理 worktree、不执行合入、不隔离执行。人面 surface 划分：Web = 只读视图 + task 生命周期（create/archive/delete）；决策操作（approve/release/renew/reopen/note/abandon/set_expectations）= CLI/REST-only（Web 无入口）。
 
@@ -53,7 +56,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 
 | 表 | 关键字段 | 状态由谁写 |
 |---|---|---|
-| requirements | id, source(`jira`/`manual`), source_ref, title, description(摘要), acceptance[]（人写预期验收锚）, state, awaiting_human{reason,evidence,since,kind}, created_at, updated_at | 状态机；acceptance 仅人面可写；DONE 仅人确认；source=`jira` 时 source_ref 存链接（引用登记，无自动导入）；description 存摘要，完整内容留源头（单一事件源） |
+| requirements | id, source(`jira`/`manual`), source_ref, title, description(摘要), acceptance[]（人写预期验收锚）, state, awaiting_human{reason,evidence,since,kind,summary_line}, created_at, updated_at | 状态机；acceptance 仅人面可写；DONE 仅人确认；source=`jira` 时 source_ref 存链接（引用登记，无自动导入）；description 存摘要，完整内容留源头（单一事件源）；summary_line 由 request_review 设置（评审交接一句话），mark_blocked 不设（blocked 用 reason） |
 | claims | id, requirement_id, agent_name(声明), agent_conn(观测), started_at, lease_expires_at, last_activity_at, ended_at, release_reason | 系统推导（租约） |
 | subtasks | id, requirement_id, ordinal, title, acceptance[{item, criteria, state: met|not_met|deviated, deviation_reason?, links_to[]}], state, milestone_id?, created_at, updated_at | agent 报告，带 provenance |
 | milestones | id, requirement_id, title, planned_at?, actual_at?, state, created_at, updated_at | agent 报告，带 provenance |
@@ -148,19 +151,21 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 | 工具 | 语义 | 前置 |
 |---|---|---|
 | list_tasks | status 过滤，获取未完成任务 | 读 |
-| get_task_detail | 需求 + 子任务树（含验收自评与覆盖对照）+ 里程碑 + 关键事件 + 认领 + awaiting_human | 读 |
+| get_task_detail | 需求 + 子任务树（含验收自评与覆盖对照）+ 里程碑 + 关键事件（最新优先，有界 200，输出 seq 升序；事件自带提纲——生成点写，无读侧语义挑选）+ 认领 + awaiting_human | 读 |
 | claim_task | 独占认领（单事务） | 无未结束认领 |
 | add_subtask | 拆解：title + acceptance[]（含 links_to 预期锚）+ ordinal | 未结束认领 |
 | update_subtask | state: todo/in_progress/done/blocked/abandoned | 未结束认领 |
 | add_milestone | title + planned_at | 未结束认领 |
 | update_milestone | state: planned/in_progress/achieved + actual_at | 未结束认领 |
-| add_record | kind = decision / risk / deviation / decomposition / note；decision 必含 alternatives[] + rationale + 拒绝理由；deviation severity 强制 >= attention | 未结束认领 |
-| update_progress | 进度备注（不覆盖派生值） | 未结束认领 |
-| request_review | 设 awaiting_human(kind=review)，持久化验收自评到 subtasks.acceptance[].state，附证据（PR / commit 区间 / 测试摘要，至少一项，缺证据拒绝）；不改状态 | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
-| mark_blocked | 转移 CLAIMED -> BLOCKED + 设 awaiting_human(kind=blocked)，附原因 | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
+| add_record | title 必填（一行人话提纲，空 -> invalid_record）；kind = decision / risk / deviation / decomposition / note；decision 必含 alternatives[] + rationale + 拒绝理由；deviation severity 强制 >= attention | 未结束认领 |
+| update_progress | 进度备注（不覆盖派生值）；headline 必填（一行人话提纲，缺/空 -> invalid_record） | 未结束认领 |
+| request_review | 设 awaiting_human(kind=review)，持久化验收自评到 subtasks.acceptance[].state，附证据（PR / commit 区间 / 测试摘要，至少一项，缺证据拒绝）+ summary_line 必填（交接一句话，缺/空 -> invalid_record）；review_request 事件 severity=attention；不改状态 | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
+| mark_blocked | 转移 CLAIMED -> BLOCKED + 设 awaiting_human(kind=blocked)，附原因（一行人话，为空 -> invalid_record） | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
 | list_awaiting | 全部"等你决策"条目，含等待时长 | 读（人面） |
 
 释放不属于 agent 面：MCP 工具面无 release 工具，唯一释放路径为人面 CLI `release`（见 4.2）。
+
+工具面自描述：各工具 description + server instructions 带内承载工具语义与记录契约（带内兜底，不依赖带外 skill 加载，威胁模型 B）。
 
 ### 4.2 人面（CLI/REST，非 MCP）
 
@@ -193,7 +198,7 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 MCP `is_error` + structured content（`{code, message, task_id}`），无 HTTP 码：
 `not_found | illegal_state | already_claimed | no_active_claim | lease_expired | duplicate_subtask | invalid_record | queue_full | db_busy`
 
-每个码有唯一触发条件：`lease_expired` = 对已过期租约 renew；`db_busy` = SQLite 写失败重试 3 次后（7.3）；`queue_full` = claim_task 计数超上限（6）；`invalid_record` = decision 缺 alternatives 或 request_review 缺证据；其余见工具表。
+每个码有唯一触发条件：`lease_expired` = 对已过期租约 renew；`db_busy` = SQLite 写失败重试 3 次后（7.3）；`queue_full` = claim_task 计数超上限（16）；`invalid_record` = 记录结构缺字段（decision 缺 alternatives / request_review 缺证据 / 缺 headline / 缺 summary_line / title 或 reason 为空）；其余见工具表。
 
 ---
 
@@ -231,7 +236,13 @@ MCP `is_error` + structured content（`{code, message, task_id}`），无 HTTP �
 - **派生偏离信号**（系统推导，不依赖 agent 自愿登记）：子任务进入 blocked/abandoned、拆解后子任务数新增、里程碑延误。这些进入"需要关注"区。范围减少路径由 abandoned 承担（拆解无删除工具，见 4.1）
 - 认领信息（谁、何时、租约信号）与 awaiting_human 标记
 
-深潜视图（按需展开）：完整事件流（按 kind/severity 过滤），支持重建事件发生时需求的状态（由 state_change 链 + 该时点事件推导）。
+深潜视图（按需展开，M1 Web 壳），三层结构（蒸馏先行，BCD distill-pipeline）：
+- 层 0 决策线：标题 + state + 描述 + 等待人横幅（awaiting_human.summary_line 在场显该一句话——评审交接"做了什么/先看哪"；缺失降级显 reason——blocked/旧数据）+ 认领/租约 + 进度 + 需要关注区。
+- 层 1 蒸馏：验收对照表（覆盖缺口标红）+ 决策/风险/偏离（决策展开备选与拒绝理由）。
+- 层 2 次要：子任务清单、里程碑。
+- 事件流提纲优先（按 kind/severity 过滤）：人面事件逐条默认收起，提纲位 = title（空则降级显 kind 标签），点开看 content/payload 全文；簿记事件折入单一"簿记 N"组默认收起。
+- audience 单点派生：kind -> human/bookkeeping（服务端单点派生，读面禁止按 kind 重分类；未登记 kind 归人面）。
+- 支持重建事件发生时需求的状态（由 state_change 链 + 该时点事件推导）。
 
 看板视图（Web 默认列表，M1）：每需求一行紧凑行（title/state/awaiting_human/claim/progress/needs_attention），需要关注需求置顶；`needs_attention` 口径与摘要视图同源——每需求以 `_derived_signals` 全口径派生（blocked/abandoned/未解释放弃/里程碑延误/拆解新增无解释/orphaned/drift），返回 `attention_ids` 供置顶；risk 计数 severity>=attention 过滤同摘要；覆盖缺口经摘要验收对照表展示（口径同源，board 不默认展示缺口明细）。
 

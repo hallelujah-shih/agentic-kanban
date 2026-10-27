@@ -184,7 +184,9 @@ async def invalid_record(t, ctx=None):
         rid = await t.seed("invalid_record")
         await t.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
         ctx = {"rid": rid}
-    return ctx, await _fail(t, ctx, "request_review", lambda c: {"requirement_id": c["rid"], "evidence": {}})
+    return ctx, await _fail(t, ctx, "request_review",
+                            lambda c: {"requirement_id": c["rid"], "evidence": {},
+                                       "summary_line": "f 缺证据"})
 
 
 @_register("already_claimed")
@@ -205,7 +207,8 @@ async def illegal_state(t, ctx=None):
         await t.call_ok("mark_blocked", {"requirement_id": rid, "reason": "dep"})
         ctx = {"rid": rid}
     return ctx, await _fail(t, ctx, "request_review",
-                            lambda c: {"requirement_id": c["rid"], "evidence": {"test_summary": "t"}})
+                            lambda c: {"requirement_id": c["rid"], "evidence": {"test_summary": "t"},
+                                                                   "summary_line": "f 非法态"})
 
 
 @_register("not_found_claim")
@@ -245,7 +248,8 @@ async def queue_full(t, ctx=None):
         r17 = await t.seed("qf-17")
         for i, r in enumerate(reqs):
             await t.call_ok("claim_task", {"requirement_id": r, "agent_name": f"a{i}"})
-        await t.call_ok("request_review", {"requirement_id": reqs[0], "evidence": {"test_summary": "s"}})
+        await t.call_ok("request_review", {"requirement_id": reqs[0], "evidence": {"test_summary": "s"},
+                                           "summary_line": "f 交接"})
         ctx = {"r17": r17}
     return ctx, await _fail(t, ctx, "claim_task",
                             lambda c: {"requirement_id": c["r17"], "agent_name": "b"})
@@ -348,9 +352,12 @@ def http_mcp():
             ok("http: update_milestone achieved", um.get("state") == "achieved", str(um)[:100])
             rec = await h.call_ok("add_record", {"requirement_id": rid, "kind": "note", "title": "n"})
             ok("http: add_record note", rec.get("kind") == "note", str(rec)[:100])
-            pr = await h.call_ok("update_progress", {"requirement_id": rid, "note": "progress"})
+            pr = await h.call_ok("update_progress",
+                                 {"requirement_id": rid, "note": "progress",
+                                  "headline": "f 进度提纲"})
             ok("http: update_progress", pr.get("requirement_id") == rid, str(pr)[:100])
             rv = await h.call_ok("request_review", {"requirement_id": rid,
+                                                    "summary_line": "f 交接",
                                                     "evidence": {"test_summary": "t"}})
             ok("http: request_review 设 marker", (rv.get("awaiting_human") or {}).get("kind") == "review",
                str(rv)[:100])
@@ -389,7 +396,9 @@ def http_mcp():
                f"{code} | {msg} | {tid}")
             rid4 = seed_req(db, "http-invrec")
             await h.call_ok("claim_task", {"requirement_id": rid4, "agent_name": "a"})
-            code, msg, tid = await h.call_err3("request_review", {"requirement_id": rid4, "evidence": {}})
+            code, msg, tid = await h.call_err3("request_review",
+                                               {"requirement_id": rid4, "evidence": {},
+                                                "summary_line": "f 缺证据"})
             ok("http: is_error invalid_record + task_id", code == "invalid_record" and tid == rid4,
                f"{code} | {msg} | {tid}")
 
@@ -429,7 +438,9 @@ def http_mcp_sec():
             # 有 token 真实客户端 initialize + 写全流程通过（M1-1.1 验证）
             rid = seed_req(db, "sec-http")
             claim = await h.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
-            await h.call_ok("update_progress", {"requirement_id": rid, "note": "secured"})
+            await h.call_ok("update_progress",
+                            {"requirement_id": rid, "note": "secured",
+                             "headline": "f 进度提纲"})
             ok("sec: 有 token HTTP MCP initialize+写 通过", bool(claim.get("claim_id")), str(claim)[:100])
             conns = query(db, "SELECT DISTINCT actor_conn c FROM events WHERE actor_surface='mcp' "
                               "AND requirement_id=?", (rid,))

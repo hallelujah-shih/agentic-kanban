@@ -243,6 +243,7 @@ def board_terminal_fields():
                              "payload": {"choice": "A", "rationale": "快",
                                          "alternatives": [{"option": "B", "rejected_reason": "慢"}]}})
     m.call_ok("request_review", {"requirement_id": r1, "evidence": {"test_summary": "全绿"},
+                                 "summary_line": "g 交接",
                                  "assessments": [{"subtask_id": s1["subtask_id"],
                                                    "items": [{"item": "i1", "state": "met"}]}]})
     # r2: 直接 CANCELLED，无评审交接 -> reviewed False
@@ -282,7 +283,8 @@ def web_shell():
     m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
     prog_secret = "WEB_PROGRESS_SECRET_xyz"
     long_content = "WEB_LONG_CONTENT_abc"
-    m.call_ok("update_progress", {"requirement_id": rid, "note": prog_secret})
+    m.call_ok("update_progress", {"requirement_id": rid, "note": prog_secret,
+                                   "headline": "g 进度提纲"})
     m.call_ok("add_record", {"requirement_id": rid, "kind": "risk", "title": "risk",
                              "severity": "attention", "content": long_content})
     m.close()

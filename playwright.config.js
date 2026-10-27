@@ -13,7 +13,9 @@ module.exports = require('@playwright/test').defineConfig({
   retries: process.env.CI ? 1 : 0,
   use: { baseURL: `http://127.0.0.1:${E2E_PORT}` },
   webServer: {
-    command: `rm -f ${AK_E2E_DB}* && .venv/bin/python tests/e2e/seed.py ${AK_E2E_DB} && AGENT_KANBAN_DB=${AK_E2E_DB} AGENT_KANBAN_PORT=${E2E_PORT} .venv/bin/python -m agent_kanban.api`,
+    // 服务段自携带 PYTHONPATH=src：.venv 是主仓 editable 安装，worktree 下裸
+    // `python -m agent_kanban.api` 会影子主仓 src（T0 影子修正，2026-10-27）。
+    command: `rm -f ${AK_E2E_DB}* && .venv/bin/python tests/e2e/seed.py ${AK_E2E_DB} && PYTHONPATH=\${PYTHONPATH:+$PYTHONPATH:}src AGENT_KANBAN_DB=${AK_E2E_DB} AGENT_KANBAN_PORT=${E2E_PORT} .venv/bin/python -m agent_kanban.api`,
     url: `http://127.0.0.1:${E2E_PORT}/healthz`,
     reuseExistingServer: false,
     timeout: 60000,

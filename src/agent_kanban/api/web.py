@@ -1,8 +1,13 @@
-"""Web 窗口 HTML 壳（M1-2.4，PRD §4.2 Web 窗口 surface 表；2026-10-23 UI 重构）。
+"""Web 窗口 HTML 壳（M1-2.4，PRD §4.2 Web 窗口 surface 表；2026-10-23 UI 重构；2026-10-27 R4 三层）。
 
 反淹没结构保证：壳为静态 HTML + 内联 JS，零数据嵌入——数据一律由 JS fetch
-REST 获取后渲染；看板壳只渲染 /board 返回的紧凑行（无 content/payload），
-深潜壳事件流只渲染标题行（无 content/payload），原始输出结构上不进壳/渲染。
+REST 获取后渲染；看板壳只渲染 /board 返回的紧凑行（无 content/payload）。
+深潜壳三层（docs/web.md 契约源）：层0 决策线（等待人横幅 summary_line 优先/
+需要关注）-> 层1 蒸馏（验收对照 + 决策/风险/偏离，决策展开备选与拒绝理由）
+-> 层2 次要（子任务/里程碑）；事件流提纲优先——人面事件（events[].audience
+=="human"，服务端单点派生，JS 无分类表）逐条 details 默认收起、展开为写侧
+已蒸馏文字（content + payload），簿记事件折入「簿记 N」组；原始输出（无
+run_logs）结构上不进壳/渲染；全部动态串过 esc()。
 token 传播：页面从 URL ?token= 读 token 存入 sessionStorage，全部 fetch/EventSource 附 token
 （EventSource 无法设 header，走 ?token= query）。
 """
@@ -183,7 +188,8 @@ function cardHTML(t){
     who = "<div class='who'><span class='sdot' style='background:" + ccol + "'></span>"
       + esc(c.agent_name) + " <span class='meta'>· " + esc(c.signal) + "</span></div>";
   }
-  var wait = t.awaiting_human ? "<div class='wait'>等待人: " + esc(t.awaiting_human.reason || t.awaiting_human.kind || "")
+  var wait = t.awaiting_human ? "<div class='wait'>等待人: "
+    + esc(t.awaiting_human.summary_line || t.awaiting_human.reason || t.awaiting_human.kind || "")
     + " <span class='meta'>kanban approve " + esc(t.requirement_id) + "</span></div>" : "";
   return "<a class='card" + (t._attn ? " attn" : "") + "' href='/requirements/" + encodeURIComponent(t.requirement_id) + "'>"
     + "<div class='ct'>" + esc(t.title) + "</div>" + pbar
@@ -300,8 +306,12 @@ es.onmessage = loadBoard;
 
 
 def detail_shell() -> str:
-    """GET /requirements/{id}（Accept 含 text/html）深潜壳：fetch detail+summary 渲染
-    验收对照/子任务/里程碑/决策风险偏离/事件时间线/需要关注/认领租约/awaiting_human；
+    """GET /requirements/{id}（Accept 含 text/html）深潜壳：fetch detail+summary 渲染，
+    三层结构（docs/web.md）：层0 决策线（等待人横幅 summary_line 优先/认领租约/进度/
+    需要关注）-> 层1 蒸馏（验收对照 + 决策/风险/偏离，决策 <details> 展开
+    choice/rationale/alternatives 拒绝理由）-> 层2 次要（子任务/里程碑，节标题降层）；
+    事件流提纲优先（人面 details 收起、展开写侧已蒸馏文字；簿记折「簿记 N」组；
+    只信服务端 events[].audience，无 JS 分类表；空 title 降级显 kind 标签）；
     人面操作 = task 生命周期（archive / delete 标题确认）；决策操作 CLI/REST-only（PRD §4.2 修订）；操作失败内联展示 body {code,message}。"""
     return """<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8">
@@ -350,6 +360,20 @@ textarea,select{background:var(--card);color:var(--text);border:1px solid var(--
 .pbar .pb{background:var(--orange)}
 .wait-banner{background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.35);color:var(--amber);
   border-radius:8px;padding:8px 12px;font-size:.82rem;margin:8px 0}
+.sec.t2 h2{color:var(--faint)}
+.dec summary{cursor:pointer;font-size:.84rem;line-height:1.45}
+.dec-b{margin:6px 0 2px;font-size:.8rem;color:var(--muted);line-height:1.5}
+.dec-alt{margin:4px 0 0}
+.evh{border-bottom:1px solid var(--border);padding:3px 0}
+.evh:last-child{border-bottom:none}
+.evh summary{cursor:pointer;font-size:.82rem}
+.evh .evh-s{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.evh .evh-t{margin-left:auto;font-weight:600;color:var(--text)}
+.evh.bk summary{color:var(--faint)}
+.evh-b{margin:6px 0 8px 18px}
+.evh-c{white-space:pre-wrap;font-size:.8rem;color:var(--text);line-height:1.5}
+.evh-p{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 10px;
+  font-size:.74rem;color:var(--muted);white-space:pre-wrap;margin-top:6px;overflow-x:auto}
 </style></head>
 <body>
 <div class="topbar">
@@ -390,8 +414,8 @@ function render(d, s){
   if (s.description) html += "<div class='sec wide'><h2>描述</h2><div style='white-space:pre-wrap'>" + esc(s.description) + "</div></div>";
   if (s.awaiting_human) {
     var hint = s.awaiting_human.kind === "blocked" ? "解除阻塞: kanban approve " : "人面确认: kanban approve ";
-    html += "<div class='wait-banner'>等待人决策: kind=" + esc(s.awaiting_human.kind)
-      + " reason=" + esc(s.awaiting_human.reason || "")
+    var whats = s.awaiting_human.summary_line || s.awaiting_human.reason || s.awaiting_human.kind || "";
+    html += "<div class='wait-banner'>等待人决策: " + esc(whats)
       + " <span class='meta'>（" + hint + esc(s.requirement_id) + "）</span></div>";
   }
   var c = s.claim;
@@ -419,7 +443,23 @@ function render(d, s){
     }).join("，") + "</li>";
   });
   html += "</ul></div>";
-  html += "<div class='sec'><h2>子任务</h2><ul>";
+  html += "<div class='sec'><h2>决策 / 风险 / 偏离</h2><ul>";
+  s.decisions.forEach(function(x){
+    var alts = (x.alternatives || []).map(function(a){
+      return "<li>" + esc(a.option) + " <span class='meta'>（拒绝理由: " + esc(a.rejected_reason) + "）</span></li>";
+    }).join("");
+    html += "<li><details class='dec'><summary><b>决策</b> " + esc(x.title) + " → " + esc(x.choice || "") + "</summary>";
+    if (x.rationale || alts) {
+      html += "<div class='dec-b'>" + (x.rationale ? "<div>理由: " + esc(x.rationale) + "</div>" : "")
+        + (alts ? "<ul class='dec-alt'>" + alts + "</ul>" : "") + "</div>";
+    }
+    html += "</details></li>";
+  });
+  s.risks.forEach(function(x){ html += "<li><span class='badge risk" + (x.severity === "critical" ? " critical" : "") + "'>" + esc(x.severity) + "</span> " + esc(x.title) + "</li>"; });
+  s.deviations.forEach(function(x){ html += "<li><span class='badge attn'>" + esc(x.severity) + " 偏离</span> " + esc(x.title) + "</li>"; });
+  if (!s.decisions.length && !s.risks.length && !s.deviations.length) html += "<li class='muted'>（无）</li>";
+  html += "</ul></div>";
+  html += "<div class='sec t2'><h2>子任务</h2><ul>";
   d.subtasks.forEach(function(st){
     html += "<li><span class='meta'>" + st.ordinal + ".</span> " + esc(st.title)
       + " <span class='pill " + esc(st.state) + "'>" + esc(st.state) + "</span>";
@@ -427,19 +467,12 @@ function render(d, s){
     html += "</li>";
   });
   html += "</ul></div>";
-  html += "<div class='sec'><h2>里程碑</h2><ul>";
+  html += "<div class='sec t2'><h2>里程碑</h2><ul>";
   if (!d.milestones.length) html += "<li class='muted'>（无）</li>";
   d.milestones.forEach(function(m){
     html += "<li><span class='pill " + esc(m.state) + "'>" + esc(m.state) + "</span> " + esc(m.title)
       + " <span class='meta'>计划 " + esc(fmtTs(m.planned_at) || "-") + " · 实际 " + esc(fmtTs(m.actual_at) || "-") + "</span></li>";
   });
-  html += "</ul></div>";
-  html += "<div class='sec'><h2>决策 / 风险 / 偏离</h2><ul>";
-  s.decisions.forEach(function(x){ html += "<li><b>决策</b> " + esc(x.title) + " → " + esc(x.choice || "")
-    + (x.alternatives && x.alternatives.length ? " <span class='meta'>（" + x.alternatives.length + " 个备选）</span>" : "") + "</li>"; });
-  s.risks.forEach(function(x){ html += "<li><span class='badge risk" + (x.severity === "critical" ? " critical" : "") + "'>" + esc(x.severity) + "</span> " + esc(x.title) + "</li>"; });
-  s.deviations.forEach(function(x){ html += "<li><span class='badge attn'>" + esc(x.severity) + " 偏离</span> " + esc(x.title) + "</li>"; });
-  if (!s.decisions.length && !s.risks.length && !s.deviations.length) html += "<li class='muted'>（无）</li>";
   html += "</ul></div>";
   html += "</div>";
 
@@ -470,22 +503,48 @@ function render(d, s){
   k.onchange = renderEvents;
   v.onchange = renderEvents;
 }
+function evMeta(e){
+  return "<span class='meta'>#" + e.seq + "</span>"
+    + "<span class='meta'>" + esc(fmtTs(e.ts)) + "</span>"
+    + "<span class='badge " + (e.severity === "critical" ? "risk critical" : e.severity === "attention" ? "attn" : "") + "'>"
+    + esc(e.kind) + "/" + esc(e.severity) + "</span>"
+    + "<span class='meta'>" + esc(e.actor_surface) + ":" + esc(e.actor_conn || "-") + "</span>"
+    + (e.state_at_event ? "<span class='meta'>state=" + esc(e.state_at_event) + "</span>" : "");
+}
+function evOutline(e){
+  return (e.title != null && String(e.title).trim() !== "") ? String(e.title) : e.kind;
+}
+function evFlat(e){
+  return "<div class='ev'><div class='rail " + esc(e.severity) + "'></div><div style='flex:1'>"
+    + "<div class='ehd'>" + evMeta(e) + "</div><div class='et'>" + esc(evOutline(e)) + "</div></div></div>";
+}
+function evHuman(e){
+  var body = "";
+  if (e.content != null && e.content !== "") body += "<div class='evh-c'>" + esc(e.content) + "</div>";
+  if (e.payload != null && Object.keys(e.payload).length) body += "<pre class='evh-p'>" + esc(JSON.stringify(e.payload, null, 2)) + "</pre>";
+  return "<details class='evh'><summary><span class='evh-s'>" + evMeta(e)
+    + "<span class='evh-t'>" + esc(evOutline(e)) + "</span></span></summary>"
+    + (body ? "<div class='evh-b'>" + body + "</div>" : "") + "</details>";
+}
 function renderEvents(){
   if (!_D) return;
   var k = document.getElementById("ev-kind").value, v = document.getElementById("ev-sev").value;
   var html = "";
-  _D.events.forEach(function(e){
-    if (k && e.kind !== k) return;
-    if (v && e.severity !== v) return;
-    html += "<div class='ev'><div class='rail " + esc(e.severity) + "'></div><div style='flex:1'>"
-      + "<div class='ehd'><span class='meta'>#" + e.seq + "</span>"
-      + "<span class='meta'>" + esc(fmtTs(e.ts)) + "</span>"
-      + "<span class='badge " + (e.severity === "critical" ? "risk critical" : e.severity === "attention" ? "attn" : "") + "'>"
-      + esc(e.kind) + "/" + esc(e.severity) + "</span>"
-      + "<span class='meta'>" + esc(e.actor_surface) + ":" + esc(e.actor_conn || "-") + "</span>"
-      + (e.state_at_event ? "<span class='meta'>state=" + esc(e.state_at_event) + "</span>" : "")
-      + "</div><div class='et'>" + esc(e.title) + "</div></div></div>";
-  });
+  if (k || v) {
+    _D.events.forEach(function(e){
+      if (k && e.kind !== k) return;
+      if (v && e.severity !== v) return;
+      html += evFlat(e);
+    });
+  } else {
+    var human = [], bk = [];
+    _D.events.forEach(function(e){ (e.audience === "bookkeeping" ? bk : human).push(e); });
+    human.forEach(function(e){ html += evHuman(e); });
+    if (bk.length) {
+      html += "<details class='evh bk'><summary>簿记 " + bk.length + "</summary>"
+        + "<div class='evh-b'>" + bk.map(evFlat).join("") + "</div></details>";
+    }
+  }
   document.getElementById("ev-list").innerHTML = html || "<p class='muted'>（无匹配事件）</p>";
 }
 async function doOp(name){

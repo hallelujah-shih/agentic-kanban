@@ -24,15 +24,15 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 - 重试：同一需求累计重试超 2 次，系统会写 risk 事件并进"需要关注"区——这意味着你要向人说明，而不是继续闷头重试。
 - **重试成本自报**：每次重试时用 `add_record(kind=note)` 报本次重试的成本（token 数 / 耗时），让"重试代价"进事件流——系统只计数不记成本，人靠你的 note 看到一次重试付了多少钱。
 
-## 记录纪律
+## 记录纪律（命名记录契约）
 
-- **决策**：`add_record(kind=decision)`，必填 alternatives[] + rationale + 每个备选的拒绝理由（服务端强制，缺了返回 invalid_record）。事后人靠这个判断"有没有更好的方案"。
-- **偏离**：执行偏离计划（改方案/缩范围/换选型）必须 `add_record(kind=deviation)`。severity 服务端强制 >= attention；不要试图用 info 压级（会被拒绝）。结构偏离（abandoned/blocked 子任务、里程碑延误）系统会自动推导信号，你不用登记也会被看到——登记是补充"为什么"。
-- **风险**：`add_record(kind=risk)`，severity >= attention 才会进摘要。
-- **里程碑**：`add_milestone`（planned_at）+ `update_milestone`（achieved + actual_at）。迟达（actual_at > planned_at）会标延误。
-- **进度**：进度是派生值（done/total），你自报的百分数不算数。`update_progress` 只作备注。
-- **子任务去重**：同需求同 title（归一后）重复 add_subtask -> `duplicate_subtask`。先 get_task_detail 看已有拆解。
-- **BLOCKED 期间仍可写**：mark_blocked 后你依然可以补充证据/记录（写保护只查认领是否结束）。
+每条人面记录三段：
+
+- **提纲**（一行人话）：`update_progress.headline` / `add_record.title` / `request_review.summary_line` / `mark_blocked.reason`，服务端强制非空，缺/空 -> invalid_record（错误消息带参数名与示例，据此自纠）。
+- **所以呢**：对预期的影响（验收对照/偏离）或需要人做什么（approve/解除阻塞/返工）。
+- **可选细节**：content/payload，倒日志式细节不写。
+
+报节点，不报流水账。
 
 ## 报告纪律（写给人看的每一段文字都遵守）
 
@@ -44,8 +44,8 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 
 ## 交接与等待
 
-- `request_review`：要求 state=CLAIMED；必须附证据（PR 链接 / commit 区间 / 测试摘要，至少一项，缺了被拒 invalid_record）+ 逐项验收自评（met / not_met / deviated + 原因）。它**不改状态**，只设 awaiting_human(kind=review)。
-- `mark_blocked`：只有真需要人决策才用（需求转 BLOCKED + awaiting_human(kind=blocked)）。
+- `request_review`：要求 state=CLAIMED；必须附证据（PR 链接 / commit 区间 / 测试摘要，至少一项，缺了被拒 invalid_record）+ summary_line（交接一句话：做了什么/先看哪，缺/空 -> invalid_record）+ 逐项验收自评（met / not_met / deviated + 原因）。附三行人简报：做了什么 / 先看哪 / 还剩什么，summary_line 承载第一二句。它**不改状态**，只设 awaiting_human(kind=review)。
+- `mark_blocked`：只有真需要人决策才用（需求转 BLOCKED + awaiting_human(kind=blocked)）。reason 必写一行人话原因（报节点不报流水账），进事件链可回溯。
 - 人与你 inline 交互（会话内当场问答）**不经看板**：结果记一条 decision 事件即可，不设标记，流程零中断。只有交接在会话之外（session 结束、人不在场）才需要 request_review / mark_blocked。
 - **永不声称 DONE**：DONE 只能人确认。你的 request_review 是"交回请审核"，不是完成。
 
@@ -59,7 +59,7 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 | no_active_claim | 认领已结束/被释放 | 重新 claim_task |
 | lease_expired | 对过期租约 renew | 无法续，等人处理 |
 | duplicate_subtask | 拆解重复 | 复用已有子任务 |
-| invalid_record | 记录结构缺字段（decision 缺 alternatives / 缺证据） | 补全字段 |
+| invalid_record | 记录结构缺字段（decision 缺 alternatives / 缺证据 / 缺 headline / 缺 summary_line / title 或 reason 为空） | 补全字段 |
 | queue_full | 并发认领超上限 16 | 等一个释放再认领 |
 | db_busy | SQLite 忙（重试 3 次后） | 稍后重试 |
 
