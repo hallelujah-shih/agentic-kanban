@@ -65,7 +65,7 @@
 
 ### What（具体交付物）
 
-1. `write_guard.py`：requirement_id 前缀解析（含 ambiguous_id）+ 21 个取 id 函数入口重绑定解析值（spec §2.1 调用点清单）。
+1. `write_guard.py`：requirement_id 前缀解析（含 ambiguous_id）+ 21 个取 id 函数入口重绑定解析值（spec §2.1 调用点清单；重绑定值经 `norm_id` 归一 32-hex——`Requirement.id` ORM 读回为 36 连字符形态，一切 echo/错误候选均 32-hex）。
 2. `operations.py`：update_progress 返回加 lease_expires_at。
 3. 契约文档：PRD §4.3 + id 解析口径 + §4.1 update_progress 返回行；api/main.py 映射；server.py docstring。
 4. 测试：前缀解析/歧义/短输入/非 hex/全 id 回归的 AC 用例；update_progress 返回面 AC 用例。
@@ -92,7 +92,7 @@ Requirement / Claim 聚合不变。无新表、无新列、无索引变更（前
 
 1. **宁拒不猜**：前缀命中 ≥2 条必须拒绝（ambiguous_id），永不静默挑选——写错最坏后果＝事件落进错误需求（审计链污染）。
 2. **精确优先**：32 位 hex 输入走精确匹配（session.get），不进入前缀扫描；前缀扫描只服务 8~31 位输入。
-3. **单向门纯 additive**：新错误码 + 新返回字段 + 更宽解析输入；既有错误码语义、not_found 行为、小写全 id 行为逐字不变（大小写/空白归一为同类 additive 放宽）。
+3. **单向门纯 additive**：新错误码 + 新返回字段 + 更宽解析输入；既有错误码语义、not_found 行为、小写全 id 行为逐字不变（空白/大小写/连字符归一为同类 additive 放宽）。
 4. **三面同源（隐含）**：解析实现单点在 require_requirement choke point，MCP/REST/CLI 天然一致——禁止各面自行实现前缀逻辑（漂移源）；解析结果须向下游传播（调用点入口重绑定，spec §2.1），「过 choke point」不等于「生效」。
 5. **activity 不延租（隐含，ADR 0006）**：agent 面写操作只更 last_activity_at；lease_expires_at 固定、显式 renew 延长。A2 返回是通知该规则，不是改变该规则。
 6. **展示面不变（隐含）**：板面/web/export 仍显示 32 位全 id；本批只放宽输入侧。
@@ -205,10 +205,10 @@ Requirement / Claim 聚合不变。无新表、无新列、无索引变更（前
 ### 强不变量（违反即业务失败）
 
 1. **宁拒不猜**：前缀命中 ≥2 条必返 ambiguous_id，任何解析路径不得静默选择候选。违反后果：事件/状态变更落进错误需求，审计链污染（回溯判据失效）。
-2. **小写 32 位全 id 行为逐字不变**：精确匹配路径、not_found 语义、错误信息形态均不回归；大小写/空白统一归一属与 prefix 同类 additive 放宽（大写全 id 从 not_found 变命中）。违反后果：存量 agent 自动化/CLI 脚本断裂。
+2. **小写 32 位全 id 行为逐字不变**：精确匹配路径、not_found 语义、错误信息形态均不回归；空白/大小写/连字符统一归一属与 prefix 同类 additive 放宽（大写全 id 从 not_found 变命中；36 连字符全 id 现行为命中、归一后保持命中）；响应/错误中 id 均为 32-hex 形态（norm_id 归一）。违反后果：存量 agent 自动化/CLI 脚本断裂。
 3. **单向门纯 additive**：契约变化仅＝新错误码 ambiguous_id + update_progress 新返回字段 + 解析输入放宽；不删不改任何既有码、字段、工具、参数。违反后果：既有调用方断裂，单向门纪律失守。
 4. **租约语义零改动**：activity 只更 last_activity_at（ADR 0006）；A2 返回是通知，不延长 lease_expires_at。违反后果：租约模型隐式变更，signal 推导与 renew 工具语义漂移。
-5. **三面同源单点 + 传播规则**：id 前缀解析唯一实现＝require_requirement choke point（前缀逻辑全仓唯一）；21 个取 id 函数入口重绑定解析值、下游用全 id（spec §2.1 清单），MCP/REST/CLI 同语义。违反后果：同输入跨面行为漂移，或解析结果不传播导致 FK 违例/假 no_active_claim/读面静默空。
+5. **三面同源单点 + 传播规则**：id 前缀解析唯一实现＝require_requirement choke point（前缀逻辑全仓唯一）；21 个取 id 函数入口重绑定 `norm_id(req.id)`（32-hex 形态）、下游用全 id（spec §2.1 清单），MCP/REST/CLI 同语义。违反后果：同输入跨面行为漂移，或解析结果不传播/形态不归一导致 FK 违例、假 no_active_claim、读面静默空、echo 36 连字符回归。
 
 ### 软约束（违反可容忍）
 
@@ -222,3 +222,4 @@ Requirement / Claim 聚合不变。无新表、无新列、无索引变更（前
 
 - 2026-10-27 创建（主循环）。来源：skill-revise 批 user 裁决（spec-improvement-list.md:47，A1+A2 做、A3 砍）+ 现状代码取证（write_guard.py choke point / operations.py:736 返回面 / ADR 0006 activity 口径）+ 设计草稿 user 全批（四决策点按建议值）。调研交付原文未落盘，已在 §1 诚实标注重建依据。
 - 2026-10-27 随 spec v2 同步修订（对抗审查 REJECT 修正轮）：§1 补痛点实例（审疑点 1）；§2 Who/What 加 21 调用点重绑定（审 P1-1）；§3 Commands 措辞（10 个带 id 工具，审疑点 3）；§5 例 2 改 8 位共享前缀（审 P2-2）；§7 强 2 归一裁决对齐（审 P2-6）、强 5 加传播规则（审 P1-1 自毁锚）；§3 Policy 4 加「过 choke point 不等于生效」；行号勘误（operations.py:737->:736、write_guard.py:15->:14）。
+- 2026-10-27 随 spec v3 同步修订（第 2 轮 APPROVE-WITH-FIXES 折入轮）：What/强 5 钉 `norm_id` 归一形态（审 P1-4，Requirement.id 读回 36 连字符，实测）；强 2/Policy 3 归一措辞加连字符（审 P2-8，36 连字符全 id 现行为命中、归一保持）；强 2 加「响应/错误 id 均 32-hex」。
