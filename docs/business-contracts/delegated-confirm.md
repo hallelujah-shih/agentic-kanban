@@ -3,7 +3,7 @@
 **作者**: 主循环（delegated-confirm 批）
 **日期**: 2026-10-27
 **关联**: docs/PRD.md §29（职责边界）§4.2（Web 窗口）§4.3（错误码）§5.1（actor 模型）§5.2（自报声明）；ADR 0002（服务端派生 actor 先例）；skills/agent-kanban/SKILL.md（agent 收尾协议落点）；docs/adr/0000-known-gaps.md（G11：cli.py 涉改，合入后 `uv sync --reinstall-package agent-kanban`；G3：Web 待决页推迟的判据来源）；docs/business-contracts/a1a2-mcp-surface.md（A1 id 解析语义，本批复用）；docs/ops/pm-review-2026-10-27.md（v2 拆分裁决）
-**状态**: v2.1（2026-10-27 spec 取证折入：D1 set_expectations 无受托入口 + 展示面措辞收窄至既有通用渲染；2026-10-27 PM 评审拆分：Web 待决页移出本批、推迟至 G3 后，user 裁决「按照你的建议实施」）；待对抗审查
+**状态**: v2.2（2026-10-27 对抗审查第 1 轮发现折入：配对规则反向收窄 + add_record 例外登记 / 计数 6 命令/6 端点 / 候选列表加状态 / REST body 形态钉死；与 spec v2 对齐；2026-10-27 spec 取证折入：D1 set_expectations 无受托入口 + 展示面措辞收窄至既有通用渲染；2026-10-27 PM 评审拆分：Web 待决页移出本批、推迟至 G3 后，user 裁决「按照你的建议实施」）；待对抗审查
 **板上任务**: bcd3a69074b641dba70a08afbce1ac05（CLAIMED，main-loop）
 
 ---
@@ -37,7 +37,7 @@
 
 1. **Q1 确认源（kind）**（2026-10-27 user「可以」）：`statement`（人的会话表态）+ `action`（人的工作面动作中 agent 结构性做不了的，如远端 PR merge；本地仓检测不算——本地仓 ff 折入是 agent 自己的动作，防自我认证）。
 2. **Q2 委托范围**（2026-10-27 user「可以」）：宽松——写事件的 6 个人面操作（approve/release/reopen/renew/note/abandon，含 release --all-stale）皆可代执行，两种 kind 均收；delete/archive 等破坏性/非确认操作结构性无受托参数（不可能性即门禁）；**set_expectations 不在受托面**（不写事件，受托标记无载体——spec §1 D1，审计模型结构性推论）。
-3. **Q3 审计形态**（2026-10-27 user「可以」）：一等受托面——`actor_surface` 加 `delegated`（服务端派生：人面 + 有效受托参数才落此值，沿用 PRD §5.1/ADR 0002 服务端派生先例）；`payload.delegated={kind,basis}` 结构化（payload JSON 列既有，零 schema 变更）；CLI `--on-behalf "<kind>:<basis>"`；REST body 可选 delegated 字段；delegated 可见面＝既有通用渲染透传（CLI view detail 事件行 `by delegated:cli` + export/REST JSON `payload.delegated`；完整「代执行（依据：…）」渲染随 G3 后 Web 待决页统一）；MCP 12 工具面零改动（无受托参数，agent 自身动作恒 mcp）；错误码零新增（误用 -> invalid_record 新触发实例）。
+3. **Q3 审计形态**（2026-10-27 user「可以」）：一等受托面——`actor_surface` 加 `delegated`（服务端派生：人面 + 有效受托参数才落此值，沿用 PRD §5.1/ADR 0002 服务端派生先例）；`payload.delegated={kind,basis}` 结构化（payload JSON 列既有，零 schema 变更）；CLI `--on-behalf "<kind>:<basis>"`；REST body 可选 delegated（approve/renew 为顶层 body `{kind,basis}`，其余既有 body 端点为嵌套可选字段）；delegated 可见面＝既有通用渲染透传（CLI view detail 事件行 `by delegated:cli` + export/REST JSON `payload.delegated`；完整「代执行（依据：…）」渲染随 G3 后 Web 待决页统一）；MCP 12 工具面零改动（无受托参数，agent 自身动作恒 mcp）；错误码零新增（误用 -> invalid_record 新触发实例）。
 4. **Q4 兜底面**（2026-10-27 user「可以」，v2 修订）：CLI 零输入（approve/release 无 --requirement-id：恰 1 条待决直接执行、多条列号选、0 条提示）。**Web 待决页 v1 原在 Q4 内，2026-10-27 PM 评审裁决移出本批**（零观察到需求；PRD §29 定位本批不重裁）——推迟至 G3 试用出数据后再定（known-gaps G3 / pm-review 裁决 2）。
 
 ---
@@ -58,7 +58,7 @@
 ### How（影响路径）
 
 1. 受托面：人面（CLI 进程 / REST conn）+ 结构有效受托参数 -> actor_surface=delegated，且该命令写的事件带 payload.delegated（surface 与 payload 同一函数落值，结构耦合防失配）。
-2. CLI：7 命令加 `--on-behalf "<kind>:<basis>"`；approve/release 的 --requirement-id 改可选（零输入＝客户端编排：既有 list_awaiting 读 -> 解析 -> 携全 id 调既有写接口，服务端零新接口）。
+2. CLI：6 命令加 `--on-behalf "<kind>:<basis>"`（approve/release/renew/note/reopen/abandon；set_expectations 结构性缺席，spec §1 D1）；approve/release 的 --requirement-id 改可选（零输入＝客户端编排：既有 list_awaiting 读 -> 解析 -> 携全 id 调既有写接口，服务端零新接口）。
 3. Web：本批零改动（待决页推迟至 G3 后，裁决见修订记录与 pm-review）。
 4. 契约同步：PRD §5.1（surface 枚举 + 派生规则）§4.3（invalid_record 实例清单）；SKILL.md 收尾协议。§29/§4.2（Web 定位）本批不动。
 
@@ -66,8 +66,8 @@
 
 1. `services/identity.py`（或写层单点）：受托参数 -> (delegated, payload) 派生 + 结构校验（kind 枚举 / basis 非空；非法 -> invalid_record，消息带参数名与示例）。
 2. `services/operations.py`：写事件的 6 操作（approve/release/release_all_stale/note/renew/reopen/abandon）加可选受托参数，写事件时落 payload（含 state_change 事件，经 transition event_payload）；set_expectations 无受托入口（无事件载体，spec §1 D1）。
-3. `cli.py`：--on-behalf（7 命令）+ approve/release 零输入模式（G11：合入后 `uv sync --reinstall-package agent-kanban`）。
-4. `api/requirements.py`：7 端点 body 可选 delegated 字段（approve 端点新增可选 body，ReopenIn | None 先例 requirements.py:111）。
+3. `cli.py`：--on-behalf（6 命令：approve/release/renew/note/reopen/abandon）+ approve/release 零输入模式（G11：合入后 `uv sync --reinstall-package agent-kanban`）。
+4. `api/requirements.py`：6 端点可选 delegated（approve/renew 新增可选 body，body 整体即顶层 `{"kind","basis"}`，ReopenIn | None 先例 requirements.py:111；release/note/abandon/reopen 既有 body 模型加嵌套可选 `delegated` 字段）。
 5. `api/web.py` / `mcp/server.py`：**零改动**（Web 待决页推迟；MCP 无受托参数、无新工具）。
 6. 契约文档：PRD 两处（§5.1/§4.3）+ skills/agent-kanban/SKILL.md 收尾协议。
 7. 测试：AC（受托派生/配对/零输入三分支 + 非交互拒绝/结构非法拒绝/REST 字段/无参回归）；e2e 无新增（既有 15 用例回归即可，Web 面未动）。
@@ -84,7 +84,7 @@
 1. `actor_surface` 枚举新增值 `delegated`（既有 mcp/cli/system 语义不变）。
 2. 写事件的 6 操作写的事件可携带 `payload.delegated = {kind, basis}`（可选字段；无受托参数＝无该字段，逐字不变）。set_expectations 不写事件，无受托参数（spec §1 D1）。
 
-**配对规则**：任何 actor_surface=delegated 的事件必有结构有效的 payload.delegated，反之亦然（服务端单点派生保证零失配）。
+**配对规则**（v2.2 审查 R3 收窄）：**正向（系统级）**：任何 actor_surface=delegated 的事件必有结构有效的 payload.delegated（delegated 只能由 cli/rest 派生层置出，可达的 6 个 op 写点全部落标）。**反向（限定 6 op 写点）**：6 op 写出的事件，payload 含 delegated 键 ⟺ surface=delegated。**例外**：MCP `add_record` 自由 payload 可含同名 `delegated` 键（agent 自报内容，PRD §5.2 同边界）-> surface=mcp + payload.delegated 真实存在，不在反向保证范围。**审计检索代执行面主键＝`actor_surface=delegated`，`payload.delegated` 为佐证**。
 
 ### Commands
 
@@ -103,7 +103,7 @@
 3. **kind 语义**：statement＝人会话表态（声明）；action＝人的工作面动作且 agent 结构性做不了（远端 PR merge；本地仓检测显式不算）。
 4. **basis 声明级**：自由文本，存 payload、标注声明、不作事实（PRD §5.2 自报声明哲学，与 reported by 同边界）；不做机器验证。
 5. **不可能性即门禁**：delete/archive/new/reconcile/prune 等无受托参数入口（CLI 不加 flag、REST body 模型无字段、MCP 无参数）——「代执行硬删」结构性不可能。
-6. **零输入宁拒不猜**：0 待决＝提示零写；恰 1＝直接执行；多条＝交互列号选（带标题）；多条 + 非交互通道（非 tty）＝拒绝（列候选 + 提示携 --requirement-id）。解析复用既有 id 路径（A1 语义）。
+6. **零输入宁拒不猜**：0 待决＝提示零写；恰 1＝直接执行；多条＝交互列号选（编号 + 短 id + **状态** + 标题，状态取自 list_awaiting 既有返回——BLOCKED 候选被 approve 是解阻而非 DONE，列表必须可区分，v2.2 审查 R6）；多条 + 非交互通道（非 tty）＝拒绝（列候选 + 提示携 --requirement-id）。解析复用既有 id 路径（A1 语义）。
 7. **错误码零新增**：误用（格式非法 / kind 越枚举 / basis 空）-> invalid_record 新触发实例（PRD §4.3 清单 additive 更新；「每个码有唯一触发条件」纪律保持：invalid_record＝记录结构字段缺失/非法，实例清单只增）。
 8. **Web 面本批零改动**：待决页（approve/release 按钮 + §29 定位重裁）整体推迟至 G3 后（2026-10-27 PM 评审裁决：零观察到需求）；PRD §29/§4.2 本批不重裁。
 9. **单向门纯 additive**：无受托参数路径、MCP 面、状态机、租约语义、错误码集、REST 无 body 调用、既有 surface 值行为、Web 面均逐字不变。
@@ -135,7 +135,7 @@
 ### 边缘场景 2（零输入，多条 + 非交互）
 - Given: 2 条 awaiting；stdin 非 tty（管道/脚本）
 - When: `cli.py approve`
-- Then: 拒绝——列编号候选（id + 标题）+「请携 --requirement-id」提示，零写（宁拒不猜）
+- Then: 拒绝——列编号候选（短 id + 状态 + 标题，如 `1. <短id> [CLAIMED] 标题`）+「请携 --requirement-id」提示，零写（宁拒不猜）
 
 ### 边缘场景 3（on-behalf 结构非法）
 - Given: 任意板面
@@ -178,11 +178,11 @@
 - 预期: 等价 `approve --requirement-id <A 全id>`，返回 {requirement_id, state}
 
 ### 例 4（零输入，多条，交互）
-- 输入: `cli.py approve`；awaiting＝[A, B]（tty）
-- 预期: 输出 `1. <短id> <标题A>` / `2. <短id> <标题B>` + 选号提示；输入 1 -> 执行 A；输入越界/非法 -> 拒绝零写
+- 输入: `cli.py approve`；awaiting＝[A(CLAIMED), B(BLOCKED)]（tty）
+- 预期: 输出 `1. <短id> [CLAIMED] <标题A>` / `2. <短id> [BLOCKED] <标题B>` + 选号提示；输入 1 -> 执行 A；输入越界/非数字 -> 拒绝零写
 
 ### 例 5（REST delegated）
-- 输入: `POST /requirements/<id>/approve` body `{"delegated":{"kind":"statement","basis":"user 会话原话"}}`
+- 输入: `POST /requirements/<id>/approve` body `{"kind":"statement","basis":"user 会话原话"}`（顶层形态，无 delegated wrapper——body 存在即受托意图；release/note/reopen 等既有 body 端点为嵌套可选 `delegated` 字段）
 - 预期: 200，事件 surface=delegated；同 URL 无 body -> surface=cli（回归用例）
 
 ### 客户期望 vs 系统行为差异表
@@ -215,7 +215,7 @@
 
 ### 失败原因 4（技术维度）：surface/payload 失配
 - 失败序列: 未来新操作或写路径设 surface=delegated 却漏 payload.delegated（或反之）-> 审计配对断裂 -> 回溯工具两边都不可信，受托面退化为「半个标记」。
-- 预防: 单点派生函数（surface 与 payload 同一调用点同批落值，写事件的 6 操作全走它，禁直接构造；spec §2.2/§2.3）+ AC 配对断言（全量：surface=delegated 事件必有有效 payload.delegated，反之亦然）。
+- 预防: 单点派生函数（surface 与 payload 同一调用点同批落值，写事件的 6 操作全走它，禁直接构造；spec §2.2/§2.3）+ AC 配对断言（正向全表：surface=delegated 事件必有有效 payload.delegated；反向限定 6 op 独占 kind，见 §3 配对规则收窄）。
 - 残余: 无（断言为全量不变量，可机器验证）。
 
 ### 失败原因 5（技术维度）：approve 端点 body 变更回归
@@ -254,3 +254,4 @@
 - 2026-10-27 创建（主循环）。来源：user 2026-10-27 会话两段原话（零输入痛点 + 收尾协议）+ 四决策点裁决（Q1 确认源 / Q2 委托范围 / Q3 审计形态 / Q4 兜底面，user「可以」）+ 现状代码取证（identity.py 服务端派生先例 / cli.py:280 approve required / requirements.py REST 面 + ReopenIn|None 先例 / web.py 详情页仅 archive/delete / awaiting_human 列 + list_awaiting 读路径 operations.py:936 / events.payload JSON 列 / PRD §29/§4.2/§4.3/§5.1/§5.2）。
 - 2026-10-27 v2 修订（PM 评审拆分，user 裁决「按照你的建议实施」）：C-c Web 待决页整体移出本批（§1 解读表/我的解读/待澄清 4、§2 Why/Who/How/What、§3 Policy 8/9、§4 原 Scenario 4 留档、§5 差异表、§6 新增失败原因 6、§7 软约束 2/强 4）；本批范围收窄＝受托面（delegated）+ CLI 零输入 + agent 收尾协议，Web 面/PRD §29/§4.2 零改动。依据：docs/ops/pm-review-2026-10-27.md（零观察到确认需求；序倒置——G3 基线周先行，M1 以 G3/AC14 跑完为准）。
 - 2026-10-27 v2.1 修订（spec 取证折入，与 spec 2026-10-27-delegated-confirm-design.md 对齐）：D1——set_expectations 不写事件（operations.py:115 取证），受托标记无载体，从受托面移出（Q2/What 2/Domain Events/Commands/强 2；属审计模型结构性推论，非范围扩大）；展示面措辞收窄——「板面显『代执行（依据：…）』」明确为既有通用渲染透传（view detail 事件行 `by delegated:cli` + export/REST JSON payload.delegated），完整措辞渲染随 G3 后 Web 待决页统一（Q3/Who 3/Scenario 1 Then/差异表/失败原因 1、2）。
+- 2026-10-27 v2.2 修订（对抗审查第 1 轮发现折入，与 spec v2 对齐）：配对规则收窄（§3 配对规则 + 强 3 预防）——正向系统级保证 + 反向限定 6 op 独占 kind，MCP add_record 自由 payload 登记例外，审计主键＝actor_surface=delegated；计数修正——How 2 / What 3/4 的「7 命令/7 端点」-> 6/6（set_expectations 结构性缺席已列，原计数误含）；REST body 形态钉死——Q3 / What 4 / 例 5：approve/renew 顶层 body {kind,basis}，其余端点嵌套可选字段；零输入候选列表加状态（Policy 6 / 边缘场景 2 / 例 4：短 id + 状态 + 标题，BLOCKED 候选可区分）。
