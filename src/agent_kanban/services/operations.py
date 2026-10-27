@@ -756,7 +756,7 @@ async def update_progress(
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
     await lease_svc.touch_activity(session, requirement_id, now)
-    return {"requirement_id": requirement_id}
+    return {"requirement_id": requirement_id, "lease_expires_at": claim.lease_expires_at.isoformat()}
 
 
 async def request_review(

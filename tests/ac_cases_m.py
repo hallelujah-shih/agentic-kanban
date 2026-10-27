@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
-from ac_lib import MCP, REST, new_db, ok, query, seed_req
+from ac_lib import MCP, REST, cli_ok, new_db, ok, query, seed_req
 
 PFX = "aabbccdd"
 _BOOTSTRAPPED: set[Path] = set()
@@ -237,5 +238,46 @@ def m_echo():
             ok("m9: 全 id 输入返回恒等（回归）", res2["requirement_id"] == rid2, str(res2["requirement_id"]))
         finally:
             m2.close()
+    finally:
+        m.close()
+
+
+def m_lease_return():
+    print("== m10: A2 返回（lease_expires_at aware UTC iso + 前缀输入返回全 id）")
+    db = new_db()
+    rid = "0f0e0d0c" + "b" * 24
+    _seed(db, rid)
+    m = MCP(db).start()
+    try:
+        m.call_ok("claim_task", {"requirement_id": rid[:8], "agent_name": "a"})
+        res = m.call_ok("update_progress", {"requirement_id": rid[:8], "note": "n", "headline": "h"})
+        ok("m10: 前缀输入 requirement_id = 32-hex 全 id", res["requirement_id"] == rid, str(res["requirement_id"]))
+        ok("m10: 含 lease_expires_at", "lease_expires_at" in res, str(res))
+        v = res.get("lease_expires_at", "")
+        dt = datetime.fromisoformat(v)
+        ok(
+            "m10: aware UTC iso（…+00:00，全仓 UTCDateTime 口径）",
+            dt.utcoffset() is not None and v.endswith("+00:00"),
+            v,
+        )
+    finally:
+        m.close()
+
+
+def m_lease_seq():
+    print("== m11: 口径（顺序钉死 renew -> update_progress，两返回 lease_expires_at 相等）")
+    db = new_db()
+    rid = "11223344" + "c" * 24
+    _seed(db, rid)
+    m = MCP(db).start()
+    try:
+        m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+        r1 = cli_ok(db, "renew", "--requirement-id", rid)  # renew 是人面 CLI/REST（MCP 12 工具无 renew，v1.3 裁决）
+        r2 = m.call_ok("update_progress", {"requirement_id": rid, "note": "n", "headline": "h"})
+        ok(
+            "m11: renew 与 update_progress 返回 lease_expires_at 相等",
+            r1.get("lease_expires_at") == r2.get("lease_expires_at"),
+            f"{r1.get('lease_expires_at')} vs {r2.get('lease_expires_at')}",
+        )
     finally:
         m.close()

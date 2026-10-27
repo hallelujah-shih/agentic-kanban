@@ -26,8 +26,8 @@ from ac_cases_l import (l_audience, l_blocked_reason_chain, l_blocked_reason_emp
                         l_export_stable, l_headline, l_latest_first, l_record_title,
                         l_summary_line, l_tool_self_desc)
 from ac_cases_m import (m_echo, m_full_id, m_cross_surface, m_normalization,
-                        m_prefix_ambiguous, m_prefix_invalid, m_prefix_trunc,
-                        m_prefix_unique, m_prefix_zero)
+                        m_lease_return, m_lease_seq, m_prefix_ambiguous, m_prefix_invalid,
+                        m_prefix_trunc, m_prefix_unique, m_prefix_zero)
 
 TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
@@ -64,6 +64,7 @@ TESTS: dict[str, object] = {
     "m_prefix_trunc": m_prefix_trunc, "m_prefix_zero": m_prefix_zero, "m_prefix_invalid": m_prefix_invalid,
     "m_full_id": m_full_id, "m_normalization": m_normalization, "m_cross_surface": m_cross_surface,
     "m_echo": m_echo,
+    "m_lease_return": m_lease_return, "m_lease_seq": m_lease_seq,
 }
 
 
