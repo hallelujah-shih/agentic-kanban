@@ -1,9 +1,9 @@
 """REST 人面路由（PRD 4.2/4.3 + plan M0-1.3）。actor 服务端派生（rest_actor）。
 
 错误映射（契约，审#7）：not_found=404、illegal_state=409、lease_expired=409、
-invalid_record=422、db_busy=503；already_claimed/no_active_claim/duplicate_subtask/
-queue_full 为 agent 面（MCP）专用码，REST 无触发端点（保留作契约完整性，body 仍
-{code,message,task_id}）。MCP 保持 is_error 无 HTTP 码（PRD 4.3）。
+ambiguous_id=409、invalid_record=422、db_busy=503；already_claimed/no_active_claim/
+duplicate_subtask/queue_full 为 agent 面（MCP）专用码，REST 无触发端点（保留作契约
+完整性，body 仍 {code,message,task_id}）。MCP 保持 is_error 无 HTTP 码（PRD 4.3）。
 """
 
 from __future__ import annotations
