@@ -1,7 +1,7 @@
 # Spec: 批 2 A1 短 id 前缀匹配 + A2 update_progress 返回租约态
 
 **日期**: 2026-10-27
-**状态**: 对抗审查共识达成（2026-10-27，终态 APPROVE，3 轮同一审者）：第 1 轮 REJECT（3 P1 + 6 P2）全修正（v2）；第 2 轮 APPROVE-WITH-FIXES（P1-4 读回形态 + P2-7/P2-8）全折入（v3）；第 3 轮 3 项（N1 PRD 句自洽 / N2 用例 7 括注 / N3 BCD Who 连字符）折入（v3.1，审者声明不复审）。待 user 审阅 spec
+**状态**: 对抗审查共识达成（2026-10-27，终态 APPROVE，3 轮同一审者）：第 1 轮 REJECT（3 P1 + 6 P2）全修正（v2）；第 2 轮 APPROVE-WITH-FIXES（P1-4 读回形态 + P2-7/P2-8）全折入（v3）；第 3 轮 3 项（N1 PRD 句自洽 / N2 用例 7 括注 / N3 BCD Who 连字符）折入（v3.1，审者声明不复审）。**user 审阅通过（2026-10-27，「按照你的建议实施」——含 §5.5 SKILL.md:22 建议措辞裁决）**
 **分支/worktree**: a1a2-mcp（基于 main 8a60111，.worktree/a1a2-mcp）
 **BCD**: `docs/business-contracts/a1a2-mcp-surface.md`（7 节齐；user 裁决 2026-10-27 设计草稿全批，四决策点按建议值：8 hex 最小前缀 / 仅 requirement_id / ambiguous_id REST=409 / A2 仅 lease_expires_at）
 **板上任务**: 396f583730514ab5a3963dd58563bdcd
