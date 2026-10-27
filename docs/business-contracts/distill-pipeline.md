@@ -105,7 +105,7 @@
 
 ### Policies（含隐含 Policy）
 
-1. **蒸馏恰好一次，在生成点**：写契约强制提纲（服务端校验结构——非空、长度上限；语义质量是写侧责任，服务端不生成人面文字）；存储/展示层忠实不聪明——不二次摘要、不做读侧语义挑选。
+1. **蒸馏恰好一次，在生成点**：写契约强制提纲（服务端校验结构——非空；长度上限未强制（8KB 单事件 payload 上限作用于 note/content/payload）；语义质量是写侧责任，服务端不生成人面文字）；存储/展示层忠实不聪明——不二次摘要、不做读侧语义挑选。
 2. **追加链不被蒸馏破坏**：蒸馏＝展示层挑选（排序/收起/层级），不是存储层删改；export 全量不变；PRD §5.4 回溯 5 判据全部仍可回答。
 3. **severity 当真用**：review_request / risk / deviation = 需要人（>= attention）；progress_note / note / 簿记类 = info。摘要关键节点区只呈现 >= attention 的人面 kind（deviation 强制 >= attention 既有规则保留，5.3）。
 4. **人/机分类单点同源**：audience = 派生函数(kind)，唯一定义；读点（board/摘要/深潜/SSE/export）共用；禁止现状「各读点字符串匹配 kind + payload 形状」。

@@ -160,7 +160,7 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 | add_record | title 必填（一行人话提纲，空 -> invalid_record）；kind = decision / risk / deviation / decomposition / note；decision 必含 alternatives[] + rationale + 拒绝理由；deviation severity 强制 >= attention | 未结束认领 |
 | update_progress | 进度备注（不覆盖派生值）；headline 必填（一行人话提纲，缺/空 -> invalid_record） | 未结束认领 |
 | request_review | 设 awaiting_human(kind=review)，持久化验收自评到 subtasks.acceptance[].state，附证据（PR / commit 区间 / 测试摘要，至少一项，缺证据拒绝）+ summary_line 必填（交接一句话，缺/空 -> invalid_record）；review_request 事件 severity=attention；不改状态 | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
-| mark_blocked | 转移 CLAIMED -> BLOCKED + 设 awaiting_human(kind=blocked)，附原因（一行人话，缺/空 -> invalid_record） | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
+| mark_blocked | 转移 CLAIMED -> BLOCKED + 设 awaiting_human(kind=blocked)，附原因（一行人话，为空 -> invalid_record） | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
 | list_awaiting | 全部"等你决策"条目，含等待时长 | 读（人面） |
 
 释放不属于 agent 面：MCP 工具面无 release 工具，唯一释放路径为人面 CLI `release`（见 4.2）。

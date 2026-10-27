@@ -174,7 +174,7 @@ async def mark_blocked(
 ) -> CallToolResult:
     """标记阻塞：CLAIMED -> BLOCKED；reason 进追加链（state_change 事件）+ awaiting_human(kind=blocked)。
     参数: requirement_id, reason（一行人话阻塞原因）, evidence（可选）。
-    错误: illegal_state（非 CLAIMED）/ no_active_claim / invalid_record（缺/空 reason）。
+    错误: illegal_state（非 CLAIMED）/ no_active_claim / invalid_record（空 reason）。
     记录契约: reason 必写一行人话原因（报节点不报流水账），进事件链可回溯。
     """
     return await _call(
