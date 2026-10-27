@@ -25,7 +25,7 @@
 - **前置（T1 Step 0）**：worktree `.venv` 自建——`uv venv .venv && uv pip install -e .`（实钉版本以 `uv pip list` 为准；主仓记录 python 3.14.4 / mcp 2.3.0 / sqlalchemy 2.1.6）。
 - tier-1（合并门槛基础）: `TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python -u tests/run_ac.py`；新用例单跑 `--only n_parse`（T1 后加 n1-n9,n10,n11,n28 / n19-n24,n26,n27 / n12-n18,n17b）。
 - tier-0: `.venv/bin/python -m compileall -q src cli.py tests`。
-- 基线: 全量 **624/624**（批首全跑复核一次，红则停）。计数单位＝`ok()` **断言数**：本批新增 68 断言（T1 10 + T2 30 + T3 12 + T4 16）-> 终态 **692/692**（以实际 run 值为准，出入记 ledger）。
+- 基线: 全量 **624/624**（批首全跑复核一次，红则停）。计数单位＝`ok()` **断言数**：本批新增 69 断言（T1 10 + T2 31 + T3 12 + T4 16）-> 终态 **693/693**（以实际 run 值为准，出入记 ledger）。
 - 最高 tier（收尾）: tier-1 全绿 + e2e `TMPDIR=... AK_E2E_DB=/home/shih/.tmp-ak-m16/delegated-confirm/ak-e2e.db npx playwright test`（基线 15/15，撞端口加 `E2E_PORT`）+ docker 双轨（默认轨 build + healthz 200；pypi 轨命令见 `docs/ops/ci-verification.md`）。
 - harness 纪律: 断言引 spec/BCD；DB 事后 sqlite3 直查（`query`）；真实子进程（MCP stdio / uvicorn / CLI），禁 mock；**禁改 `tests/ac_lib.py`**（基座冻结——零输入用例用 case-local helper 钉 `stdin=DEVNULL`，`ac_cases_k.py:37-44 _run_cli` 同模式，R1 实证结论）。
 - STALE 确定性造法（禁 sleep）：`MCP(db, extra={"AGENT_KANBAN_LEASE_SECONDS": "-1"})`（ac_cases_c.py:496 先例）。
@@ -393,8 +393,11 @@ def _bad_flag_case(flag: str, label: str):
     for n in (0, 1, 2):
         db = new_db()
         _mk_awaiting(db, n)
+        # T2 阶段 approve --requirement-id 仍 required（T3 才改可选）：携真实 id，
+        # id 不参与解析（parse 是 handler 首语句，先于任何 DB 操作）。
+        rid = seed_req(db, f"{label}-rid")
         before = query(db, "SELECT COUNT(*) AS n FROM events")[0]["n"]
-        res = cli(db, "approve", "--on-behalf", flag)
+        res = cli(db, "approve", "--requirement-id", rid, "--on-behalf", flag)
         after = query(db, "SELECT COUNT(*) AS n FROM events")[0]["n"]
         ok(f"{label}[{n}待决]: {flag!r} -> invalid_record 零写 exit1 无Traceback",
            res.returncode == 1 and res.stderr.strip().startswith("invalid_record")
@@ -515,7 +518,7 @@ TESTS dict `"n_parse": n_parse,` 之后加：
 
 ```bash
 TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python tests/run_ac.py \
-  --only n1,n2,n3,n4,n5,n6,n7,n8,n9,n28 | tee /home/shih/.tmp-ak-m16/delegated-confirm/red-T2.log
+  --only n1,n2,n3,n4,n5,n6,n7,n8,n9,n10,n11,n28 | tee /home/shih/.tmp-ak-m16/delegated-confirm/red-T2.log
 # 期望: n1-n8 FAIL（unrecognized arguments: --on-behalf，rc=2）；n9/n10/n11/n28 PASS
 # （变更前即成立的锚：n9 无 flag 回归 / n10 MCP 结构门禁 / n11 配对空表 /
 # n28 argparse 已拒）；日志留档
@@ -648,9 +651,9 @@ argparse（6 个子 parser 各加一行，加在该 parser 既有 add_argument �
 ```bash
 TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python tests/run_ac.py \
   --only n1,n2,n3,n4,n5,n6,n7,n8,n9,n10,n11,n28
-# 期望: 30/30 PASS
+# 期望: 31/31 PASS
 TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python -u tests/run_ac.py | tail -3
-# 期望: 664/664 PASS（634 + 30）
+# 期望: 665/665 PASS（634 + 31）
 .venv/bin/python -m compileall -q src cli.py tests
 ```
 
@@ -808,8 +811,10 @@ def n27():
 ```bash
 TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python tests/run_ac.py \
   --only n19,n20,n21,n22,n23,n24,n26,n27 | tee /home/shih/.tmp-ak-m16/delegated-confirm/red-T3.log
-# 期望: n19/n20/n22/n23/n24 FAIL（approve 无参 -> argparse "the following arguments are
-# required: --requirement-id" rc=2；n21 同样 rc=2 非 1；n26/n27 因零输入不可达连带 FAIL）
+# 期望: n19/n20/n23/n24 FAIL（approve/release 无 --requirement-id -> argparse
+# "the following arguments are required: --requirement-id" rc=2；n21 同样 rc=2 非 1；
+# n26/n27 因零输入不可达连带 FAIL）；n22 PASS（变更前即成立锚：release 无参走 op 层
+# 既有 reason fail-fast，operations.py:203-205 先于 DB 读取）
 ```
 
 - [ ] **Step 3: cli.py 零输入编排**
@@ -931,7 +936,7 @@ TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python tests/run_a
   --only n19,n20,n21,n22,n23,n24,n26,n27
 # 期望: 12/12 PASS
 TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python -u tests/run_ac.py | tail -3
-# 期望: 676/676 PASS（664 + 12）
+# 期望: 677/677 PASS（665 + 12）
 .venv/bin/python -m compileall -q src cli.py tests
 ```
 
@@ -1214,7 +1219,7 @@ TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python tests/run_a
   --only n12,n13,n14,n15,n16,n17,n17b,n18
 # 期望: 16/16 PASS
 TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python -u tests/run_ac.py | tail -3
-# 期望: 692/692 PASS（676 + 16）
+# 期望: 693/693 PASS（677 + 16）
 .venv/bin/python -m compileall -q src cli.py tests
 ```
 
@@ -1289,7 +1294,7 @@ git commit -m "T4: REST delegated——DelegatedIn + 6 端点（approve/renew �
 # 非代码资产检查清单（AGENTS.md 仓适配事实）：docs 改动复读变更节 + 核对交叉引用目标存在
 # （PRD 4 处复读；SKILL.md 新节复读；AGENTS.md 2 处复读；models.py 行复读）
 TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp .venv/bin/python -u tests/run_ac.py | tail -3
-# 期望: 692/692 PASS（若 T1-T4 实际断言数与本计划 68 有出入，以实际为准并回填本节）
+# 期望: 693/693 PASS（若 T1-T4 实际断言数与本计划 69 有出入，以实际为准并回填本节）
 TMPDIR=/home/shih/.tmp-ak-m16/delegated-confirm/tmp AK_E2E_DB=/home/shih/.tmp-ak-m16/delegated-confirm/ak-e2e.db npx playwright test
 # 期望: 15/15 PASS（Web 面零改动回归；sqlite disk I/O error 先查 /tmp quota＝环境面）
 # docker 双轨（默认轨）：
@@ -1310,7 +1315,7 @@ git commit -m "T5: 契约同步——PRD 4 处（§4.2 两命令句/§4.3 实例
 
 - [ ] n25 人工核验（spec §9 残余 1）：临时 DB 造 2 条 awaiting，真终端跑 `cli.py approve`：(a) 输入非数字 `abc` -> stderr 拒绝零写；(b) 输入越界序号 99 -> 拒绝零写；(c) 再跑一次输入 1 -> 执行第 1 条。核验记录入批次 ledger。
 
-- [ ] 最高 tier 全链（worktree 根）：tier-1 全量 692/692 + e2e 15/15 + docker 双轨（Step 4 已跑，留日志入 `/home/shih/.tmp-ak-m16/delegated-confirm/`）。
+- [ ] 最高 tier 全链（worktree 根）：tier-1 全量 693/693 + e2e 15/15 + docker 双轨（Step 4 已跑，留日志入 `/home/shih/.tmp-ak-m16/delegated-confirm/`）。
 - [ ] 核对 spec §5 兼容矩阵 12 行逐行「逐字不变/零改动」断言已被用例锚定（n9/n13 无参回归 / n10 MCP / n18 archive / n28 CLI 结构门禁 / release --all-stale 无 on-behalf 既有 cli_m0 覆盖）；核对 §1 非目标未偷渡（Web 零改动 / MCP 零改动 / 零 schema / 错误码零新增 / set_expectations 结构性缺席）。
 - [ ] push 分支 `delegated-confirm`（`ssh://git@ssh.github.com:443` 网络口径）-> 发起 PR（user 裁决合入；agent 永不 merge）。
 - [ ] 合入后：主仓 `uv sync --reinstall-package agent-kanban`（G11，cli.py 涉改）+ 生产部署 `docker compose up -d --build kanban`（主仓根）+ 核验（healthz 200 + 容器代码态 + list_awaiting）。
