@@ -16,7 +16,7 @@
 >
 > 下批（第二批）：A1 短 id 前缀匹配 + A2 update_progress 返回加租约态（MCP 产品面，新代码批，新板上任务）。
 
-（诚实标注：调研交付的详细条目原文未落盘——跨批次改进调研（2026-10-27，M1-6/CI/G12 三批复盘）的 A1/A2 建议细节只存在于 skill-revise 批对话中，档案仅存名称 + 裁决。本 BCD 的「客户期望」重建自：项名称、裁决原文、现状代码痛点取证、user 对设计草稿的全批（四决策点）。）
+（诚实标注：调研交付的详细条目原文未落盘——跨批次改进调研（2026-10-27，M1-6/CI/G12 三批复盘）的 A1/A2 建议细节只存在于 skill-revise 批对话中，档案仅存名称 + 裁决。本 BCD 的「客户期望」重建自：项名称、裁决原文、现状代码痛点取证、user 对设计草稿的全批（四决策点）。痛点实例（审疑点 1 补强）：人面确认命令 `cli.py approve --requirement-id <32hex>` 须从板抄 32 位全 id（每批收尾必做，本 user 实际操作面）；agent 跨会话交接（新会话经 list_awaiting 接续任务）同样以 32 位全 id 为唯一传递形态。）
 
 ### 可能的解读（互斥，业务目标分歧）
 
@@ -53,9 +53,9 @@
 
 ### Who（受影响方）
 
-1. **agent（MCP 工具面主调用方）**：12 工具中凡带 requirement_id 的参数均可用 8+ 位前缀；update_progress 返回多一个租约到期字段。
+1. **agent（MCP 工具面主调用方）**：凡带 requirement_id 的参数（MCP 10 个带 id 工具）均可用 8+ 位前缀；update_progress 返回多一个租约到期字段。
 2. **人（CLI/REST 面）**：CLI 命令与 REST 路由同 choke point 生效（三面同源）；ambiguous_id 错误信息含候选集，人面排障可读。
-3. **未来调用方（契约稳定面）**：MCP 单向门只增——新错误码、新返回字段、更宽的解析输入；既有行为（全 id 精确匹配、not_found 语义）逐字不变。
+3. **未来调用方（契约稳定面）**：MCP 单向门只增——新错误码、新返回字段、更宽的解析输入；既有行为（小写全 id 精确匹配、not_found 语义）逐字不变（大小写/空白统一归一属同类 additive 放宽）。
 
 ### How（影响路径）
 
@@ -65,7 +65,7 @@
 
 ### What（具体交付物）
 
-1. `write_guard.py`：requirement_id 前缀解析（含 ambiguous_id）。
+1. `write_guard.py`：requirement_id 前缀解析（含 ambiguous_id）+ 21 个取 id 函数入口重绑定解析值（spec §2.1 调用点清单）。
 2. `operations.py`：update_progress 返回加 lease_expires_at。
 3. 契约文档：PRD §4.3 + id 解析口径 + §4.1 update_progress 返回行；api/main.py 映射；server.py docstring。
 4. 测试：前缀解析/歧义/短输入/非 hex/全 id 回归的 AC 用例；update_progress 返回面 AC 用例。
@@ -81,7 +81,7 @@
 
 ### Commands
 
-1. 全部带 requirement_id 的命令（MCP 12 工具 + REST + CLI）：参数 id 的**解析**放宽（8+ 位 hex 唯一前缀）；签名、参数名、写入语义零改动。
+1. 全部带 requirement_id 的命令（MCP 10 个带 id 工具 + REST + CLI）：参数 id 的**解析**放宽（8+ 位 hex 唯一前缀）；签名、参数名、写入语义零改动。
 2. `update_progress(requirement_id, note, headline)`：返回 `{"requirement_id", "lease_expires_at"}`（现仅 `{"requirement_id"}`）；写路径零改动。
 
 ### Aggregates（业务边界）
@@ -92,8 +92,8 @@ Requirement / Claim 聚合不变。无新表、无新列、无索引变更（前
 
 1. **宁拒不猜**：前缀命中 ≥2 条必须拒绝（ambiguous_id），永不静默挑选——写错最坏后果＝事件落进错误需求（审计链污染）。
 2. **精确优先**：32 位 hex 输入走精确匹配（session.get），不进入前缀扫描；前缀扫描只服务 8~31 位输入。
-3. **单向门纯 additive**：新错误码 + 新返回字段 + 更宽解析输入；既有错误码语义、not_found 行为、全 id 行为逐字不变。
-4. **三面同源（隐含）**：解析实现单点在 require_requirement choke point，MCP/REST/CLI 天然一致——禁止各面自行实现前缀逻辑（漂移源）。
+3. **单向门纯 additive**：新错误码 + 新返回字段 + 更宽解析输入；既有错误码语义、not_found 行为、小写全 id 行为逐字不变（大小写/空白归一为同类 additive 放宽）。
+4. **三面同源（隐含）**：解析实现单点在 require_requirement choke point，MCP/REST/CLI 天然一致——禁止各面自行实现前缀逻辑（漂移源）；解析结果须向下游传播（调用点入口重绑定，spec §2.1），「过 choke point」不等于「生效」。
 5. **activity 不延租（隐含，ADR 0006）**：agent 面写操作只更 last_activity_at；lease_expires_at 固定、显式 renew 延长。A2 返回是通知该规则，不是改变该规则。
 6. **展示面不变（隐含）**：板面/web/export 仍显示 32 位全 id；本批只放宽输入侧。
 
@@ -146,9 +146,9 @@ Requirement / Claim 聚合不变。无新表、无新列、无索引变更（前
 - 预期: 解析到该需求，note 事件写入（与全 id 调用同效果）
 
 ### 例 2（歧义 -> 拒绝 + 候选）
-- 输入: 板上 `7f00aaaa...` 与 `7f00bbbb...` 两需求；`claim_task(requirement_id="7f00", agent_name="x")`
+- 输入: 板上 `7f00aaaa...` 与 `7f00aaab...` 两需求（共享 8 位前缀）；`claim_task(requirement_id="7f00aaaa", agent_name="x")`
 - 操作: agent 认领
-- 预期: `ambiguous_id`，信息列出 `7f00aaaa...` 与 `7f00bbbb...` 两候选 + 加长前缀提示；无 claim 行创建
+- 预期: `ambiguous_id`，信息列出 `7f00aaaa...` 与 `7f00aaab...` 两候选 + 加长前缀提示；无 claim 行创建
 
 ### 例 3（4 位 -> not_found）
 - 输入: `claim_task(requirement_id="7f00aa", ...)`（<8 位）
@@ -169,8 +169,8 @@ Requirement / Claim 聚合不变。无新表、无新列、无索引变更（前
 
 | 场景 | 客户期望 | 系统行为（现实现） | 冲突性质 | 差距 |
 |---|---|---|---|---|
-| 短 id 操作 | agent/人用 8+ 位唯一前缀即可操作（抄全 id 易错笨重） | require_requirement 仅精确主键匹配（write_guard.py:15 session.get），短输入一律 not_found | 能力缺口（本批填平） | A1 前缀解析 |
-| 写完知道租约 | update_progress 返回自足，agent 知道何时 renew | 仅返 `{"requirement_id"}`（operations.py:737），租约态须另调 list_tasks/get_task_detail | 能力缺口（本批填平） | A2 返回加 lease_expires_at |
+| 短 id 操作 | agent/人用 8+ 位唯一前缀即可操作（抄全 id 易错笨重） | require_requirement 仅精确主键匹配（write_guard.py:14 session.get），短输入一律 not_found | 能力缺口（本批填平） | A1 前缀解析 |
+| 写完知道租约 | update_progress 返回自足，agent 知道何时 renew | 仅返 `{"requirement_id"}`（operations.py:736），租约态须另调 list_tasks/get_task_detail | 能力缺口（本批填平） | A2 返回加 lease_expires_at |
 | 「写 progress＝活跃＝租约续命」 | 直觉：写操作即活跃证明，到期时间应随写顺延 | ADR 0006 裁决：activity 口径＝last_activity_at（观测），lease_expires_at 固定、显式 renew 才延长 | **根本性业务冲突** | 本批不改变租约模型（A2-b 不在授权内）；A2 把隐藏规则显性化（返回到期时间），agent 依返回决定 renew——冲突以「规则显性化 + 模型不动」收口 |
 | 三面一致 | 同一 id 输入在 MCP/REST/CLI 行为一致 | 现三面共用 choke point（天然一致） | 无缺口，防回归 | Policy 4 单点实现 + 回归测试 |
 
@@ -205,10 +205,10 @@ Requirement / Claim 聚合不变。无新表、无新列、无索引变更（前
 ### 强不变量（违反即业务失败）
 
 1. **宁拒不猜**：前缀命中 ≥2 条必返 ambiguous_id，任何解析路径不得静默选择候选。违反后果：事件/状态变更落进错误需求，审计链污染（回溯判据失效）。
-2. **全 32 位 id 行为逐字不变**：精确匹配路径、not_found 语义、错误信息形态均不回归。违反后果：存量 agent 自动化/CLI 脚本断裂。
+2. **小写 32 位全 id 行为逐字不变**：精确匹配路径、not_found 语义、错误信息形态均不回归；大小写/空白统一归一属与 prefix 同类 additive 放宽（大写全 id 从 not_found 变命中）。违反后果：存量 agent 自动化/CLI 脚本断裂。
 3. **单向门纯 additive**：契约变化仅＝新错误码 ambiguous_id + update_progress 新返回字段 + 解析输入放宽；不删不改任何既有码、字段、工具、参数。违反后果：既有调用方断裂，单向门纪律失守。
 4. **租约语义零改动**：activity 只更 last_activity_at（ADR 0006）；A2 返回是通知，不延长 lease_expires_at。违反后果：租约模型隐式变更，signal 推导与 renew 工具语义漂移。
-5. **三面同源单点**：id 前缀解析唯一实现＝require_requirement choke point，MCP/REST/CLI 同语义。违反后果：同输入跨面行为漂移，排障与契约文档失真。
+5. **三面同源单点 + 传播规则**：id 前缀解析唯一实现＝require_requirement choke point（前缀逻辑全仓唯一）；21 个取 id 函数入口重绑定解析值、下游用全 id（spec §2.1 清单），MCP/REST/CLI 同语义。违反后果：同输入跨面行为漂移，或解析结果不传播导致 FK 违例/假 no_active_claim/读面静默空。
 
 ### 软约束（违反可容忍）
 
@@ -220,4 +220,5 @@ Requirement / Claim 聚合不变。无新表、无新列、无索引变更（前
 
 ## 修订记录
 
-- 2026-10-27 创建（主循环）。来源：skill-revise 批 user 裁决（spec-improvement-list.md:47，A1+A2 做、A3 砍）+ 现状代码取证（write_guard.py choke point / operations.py:737 返回面 / ADR 0006 activity 口径）+ 设计草稿 user 全批（四决策点按建议值）。调研交付原文未落盘，已在 §1 诚实标注重建依据。
+- 2026-10-27 创建（主循环）。来源：skill-revise 批 user 裁决（spec-improvement-list.md:47，A1+A2 做、A3 砍）+ 现状代码取证（write_guard.py choke point / operations.py:736 返回面 / ADR 0006 activity 口径）+ 设计草稿 user 全批（四决策点按建议值）。调研交付原文未落盘，已在 §1 诚实标注重建依据。
+- 2026-10-27 随 spec v2 同步修订（对抗审查 REJECT 修正轮）：§1 补痛点实例（审疑点 1）；§2 Who/What 加 21 调用点重绑定（审 P1-1）；§3 Commands 措辞（10 个带 id 工具，审疑点 3）；§5 例 2 改 8 位共享前缀（审 P2-2）；§7 强 2 归一裁决对齐（审 P2-6）、强 5 加传播规则（审 P1-1 自毁锚）；§3 Policy 4 加「过 choke point 不等于生效」；行号勘误（operations.py:737->:736、write_guard.py:15->:14）。

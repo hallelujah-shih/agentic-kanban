@@ -1,58 +1,78 @@
 # Spec: 批 2 A1 短 id 前缀匹配 + A2 update_progress 返回租约态
 
 **日期**: 2026-10-27
-**状态**: 待对抗审查（BCD 已齐，设计草稿 user 全批 2026-10-27）
+**状态**: 对抗审查 REJECT（3 P1 + 6 P2，报告同目录 `-review.md`）-> 全部 P1/P2 修正折入（v2，2026-10-27）-> resume 原审者续审中
 **分支/worktree**: a1a2-mcp（基于 main 8a60111，.worktree/a1a2-mcp）
 **BCD**: `docs/business-contracts/a1a2-mcp-surface.md`（7 节齐；user 裁决 2026-10-27 设计草稿全批，四决策点按建议值：8 hex 最小前缀 / 仅 requirement_id / ambiguous_id REST=409 / A2 仅 lease_expires_at）
 **板上任务**: 396f583730514ab5a3963dd58563bdcd
-**关联**: PRD §4.1（MCP 工具面）§4.3（错误码）；ADR 0006（activity 口径）；`write_guard.py`（require_requirement choke point）；`operations.py`（update_progress/renew）；`api/main.py`（REST_ERROR_STATUS）；`server.py`（MCP docstring）
+**关联**: PRD §4.1（MCP 工具面）§4.3（错误码）；ADR 0006（activity 口径）；`write_guard.py`（require_requirement choke point）；`operations.py`（update_progress/renew）；`api/main.py`（REST_ERROR_STATUS）；`server.py`（MCP docstring）；`skills/agent-kanban/SKILL.md`
 
 ---
 
 ## 1. 范围与非目标
 
 **范围内**：
-- A1：requirement_id 唯一前缀解析（choke point 单点实现）+ 新错误码 `ambiguous_id`
+- A1：requirement_id 唯一前缀解析（解析单点 + 调用点传播规则，见 §2）+ 新错误码 `ambiguous_id`
 - A2：`update_progress` 返回加 `lease_expires_at`
-- 契约同步：PRD §4.3、api/main.py REST 映射、server.py docstring（见 §5）
+- 契约同步：PRD §4.3、api/main.py REST 映射、server.py docstring、SKILL.md（租约措辞修正 + 错误码表）、design.md/errors.py/api docstring（见 §5）
 - 测试（AC 用例，见 §6）
 
 **非目标（显式）**：
 - 不动展示面（板面/web/export 仍显 32 位全 id；输入侧放宽、展示侧不短化）
 - 不动 subtask_id / milestone_id / claim_id 解析（维持精确匹配）
 - 不动租约语义：activity 只更 last_activity_at（ADR 0006），A2 返回是通知、不延长 lease_expires_at
-- 不动 32 位全 id 精确匹配路径与 not_found 语义（逐字不变）
-- 禁止各面（MCP/REST/CLI）在 choke point 之外自行实现前缀逻辑（BCD Policy 4 单点）
+- 不动 32 位小写全 id 精确匹配路径与 not_found 语义（逐字不变；大小写/空白统一归一属与 prefix 同类的 additive 放宽，见 §4）
+- 解析算法只允许存在于 write_guard.py；禁止各面（MCP/REST/CLI）或下游助手函数（transition/add_event/touch_activity/get_active_claim）自行实现前缀逻辑（BCD Policy 4）
 - 不做前缀长度可配置化（8 为代码常量）
 - 零 schema 变更（不加表/列/索引）
 
-## 2. A1 设计：id 前缀解析
+## 2. A1 设计：id 前缀解析（解析单点 + 传播规则）
 
-### 2.1 实现位置
+### 2.1 实现位置与传播规则（v2 重写，审 P1-1）
 
-`src/agent_kanban/services/write_guard.py::require_requirement`（唯一实现点）。MCP 10 个带 requirement_id 工具、REST 路由、CLI 均经此函数（operations.py 全部写操作 + view.py:61/:471 读操作 + api/requirements.py 路由），单点生效、三面同源。
+**解析单点**：`src/agent_kanban/services/write_guard.py::require_requirement` 内实现 §2.2 算法（只解析、返回 `Requirement` 或 raise；前缀逻辑全仓唯一）。
+
+**传播规则（钉死）**：所有取 `requirement_id` 的公开函数**入口先解析、再重绑定**，下游一律用全 id：
+
+```python
+req = await require_requirement(session, requirement_id)
+requirement_id = req.id  # 重绑定：下游（Claim 查询/事件/租约/子查询/返回 echo）统一用全 id
+```
+
+- 全 id 输入时重绑定为 no-op（值不变），零行为变化；prefix 输入时下游与「全 id 传入」逐字一致。
+- **调用点清单（21 处，实施 diff 逐点核对）**：
+  - operations.py 19 个函数：
+    - 入口已直调 require_requirement（13 个，加 1 行重绑定）：set_expectations / approve / release / renew / note / reopen / abandon / archive_requirement / delete_preview / delete_requirement / claim_task / request_review / mark_blocked
+    - 入口不直调（6 个，加 resolve + 重绑定 2 行）：add_subtask / update_subtask / add_milestone / update_milestone / add_record / update_progress
+  - view.py 2 个函数（加 1 行重绑定）：summary（:61 附近）/ detail（:471 附近）
+  - operations.py get_task_detail（:892）纯委托 view.detail，零改动
+- **零改动面**：`transition` / `add_event` / `touch_activity` / `get_active_claim` 签名与逻辑不动——只接收重绑定后的全 id；`get_active_claim` 内部既有 require_requirement 调用保持（幂等，SQLAlchemy identity-map 命中，无额外 SQL）。api/requirements.py 路由与 cli.py 无本地 id 处理，随 choke point 生效。
+- 该规则同时保证**返回面**：所有取 id 操作返回解析后的 32 位全 id（统一声明，审 P2-5），包括 claim_task/note/renew/add_record 等（现码 echo 原始参数，重绑定后 echo 全 id——对全 id 输入零变化）。
 
 ### 2.2 解析算法（钉死）
 
 ```
-输入 raw（str）-> s = raw.strip().lower()
-1. len(s) == 32 且全 hex -> 精确匹配（session.get，现行为逐字保留）；未命中 -> not_found（现消息形态）
-2. 8 <= len(s) <= 31 且全 hex -> 前缀扫描：SELECT id FROM requirements WHERE id LIKE '<s>%' ORDER BY id（前缀锚定，主键索引可用；s 为纯 hex 不含 LIKE 通配符，无需 ESCAPE；禁 '%<suffix>'、禁全表取回后 Python 端过滤）
-   - 0 命中 -> not_found（消息形态与现行为一致，含输入值）
-   - 1 命中 -> 用该 id 继续（后续逻辑与全 id 传入完全一致）
-   - >=2 命中 -> BusinessError("ambiguous_id", "ambiguous requirement_id prefix '<s>': <候选 id 列表，升序>; use a longer prefix", raw)
+输入 raw（str）-> s = raw.strip().lower()   # 统一归一，适用于全部输入（含 32 位全 id；审 P2-6 裁决）
+1. len(s) == 32 且全 hex -> 精确匹配（session.get，精确路径本身不变）；未命中 -> not_found（现消息形态）
+2. 8 <= len(s) <= 31 且全 hex -> 前缀扫描：SELECT id FROM requirements WHERE id LIKE '<s>%' ORDER BY id
+   （前缀锚定、主键 covering index——审者已实测 EXPLAIN = USING COVERING INDEX；s 为纯 hex 不含 LIKE 通配符，无需 ESCAPE；
+    禁 '%<suffix>'、禁全表取回后 Python 端过滤）
+   - 0 命中 -> not_found（消息形态与现行为一致，含原始输入 raw）
+   - 1 命中 -> 返回该 Requirement
+   - >=2 命中 -> BusinessError("ambiguous_id", 见下方模板, raw)
 3. 其余（<8 位 / 非 hex / 空串 / 33+ 位）-> not_found（与现行为一致，不引入新错误码）
 ```
 
-- 大小写/空白：输入侧 strip + lowercase（id 生成态为小写 hex；全 id 输入行为不受影响——合法全 id 本就小写）。
-- 错误信息用**原始输入 raw**（非 s），便于调用方定位自己写错的形态。
-- 前缀扫描候选上限：候选只取 id 列、按 id 升序、最多取 6 条（>=2 即短路，取 6 只为判定「>5」）；错误信息候选列表 <=5 时列全，>5 时列前 5 + 「等 N 个」（N=实际总数——总数需一次 COUNT，避免病态前缀撑爆错误消息）。
+- **ambiguous_id 消息模板（钉死，审 P2-4）**：候选最多取 6 行（判定 >5），总数另走一次 COUNT；
+  `ambiguous requirement_id prefix '<s>': <候选 id 升序，<=5 列全、>5 列前 5 + …>, 共 {total} 个候选; use a longer prefix`
+  ——total 为实际总数（「共 N 个候选」语义＝总数，非剩余数）。
+- 错误 task_id 位传**原始输入 raw**（与 not_found 现用法一致，便于调用方定位自己写错的形态）。
+- 解析失败（not_found / ambiguous_id）发生在各操作第一步、任何写入之前——同事务无半态。
 
 ### 2.3 错误面
 
 - 新错误码 `ambiguous_id`（唯一新增码）。语义：前缀命中 >=2 条需求。
-- BusinessError 第三参数（task_id 位）传 raw 输入（与 not_found 现用法一致）。
-- 解析失败（not_found / ambiguous_id）发生在任何写入之前——同事务无半态（require_requirement 是各操作第一步，raise 即回滚/未开始）。
+- REST 映射 409（api/main.py，裁决值）；REST 存在触发端点（人面路由可传前缀），不属「agent 面专用码」类（见 §5.9）。
 
 ## 3. A2 设计：update_progress 返回租约态
 
@@ -63,9 +83,9 @@
 return {"requirement_id": requirement_id, "lease_expires_at": claim.lease_expires_at.isoformat()}
 ```
 
-- `claim` 为该函数已加载的活跃认领（`get_active_claim` 返回值，现于 touch_activity 前取得）；`touch_activity` 只更 last_activity_at，`claim.lease_expires_at` 同事务内即当前值——**零额外查询**。
-- iso 字符串口径与 `renew` 返回（operations.py:293 附近 `new_expiry.isoformat()`）逐字一致（naive UTC iso，与全仓时间序列化口径同源）。
-- 原字段 `requirement_id` 保留（返回解析后的 32 位全 id）。
+- **前提（审 P1-2 裁决，钉死一处）**：update_progress 入口已按 §2.1 传播规则重绑定，返回点 `requirement_id` 即 32 位全 id——与 BCD Scenario 1「返回用解析后的全 id，不回填短前缀」一致。
+- `claim` 为该函数已加载的活跃认领（`get_active_claim` 返回值，touch_activity 前取得）；`touch_activity` 只更 last_activity_at，`claim.lease_expires_at` 同事务内即当前值——**零额外查询**。
+- iso 形态＝**aware UTC**（`…+00:00`，全仓 UTCDateTime 序列化口径，与 `renew` 返回的 `new_expiry.isoformat()` 逐字同源；v1「naive」措辞为勘误）。
 
 ### 3.2 语义边界（防误读，BCD §6 失败原因 2）
 
@@ -76,41 +96,46 @@ return {"requirement_id": requirement_id, "lease_expires_at": claim.lease_expire
 
 | 输入 | 现行为 | 新行为 |
 |---|---|---|
-| 32 位全 id（存在） | 精确命中 | 相同（精确路径，不进前缀扫描） |
+| 32 位小写全 id（存在） | 精确命中 | 相同（精确路径，逐字） |
+| 32 位**大写**全 id（存在） | not_found | **命中（新）**——统一归一的 additive 放宽 |
 | 32 位全 id（不存在） | not_found | 相同 |
-| 8~31 位 hex，唯一命中 | not_found | **命中（新）** |
+| 8~31 位 hex，唯一命中 | not_found | **命中（新）**——以 §2.1 传播规则为前提 |
 | 8~31 位 hex，0 命中 | not_found | not_found（消息形态一致） |
 | 8~31 位 hex，>=2 命中 | not_found | **ambiguous_id（新）** |
 | <8 位 / 非 hex / 空 | not_found | not_found（相同） |
-| update_progress 返回 | `{"requirement_id"}` | **加 `lease_expires_at`（新）**，原字段不变 |
+| 前导/尾随空白（全 id 或前缀） | 全 id 现 not_found / 前缀现 not_found | **命中（新）**——统一 strip |
+| update_progress 返回 | `{"requirement_id"}` | **加 `lease_expires_at`（新）**，原字段＝32 位全 id |
+| 其余取 id 操作返回 echo | 原始参数 | **解析后全 id**（全 id 输入零变化） |
 
-## 5. 契约同步面（逐文件）
+## 5. 契约同步面（逐文件，v2 扩至 9 处）
 
-1. **PRD §4.3**：错误码列表行（:199）加 `ambiguous_id`；「每个码有唯一触发条件」段加 `ambiguous_id = requirement_id 短前缀（8~31 hex）命中 >=2 条需求（0 命中 -> not_found）`；§4.3 末加一句 id 解析口径：「requirement_id 接受 8~31 位 hex 唯一前缀（输入 strip + 大小写不敏感；32 位全 id 精确匹配优先；<8 位或非 hex -> not_found）；MCP/REST/CLI 三面同源」。
+1. **PRD §4.3**：错误码列表行（:199）加 `ambiguous_id`；「每个码有唯一触发条件」段加 `ambiguous_id = requirement_id 短前缀（8~31 hex）命中 >=2 条需求（0 命中 -> not_found）`；§4.3 末加 id 解析口径句：「requirement_id 输入统一 strip + 大小写不敏感；8~31 位 hex 唯一前缀可解析（>=2 命中 -> ambiguous_id）；32 位全 id 精确匹配优先；<8 位或非 hex -> not_found；MCP/REST/CLI 三面同源」。
 2. **PRD §4.1**：update_progress 行语义加「返回 lease_expires_at（租约到期时间，仅通知不延长租约——延长用 renew）」。
-3. **api/main.py**：REST_ERROR_STATUS 加 `"ambiguous_id": 409`（裁决值）。
-4. **server.py docstring**：
-   - 10 个带 requirement_id 工具（get_task_detail/claim_task/add_subtask/update_subtask/add_milestone/update_milestone/add_record/update_progress/request_review/mark_blocked）：参数行 requirement_id 注明「32 位全 id 或 8+ 位唯一前缀」；错误行 not_found 处加 `ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）`。
-   - update_progress docstring 加返回行：「返回: requirement_id + lease_expires_at（租约到期时间；本操作不延长租约，续租用 renew）」。
-5. **skills/agent-kanban/SKILL.md**：实施前逐字核对 id 抄写/租约相关措辞——无与新语义冲突（「写 progress 不延租」「短前缀可重试」不与其矛盾）-> 零改动；有冲突 -> 上抛主循环裁决，实施者不自决。
+3. **api/main.py**：REST_ERROR_STATUS 加 `"ambiguous_id": 409`。
+4. **server.py docstring**：10 个带 requirement_id 工具（get_task_detail/claim_task/add_subtask/update_subtask/add_milestone/update_milestone/add_record/update_progress/request_review/mark_blocked）：参数行 requirement_id 注明「32 位全 id 或 8+ 位唯一前缀（大小写不敏感）」；错误行 not_found 处加 `ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）`。update_progress docstring 加返回行：「返回: requirement_id（32 位全 id）+ lease_expires_at（租约到期时间；本操作不延长租约，续租用 renew）」。
+5. **SKILL.md:22 租约措辞修正（v2 新增，审 P1-3；存量正典冲突登记）**：现状「任何 MCP 写操作都是活动，**租约自动续**」与 ADR 0006 / PRD §3.2（写操作只更 last_activity_at，租约固定、显式 renew 才延长）直接矛盾，此前未登记 known-gaps，本批修正是其闭合。建议措辞（**交 user 在 spec 审阅时裁决**）：
+   > 租约：lease 2h / idle 30min（可配置）。任何 MCP 写操作都是活动（更 last_activity_at，防 SUSPECT）；租约**不自动续**——延长需显式 renew（可据 update_progress 返回的 lease_expires_at 决策）。长时间无活动 -> SUSPECT，过期 -> STALE（人可见告警）。
+6. **SKILL.md 错误码速查表（:54-64）**：加行 `ambiguous_id | 前缀命中多条需求 | 加长前缀重试`。
+7. **docs/design.md:135**：错误码九码列表 -> 十码（加 ambiguous_id）。
+8. **errors.py:1 docstring**：「PRD 4.3 九码」->「十码」。
+9. **api/requirements.py:3-6 docstring**：错误映射注释加 `ambiguous_id=409`，并将其从「agent 面专用码（REST 无触发端点）」归类移出（REST 路由可传前缀，存在触发端点）。
 
 ## 6. 测试策略（AC 用例，先红后绿）
 
-新增用例（挂 tests/ 现有 AC 框架，命名随现有惯例）：
-
 **A1**：
-1. 唯一前缀（8 位）经 choke point 解析到目标需求，操作成功（写操作断言事件落进正确需求）。
+1. 唯一前缀（8 位）经 choke point 解析到目标需求，写操作成功且**事件 requirement_id 落 32 位全 id**（传播规则判别）。
 2. 歧义：两需求同 8 位前缀 -> `ambiguous_id`，错误信息含两候选 id，且**零写入**（事件数/claim/状态全不变）。
-3. 歧义短路：错误信息含「等 N 个」计数形态（>=6 候选时不列全量）。
-4. 0 命中前缀 -> `not_found`（消息含输入值，形态同现行为）。
+3. 候选 >5：错误信息逐字匹配钉死模板（含「共 6 个候选」、候选列表截断 5 个 + …）。
+4. 0 命中前缀 -> `not_found`（消息含原始输入，形态同现行为）。
 5. <8 位（4/7 位）/ 非 hex / 空串 -> `not_found`。
-6. 全 id 回归：存在 -> 命中；不存在 -> not_found（精确路径）。
-7. 大小写/空白：大写前缀与带首尾空白的前缀均解析成功。
+6. 全 id 回归：小写存在 -> 命中；不存在 -> not_found（精确路径）。
+7. 归一面：大写 32 位全 id -> 命中（新行为断言）；大写前缀 -> 命中；带首尾空白 -> 命中。
 8. 跨面一致性：同一唯一前缀经 MCP 面与 REST 面调用同结果（同目标/同错误码）。
+9. 返回 echo（非 A2 工具，审 P2-5）：claim_task 前缀输入 -> 返回 requirement_id 为 32 位 hex。
 
 **A2**：
-9. update_progress 返回含 `lease_expires_at`，值与当前 claim 的到期时间一致（iso 形态）；原 `requirement_id` 字段仍在。
-10. 同场景 renew 返回的 lease_expires_at 与 update_progress 返回一致（口径同源判别）。
+10. update_progress 返回含 `lease_expires_at`（aware UTC iso 形态）；前缀输入时 `requirement_id` 字段＝32 位全 id（审 P1-2 断言）。
+11. 口径（顺序钉死，审 P2-3）：renew -> update_progress -> 断言两返回的 lease_expires_at 相等。
 
 **回归保护**：全量 592/592 基线不回退（not_found 既有断言逐条仍绿）。
 
@@ -119,14 +144,31 @@ return {"requirement_id": requirement_id, "lease_expires_at": claim.lease_expire
 | 不变量 | 验收锚 |
 |---|---|
 | 强 1 宁拒不猜 | 用例 2/3 |
-| 强 2 全 id 行为不变 | 用例 6 + 全量基线 |
+| 强 2 小写全 id 逐字不变 + 归一 additive | 用例 6/7 + 全量基线 |
 | 强 3 单向门纯 additive | diff 审查（无既有码/字段/参数删除或改形）+ 兼容矩阵 §4 |
-| 强 4 租约语义零改动 | 用例 9/10（返回不改变 claim 行的 lease_expires_at）+ diff（touch_activity 零改动） |
-| 强 5 三面同源单点 | 用例 8 + diff（前缀逻辑仅存在于 write_guard.py） |
+| 强 4 租约语义零改动 | 用例 10/11 + diff（touch_activity 零改动） |
+| 强 5 解析单点 + 传播规则 | 用例 1/8/9 + diff 核对：前缀逻辑仅 write_guard.py **且 21 调用点入口重绑定、下游用全 id**（审 P1-1 自毁锚修正） |
 | 软 1/2/3 | diff 审查（展示面/配置面/schema 零改动） |
 
 ## 8. 残余与已知局限
 
 - 前缀唯一性随板面增长只收紧不放松（BCD §4 跨时段场景）：曾用短前缀的自动化在撞前缀后转 ambiguous_id——既定行为＝加长前缀重试（docstring 明示），不视为回归。
-- 错误消息候选列表截断（前 5 + 计数）：极端撞前缀下调用方需自行加长定位——可接受（单用户板面规模）。
+- 错误消息候选截断（前 5 + 总数）：极端撞前缀下调用方需自行加长定位——可接受（单用户板面规模）。
 - agent 对「返回=通知」的认知约束上限＝语义显性化（威胁模型 B 边界，与 distill-pipeline 批同一残余类别）。
+- SKILL.md:22 措辞为 user 裁决项（§5.5 建议文）；若裁决维持原文，则 docstring/PRD 的「不延长租约」表述须同步回退为不提及延长机制（两面不得矛盾）——代码事实（ADR 0006）不变。
+
+## 修订记录
+
+- v1（2026-10-27）创建；spec 自查折入 3 处收紧（ESC/候选计数/SKILL.md 核对分支）。
+- v2（2026-10-27）：对抗审查 REJECT（3 P1 + 6 P2 + 3 疑点 + 勘误）全修正：
+  - P1-1：§2.1 重写为「解析单点 + 传播规则」，21 调用点清单，§7 强 5 锚去自毁，§4 矩阵加前提注。
+  - P1-2：§3.1 钉死「重绑定参数」前提（钉死一处），用例 10 补前缀输入返回全 id 断言。
+  - P1-3：§5.5 SKILL.md:22 租约措辞修正项（建议文交 user 裁决）+ 存量正典冲突登记；§8 加裁决联动残余。
+  - P2-1：§5 扩至 9 处（design.md/errors.py/api docstring/SKILL.md 错误表）。
+  - P2-3：用例 11 钉 renew -> update_progress 顺序。
+  - P2-4：ambiguous_id 消息模板钉死（「共 N 个候选」N=总数），用例 3 断言逐字模板。
+  - P2-5：§2.1 统一声明「所有取 id 操作返回解析后全 id」，用例 9 补 claim_task 断言。
+  - P2-6：归一裁决＝strip + 大小写不敏感适用于全部输入；§4 加大写全 id/空白行；强 2 措辞调整；用例 7 补全 id 形态。
+  - 勘误：「naive UTC」-> aware UTC（`…+00:00`）。
+  - BCD 同步修订：例 2 改 8 位前缀；Commands 措辞（10 个带 id 工具）；强 2/强 5 措辞对齐；§2 What 加 21 调用点；§1 补痛点实例；行号勘误（operations.py:737->:736）。
+  - 疑点 1（痛点重建）：BCD §1 补真实实例（人面 approve 命令须抄全 32 位 id，每批收尾必做）；疑点 2/3 接受不定级 / 措辞已修。
