@@ -57,7 +57,7 @@ async def list_tasks(status: str | None = None, ctx: Context | None = None) -> C
 
 
 async def get_task_detail(requirement_id: str, ctx: Context | None = None) -> CallToolResult:
-    """读取单需求深潜数据：子任务/里程碑/事件链（最新优先，有界 200）/验收对照。
+    """读取单需求深潜数据：子任务/里程碑/事件链（最新 200 条，输出 seq 升序）/验收对照。
     参数: requirement_id。
     错误: not_found（需求不存在）。
     """

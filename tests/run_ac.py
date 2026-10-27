@@ -22,7 +22,8 @@ from ac_cases_i import (retry_board, retry_cross_window, retry_edge1, retry_edge
                         retry_edge4, retry_edge5, retry_ex5, retry_s1, retry_s2, retry_s3)
 from ac_cases_j import export_csv
 from ac_cases_k import k_state, k_archive, k_delete, k_web, k_g12
-from ac_cases_l import l_headline, l_summary_line, l_record_title, l_blocked_reason_chain, l_tool_self_desc
+from ac_cases_l import (l_audience, l_blocked_reason_chain, l_export_stable, l_headline,
+                        l_latest_first, l_record_title, l_summary_line, l_tool_self_desc)
 
 TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
@@ -53,6 +54,7 @@ TESTS: dict[str, object] = {
     "k_g12": k_g12,
     "l_headline": l_headline, "l_summary_line": l_summary_line, "l_record_title": l_record_title,
     "l_blocked_reason_chain": l_blocked_reason_chain, "l_tool_self_desc": l_tool_self_desc,
+    "l_latest_first": l_latest_first, "l_audience": l_audience, "l_export_stable": l_export_stable,
 }
 
 

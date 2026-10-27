@@ -49,17 +49,21 @@ def export_csv():
     jres = cli(db, "export", "--requirement-id", r1, "--format", "json")
     ok("export_csv: json 导出回归 rc=0", jres.returncode == 0, jres.stderr[-200:])
     jdata = json.loads(jres.stdout)["requirement"]
+    # CSV 不携 additive 视图键：T2 合并后 JSON/深潜 detail 才带的读侧计算键
+    # （plan T2 钉死 CSV byte-identical，强不变量 1 导出稳定）；
+    # oracle 仍独立从 JSON 派生，仅排除这 3 个文档化视图键
+    _VIEW_KEYS = {"history_note", "state_at_event", "audience"}
     expected_cols = ({"record_type"}
                      | {k for k in jdata if k not in ("subtasks", "milestones", "events")}
                      | set((jdata["subtasks"] or [{}])[0])
                      | set((jdata["milestones"] or [{}])[0])
-                     | set((jdata["events"] or [{}])[0]))
+                     | set((jdata["events"] or [{}])[0])) - _VIEW_KEYS
     res = cli(db, "export", "--requirement-id", r1, "--format", "csv")
     ok("export_csv: CLI rc=0", res.returncode == 0, res.stderr[-200:])
     rows = list(csv.reader(io.StringIO(res.stdout)))
     header, body = rows[0], rows[1:]
     idx = {name: i for i, name in enumerate(header)}
-    ok("export_csv: 列名与 JSON 导出字段名一致（并集 + record_type，无多余无遗漏）",
+    ok("export_csv: 列名与 JSON 导出字段名一致（并集 + record_type，排除文档化视图键，无多余无遗漏）",
        set(header) == expected_cols, str(sorted(set(header) ^ expected_cols)))
     types = [row[idx["record_type"]] for row in body]
     ok("export_csv: 记录类型齐全（requirement/subtask/milestone/event）",
