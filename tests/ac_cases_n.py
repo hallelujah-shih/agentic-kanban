@@ -559,3 +559,26 @@ def n18():
     row = query(db, "SELECT actor_surface, payload FROM events WHERE kind='state_change' AND requirement_id=?", (rid,))[0]
     ok("n18: state_change surface=cli + payload 无 delegated（结构门禁）",
        row["actor_surface"] == "cli" and "delegated" not in json.loads(row["payload"]), str(dict(row)))
+
+
+def n29():
+    """delegated approve 解阻（BLOCKED->CLAIMED 单条 state_change 带 delegated，无 approval 事件）。"""
+    db = new_db()
+    rid = seed_req(db, "delegated unblock")
+    m = MCP(db).start()
+    m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "a"})
+    m.call_ok("mark_blocked", {"requirement_id": rid, "reason": "待人裁决"})
+    m.close()
+    res = cli_ok(db, "approve", "--requirement-id", rid, "--on-behalf", "statement:人会话说继续")
+    want = {"kind": "statement", "basis": "人会话说继续"}
+    ok("n29: approve 解阻 exit0 + CLAIMED（非 DONE）", res.get("state") == "CLAIMED", str(res))
+    rows = _ev_rows(db, rid)
+    # claim_task 的 OPEN->CLAIMED 也是 to=CLAIMED，必须从 from 限定解阻那条（payload
+    # 键 {"from","to"} 见 state_machine.transition）
+    sc = [r for r in rows if r["kind"] == "state_change"
+          and _pl(r).get("to") == "CLAIMED" and _pl(r).get("from") == "BLOCKED"]
+    ok("n29: state_change(BLOCKED->CLAIMED) delegated+payload",
+       len(sc) == 1 and sc[0]["actor_surface"] == "delegated" and _pl(sc[0]).get("delegated") == want,
+       str([dict(x) for x in sc]))
+    ap = [r for r in rows if r["kind"] == "approval"]
+    ok("n29: 解阻分支无 approval 事件（分支判别锚）", len(ap) == 0, str([dict(x) for x in ap]))
