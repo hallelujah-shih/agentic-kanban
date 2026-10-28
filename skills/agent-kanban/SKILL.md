@@ -49,6 +49,13 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 - 人与你 inline 交互（会话内当场问答）**不经看板**：结果记一条 decision 事件即可，不设标记，流程零中断。只有交接在会话之外（session 结束、人不在场）才需要 request_review / mark_blocked。
 - **永不声称 DONE**：DONE 只能人确认。你的 request_review 是"交回请审核"，不是完成。
 
+## Session 与恢复
+
+- 认领行的 agent_conn 就是你的 session id（ses_...，服务端派生，人面可见）——恢复锚已自动在审计链里，不用你传。
+- **恢复锚留痕**：本轮结束且可能要续（交接待评审 / blocked / 会话中断），`add_record(kind=note)` 留一行：session id + 当前模型 + 恢复命令，例如 `session ses_xxx / model ks-cp/xxx / 恢复: opencode run -s ses_xxx`。评审拒绝返工、中断恢复都靠它续回同一会话（`-s` 带完整上下文）。
+- **模型继承**：重派或恢复同一需求时显式带模型（`opencode run -m <provider/model>`；sub agent 传 model 参数），继承开工时的模型，不落回默认模型——默认模型套餐额度可能见底，产出质量会掉。
+- **模型额度耗尽**：调用报额度/限流错误时不要重试——`mark_blocked`（reason 一行：额度耗尽 + session id + 换模型恢复示例 `opencode run -s <ses> -m <provider/model>`），等人处置。这是需要人决策的情形，不算重试。
+
 ## 收尾协议（代执行）
 
 - **触发（pull）**：agent 侧工作完成后（PR 流＝PR 发起后 / 本地合流＝合入后），人表态（「合了」「收尾吧」）或 agent 检测到人工作面动作完成 -> 会话内 `list_awaiting` 查等待面，有待决任务即代执行收尾。
