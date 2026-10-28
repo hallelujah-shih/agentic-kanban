@@ -28,6 +28,9 @@ from ac_cases_l import (l_audience, l_blocked_reason_chain, l_blocked_reason_emp
 from ac_cases_m import (m_echo, m_full_id, m_cross_surface, m_normalization,
                         m_lease_return, m_lease_seq, m_prefix_ambiguous, m_prefix_invalid,
                         m_prefix_trunc, m_prefix_unique, m_prefix_zero)
+from ac_cases_n import (n1, n10, n11, n12, n13, n14, n15, n16, n17, n17b, n18,
+                        n19, n2, n20, n21, n22, n23, n24, n26, n27, n28, n29,
+                        n3, n4, n5, n6, n7, n8, n9, n_parse)
 
 TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
@@ -65,6 +68,13 @@ TESTS: dict[str, object] = {
     "m_full_id": m_full_id, "m_normalization": m_normalization, "m_cross_surface": m_cross_surface,
     "m_echo": m_echo,
     "m_lease_return": m_lease_return, "m_lease_seq": m_lease_seq,
+    "n_parse": n_parse,
+    "n1": n1, "n2": n2, "n3": n3, "n4": n4, "n5": n5, "n6": n6, "n7": n7, "n8": n8,
+    "n9": n9, "n10": n10, "n11": n11, "n28": n28,
+    "n12": n12, "n13": n13, "n14": n14, "n15": n15, "n16": n16,
+    "n17": n17, "n17b": n17b, "n18": n18,
+    "n19": n19, "n20": n20, "n21": n21, "n22": n22, "n23": n23, "n24": n24,
+    "n26": n26, "n27": n27, "n29": n29,
 }
 
 

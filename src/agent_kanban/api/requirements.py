@@ -22,7 +22,7 @@ from ..db import get_read_session_factory, get_session_factory, run_op
 from ..models import Event
 from ..services import operations as ops
 from ..services import view
-from ..services.identity import rest_actor
+from ..services.identity import parse_delegation, rest_actor
 from ..services.ids import norm_id
 from ..services.write_guard import require_requirement
 from .web import board_shell, detail_shell
@@ -48,23 +48,36 @@ class ExpectationsIn(BaseModel):
 
 class ReleaseIn(BaseModel):
     reason: str
+    delegated: DelegatedIn | None = None
 
 
 class NoteIn(BaseModel):
     content: str
+    delegated: DelegatedIn | None = None
 
 
 class AbandonIn(BaseModel):
     to_state: str
+    delegated: DelegatedIn | None = None
+
+
+class DelegatedIn(BaseModel):
+    kind: str
+    basis: str
 
 
 class ReopenIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     continue_: bool = Field(default=False, alias="continue")
+    delegated: DelegatedIn | None = None
 
 
-async def _run(op_name: str, *, is_write: bool = True, **kwargs: Any) -> Any:
+async def _run(op_name: str, *, is_write: bool = True, delegated: dict | None = None,
+               **kwargs: Any) -> Any:
     surface, conn = rest_actor()
+    if delegated is not None:
+        surface = "delegated"
+        kwargs["delegated"] = delegated
     return await run_op(
         get_session_factory(), getattr(ops, op_name), is_write=is_write,
         actor_surface=surface, actor_conn=conn, **kwargs,
@@ -83,34 +96,44 @@ async def set_expectations(requirement_id: str, body: ExpectationsIn) -> dict:
 
 
 @router.post("/requirements/{requirement_id}/approve")
-async def approve(requirement_id: str) -> dict:
-    return await _run("approve", requirement_id=requirement_id)
+async def approve(requirement_id: str, body: DelegatedIn | None = None) -> dict:
+    delegated = parse_delegation(body.model_dump() if body else None)
+    return await _run("approve", requirement_id=requirement_id, delegated=delegated)
 
 
 @router.post("/requirements/{requirement_id}/release")
 async def release(requirement_id: str, body: ReleaseIn) -> dict:
-    return await _run("release", requirement_id=requirement_id, reason=body.reason)
+    delegated = parse_delegation(body.delegated.model_dump() if body.delegated else None)
+    return await _run("release", requirement_id=requirement_id, reason=body.reason,
+                      delegated=delegated)
 
 
 @router.post("/requirements/{requirement_id}/renew")
-async def renew(requirement_id: str) -> dict:
-    return await _run("renew", requirement_id=requirement_id)
+async def renew(requirement_id: str, body: DelegatedIn | None = None) -> dict:
+    delegated = parse_delegation(body.model_dump() if body else None)
+    return await _run("renew", requirement_id=requirement_id, delegated=delegated)
 
 
 @router.post("/requirements/{requirement_id}/note")
 async def note(requirement_id: str, body: NoteIn) -> dict:
-    return await _run("note", requirement_id=requirement_id, content=body.content)
+    delegated = parse_delegation(body.delegated.model_dump() if body.delegated else None)
+    return await _run("note", requirement_id=requirement_id, content=body.content,
+                      delegated=delegated)
 
 
 @router.post("/requirements/{requirement_id}/abandon")
 async def abandon(requirement_id: str, body: AbandonIn) -> dict:
-    return await _run("abandon", requirement_id=requirement_id, to_state=body.to_state)
+    delegated = parse_delegation(body.delegated.model_dump() if body.delegated else None)
+    return await _run("abandon", requirement_id=requirement_id, to_state=body.to_state,
+                      delegated=delegated)
 
 
 @router.post("/requirements/{requirement_id}/reopen")
 async def reopen(requirement_id: str, body: ReopenIn | None = None) -> dict:
     body = body or ReopenIn()
-    return await _run("reopen", requirement_id=requirement_id, continue_=body.continue_)
+    delegated = parse_delegation(body.delegated.model_dump() if body.delegated else None)
+    return await _run("reopen", requirement_id=requirement_id, continue_=body.continue_,
+                      delegated=delegated)
 
 
 @router.post("/requirements/{requirement_id}/archive")

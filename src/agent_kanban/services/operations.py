@@ -162,6 +162,7 @@ async def approve(
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
+    delegated: dict | None = None,
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
@@ -171,13 +172,14 @@ async def approve(
         await transition(
             session, requirement_id=requirement_id, from_state="CLAIMED", to_state="DONE",
             actor_surface=actor_surface, actor_conn=actor_conn, now=now,
+            event_payload={"delegated": delegated} if delegated else None,
         )
         await session.execute(
             update(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None)).values(ended_at=now)
         )
         await add_event(
             session, requirement_id=requirement_id, kind="approval", severity="info",
-            title="approved", payload={"state": "DONE"},
+            title="approved", payload={"state": "DONE", **({"delegated": delegated} if delegated else {})},
             actor_surface=actor_surface, actor_conn=actor_conn, now=now,
         )
         return {"requirement_id": requirement_id, "state": "DONE"}
@@ -185,6 +187,7 @@ async def approve(
         await transition(
             session, requirement_id=requirement_id, from_state="BLOCKED", to_state="CLAIMED",
             actor_surface=actor_surface, actor_conn=actor_conn, now=now,
+            event_payload={"delegated": delegated} if delegated else None,
         )
         return {"requirement_id": requirement_id, "state": "CLAIMED"}
     raise BusinessError("illegal_state", f"approve not allowed from state {req.state}", requirement_id)
@@ -198,6 +201,7 @@ async def release(
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
+    delegated: dict | None = None,
 ) -> dict:
     now = now or now_utc()
     if not reason or not str(reason).strip():
@@ -212,13 +216,14 @@ async def release(
     await transition(
         session, requirement_id=requirement_id, from_state="CLAIMED", to_state="OPEN",
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
+        event_payload={"delegated": delegated} if delegated else None,
     )
     await session.execute(
         update(Claim).where(Claim.id == claim.id).values(ended_at=now, release_reason=reason)
     )
     await add_event(
         session, requirement_id=requirement_id, kind="release", severity="info",
-        title="released", payload={"reason": reason, "agent_name": claim.agent_name},
+        title="released", payload={"reason": reason, "agent_name": claim.agent_name, **({"delegated": delegated} if delegated else {})},
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
     return {"requirement_id": requirement_id, "state": "OPEN", "claim_id": norm_id(claim.id)}
@@ -230,6 +235,7 @@ async def release_all_stale(
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
+    delegated: dict | None = None,
 ) -> dict:
     """`release --all-stale`（PRD 4.2）：批量释放全部 STALE 认领（仅覆盖 CLAIMED 需求；
     逐项单释放语义，部分失败逐项返回，非全有全无）。"""
@@ -250,13 +256,14 @@ async def release_all_stale(
             await transition(
                 session, requirement_id=r.id, from_state="CLAIMED", to_state="OPEN",
                 actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
+                event_payload={"delegated": delegated} if delegated else None,
             )
             await session.execute(
                 update(Claim).where(Claim.id == claim.id).values(ended_at=now, release_reason="stale")
             )
             await add_event(
                 session, requirement_id=r.id, kind="release", severity="info",
-                title="released", payload={"reason": "stale", "agent_name": claim.agent_name},
+                title="released", payload={"reason": "stale", "agent_name": claim.agent_name, **({"delegated": delegated} if delegated else {})},
                 actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
             )
             results.append({"requirement_id": r.id.replace("-", ""), "ok": True, "state": "OPEN"})
@@ -272,6 +279,7 @@ async def renew(
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
+    delegated: dict | None = None,
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
@@ -292,6 +300,7 @@ async def renew(
     await add_event(
         session, requirement_id=requirement_id, kind="renew", severity="info",
         title="lease renewed",
+        payload={"delegated": delegated} if delegated else None,
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
     return {"requirement_id": requirement_id, "lease_expires_at": new_expiry.isoformat()}
@@ -305,6 +314,7 @@ async def note(
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
+    delegated: dict | None = None,
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
@@ -312,7 +322,7 @@ async def note(
     _check_payload_size(requirement_id, {"content": content}, content)  # PRD §6：单事件 payload < 8KB
     await add_event(
         session, requirement_id=requirement_id, kind="note", severity="info",
-        title="note", content=content, payload={"content": content},
+        title="note", content=content, payload={"content": content, **({"delegated": delegated} if delegated else {})},
         actor_surface=actor_surface, actor_conn=actor_conn, now=now,
     )
     return {"requirement_id": requirement_id}
@@ -326,6 +336,7 @@ async def reopen(
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
+    delegated: dict | None = None,
 ) -> dict:
     """PRD 4.2（审#2-reopen）：`reopen` = DONE->REOPEN（避免死端）；
     `--continue` = REOPEN->OPEN（回到可认领）。REOPEN->CANCELLED 由 abandon 覆盖。"""
@@ -336,11 +347,13 @@ async def reopen(
         await transition(
             session, requirement_id=requirement_id, from_state="REOPEN", to_state="OPEN",
             actor_surface=actor_surface, actor_conn=actor_conn, now=now,
+            event_payload={"delegated": delegated} if delegated else None,
         )
         return {"requirement_id": requirement_id, "state": "OPEN"}
     await transition(
         session, requirement_id=requirement_id, from_state="DONE", to_state="REOPEN",
         actor_surface=actor_surface, actor_conn=actor_conn, now=now,
+        event_payload={"delegated": delegated} if delegated else None,
     )
     return {"requirement_id": requirement_id, "state": "REOPEN"}
 
@@ -353,6 +366,7 @@ async def abandon(
     actor_surface: str,
     actor_conn: str,
     now: datetime | None = None,
+    delegated: dict | None = None,
 ) -> dict:
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
@@ -365,6 +379,7 @@ async def abandon(
         await transition(
             session, requirement_id=requirement_id, from_state=None, to_state="REJECTED",
             actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim_id, now=now,
+            event_payload={"delegated": delegated} if delegated else None,
         )
     elif to_state == "CANCELLED":
         if req.state not in ("OPEN", "REOPEN"):
@@ -372,6 +387,7 @@ async def abandon(
         await transition(
             session, requirement_id=requirement_id, from_state=req.state, to_state="CANCELLED",
             actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim_id, now=now,
+            event_payload={"delegated": delegated} if delegated else None,
         )
     else:
         raise BusinessError("invalid_record", f"invalid abandon state: {to_state}", requirement_id)

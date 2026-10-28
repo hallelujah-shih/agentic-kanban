@@ -133,7 +133,7 @@ class Event(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str | None] = mapped_column(Text)
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    actor_surface: Mapped[str] = mapped_column(String(16), nullable=False)  # mcp | cli | system
+    actor_surface: Mapped[str] = mapped_column(String(16), nullable=False)  # mcp | cli | system | delegated
     actor_conn: Mapped[str | None] = mapped_column(String(255))
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     ts: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)

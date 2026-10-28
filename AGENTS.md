@@ -13,7 +13,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   禁留任务等租约过期变 stale。
 - 人面 CLI（approve/release/note 等）：
   `AGENT_KANBAN_DB=/home/shih/.agent-kanban/kanban.db .venv/bin/python cli.py <cmd> --requirement-id <32hex>`
-  （flag 式参数，非位置参数）。
+  （flag 式参数，非位置参数；approve/release 可省 --requirement-id＝零输入，agent 代执行携 `--on-behalf "<kind>:<basis>"`，判据见 SKILL.md 收尾协议）。
 - 生产 DB `/home/shih/.agent-kanban/kanban.db` 只读侦察；操作面写走 CLI/MCP 正典路径。
 - 生产部署：`docker compose up -d --build kanban`（仓根 docker-compose.yml，build 仓根，
   host 网络，挂载 ~/.agent-kanban:/data）；部署后核验 = healthz 200 + 容器代码态
@@ -26,11 +26,11 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 入口形态：本地开发机＝构建机（仓根 `.venv`）；远端＝GitHub Actions。
 - tier 阶梯（低 -> 高；tier 命名与组成按 ci-verification.md 正典）：
   1. 快速反馈（折入重跑最低 tier，SDD 机器纪律款）：`TMPDIR=<产物目录>/tmp .venv/bin/python tests/run_ac.py --only <用例 id>`
-  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **592/592**
+  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **624/624**
   3. 本地 e2e：`TMPDIR=<产物目录>/tmp AK_E2E_DB=<产物目录>/ak-e2e.db npx playwright test` —— 基线 **15/15**（撞端口加 `E2E_PORT`；sqlite disk I/O error 先查 /tmp quota＝环境面）
   4. 本地 docker 双轨：默认轨 build + smoke healthz 200；pypi 轨命令与
      办公网 MITM 局限见 ci-verification.md
-  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 592/592 +
+  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 624/624 +
      e2e 15/15 + docker 双轨 build + healthz 200）
   6. **CI 门槛（合并门槛，远端）**：特性分支 push -> GH Actions 三 job
      test/e2e/docker 全绿 + 分支保护必需 check `test`+`docker`（e2e 观察期：
@@ -51,6 +51,14 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 历史陷阱归档/canary：docs/ops/ci-verification.md（已知局限/已知实践登记/P5 未核区）
   + docs/adr/0000-known-gaps.md；canary 用例＝e2e R2 历史坏壳（f764794^ web.py，
   ci-verification.md「红绿正典」）。
+
+## 批次纪律（2026-10-27 PM 评审裁决，依据 docs/ops/pm-review-2026-10-27.md）
+
+- 定位口径：个人 agent-ops 基础设施（非市场产品）；不为第二用户建东西
+  （多用户/协作/外部对接永不进范围）。
+- 每批判据：它让三问（PRD §1 C1）更可答（outcome），还是只减 builder 摩擦？
+  后者仅在卡住正在运行的循环时合格。
+- M1 完成以 G3 试用/AC14 跑完为准（known-gaps G3）；试用裁决前不排纯人体工学批次。
 
 ## 主循环纪律
 
