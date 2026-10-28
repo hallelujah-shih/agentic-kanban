@@ -26,11 +26,11 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 入口形态：本地开发机＝构建机（仓根 `.venv`）；远端＝GitHub Actions。
 - tier 阶梯（低 -> 高；tier 命名与组成按 ci-verification.md 正典）：
   1. 快速反馈（折入重跑最低 tier，SDD 机器纪律款）：`TMPDIR=<产物目录>/tmp .venv/bin/python tests/run_ac.py --only <用例 id>`
-  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **624/624**
+  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **696/696**
   3. 本地 e2e：`TMPDIR=<产物目录>/tmp AK_E2E_DB=<产物目录>/ak-e2e.db npx playwright test` —— 基线 **15/15**（撞端口加 `E2E_PORT`；sqlite disk I/O error 先查 /tmp quota＝环境面）
   4. 本地 docker 双轨：默认轨 build + smoke healthz 200；pypi 轨命令与
      办公网 MITM 局限见 ci-verification.md
-  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 624/624 +
+  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 696/696 +
      e2e 15/15 + docker 双轨 build + healthz 200）
   6. **CI 门槛（合并门槛，远端）**：特性分支 push -> GH Actions 三 job
      test/e2e/docker 全绿 + 分支保护必需 check `test`+`docker`（e2e 观察期：
