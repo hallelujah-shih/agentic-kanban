@@ -172,8 +172,8 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 - `new`：创建需求（手工导入），可写入 acceptance 预期锚。
 - `new --source jira --source-ref <链接>`：以链接引用登记 Jira 需求（description 贴摘要，完整详情留在 Jira——单一事件源，由 agent 自行获取）；不做自动导入（AI 已能做好的事不重复造，ADR 0004）。
 - `set_expectations`：设置/修改 requirement.acceptance（唯一入口，agent 面无此工具）。锚项可修改文本；删除被 links_to 引用的锚项被拒绝（需 agent 先解除链接）。
-- `approve`：按**当前状态**确认（决策表见 3.4）——CLAIMED 上确认 DONE、BLOCKED 上解除阻塞；按 awaiting_human.kind 清除标记，写 approval/state_change 事件（同事务）。
-- `release`：释放认领（唯一释放路径，人面）；要求存在未结束认领，无则 `not_found`；写 release 事件 + 清除 awaiting_human。`release --all-stale`：批量释放全部 STALE 认领（仅覆盖 CLAIMED 需求；逐项执行单释放语义，部分失败逐项返回，非全有全无）。
+- `approve`：按**当前状态**确认（决策表见 3.4）——CLAIMED 上确认 DONE、BLOCKED 上解除阻塞；按 awaiting_human.kind 清除标记，写 approval/state_change 事件（同事务）。 `--on-behalf "<kind>:<basis>"` 受托代执行（kind ∈ statement|action，basis 一行指向依据；surface 服务端派生为 delegated，派生规则见 5.1）。`--requirement-id` 可省（零输入）：awaiting_human 恰 1 条直接执行 / 0 条提示「无待决项」零写 / 多条非交互通道拒绝（列候选含状态 + 提示携 --requirement-id；tty 编号列选，无效选择零写）；`--on-behalf` 结构非法 -> invalid_record（先于候选读取拒绝）。
+- `release`：释放认领（唯一释放路径，人面）；要求存在未结束认领，无则 `not_found`；写 release 事件 + 清除 awaiting_human。`release --all-stale`：批量释放全部 STALE 认领（仅覆盖 CLAIMED 需求；逐项执行单释放语义，部分失败逐项返回，非全有全无）。 `--on-behalf` 与 `--requirement-id` 可省语义同 approve；零输入仍须 `--reason`（语义字段不免输，先于候选读取拒绝）。
 - `renew`：续租（对已过期租约返回 `lease_expired`）。
 - `note`：人追加更正/质疑（写入 note 事件）。
 - `export`：JSON / Markdown 全量导出。
@@ -198,7 +198,7 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 MCP `is_error` + structured content（`{code, message, task_id}`），无 HTTP 码：
 `not_found | illegal_state | already_claimed | no_active_claim | lease_expired | duplicate_subtask | invalid_record | queue_full | db_busy | ambiguous_id`
 
-每个码有唯一触发条件：`ambiguous_id` = requirement_id 短前缀（8~31 hex）命中 >=2 条需求（0 命中 -> not_found）；`lease_expired` = 对已过期租约 renew；`db_busy` = SQLite 写失败重试 3 次后（7.3）；`queue_full` = claim_task 计数超上限（16）；`invalid_record` = 记录结构缺字段（decision 缺 alternatives / request_review 缺证据 / 缺 headline / 缺 summary_line / title 或 reason 为空）；其余见工具表。
+每个码有唯一触发条件：`ambiguous_id` = requirement_id 短前缀（8~31 hex）命中 >=2 条需求（0 命中 -> not_found）；`lease_expired` = 对已过期租约 renew；`db_busy` = SQLite 写失败重试 3 次后（7.3）；`queue_full` = claim_task 计数超上限（16）；`invalid_record` = 记录结构缺字段（decision 缺 alternatives / request_review 缺证据 / 缺 headline / 缺 summary_line / title 或 reason 为空 / delegated 结构非法（字符串形缺冒号 / kind 越 statement|action 枚举 / basis 空））；其余见工具表。
 
 requirement_id 输入统一归一（strip + 大小写不敏感 + 连字符去除）；8~31 位 hex 唯一前缀可解析（>=2 命中 -> ambiguous_id）；32 位全 id 精确匹配优先；<8 位或非 hex -> not_found；MCP/REST/CLI 三面同源；响应的 requirement_id 与 ambiguous_id 错误候选列表为 32-hex 形态，not_found 消息与错误 task_id 保留原始输入。
 
@@ -214,7 +214,7 @@ requirement_id 输入统一归一（strip + 大小写不敏感 + 连字符去除
 | 外部引用 | OpenCode session id（`ses_...`）、Jira key、分支名 | 中 | 重放与定位 |
 | 自报声明 | "我是 deepseek harness"、"测试通过" | 高 | 存 payload，标注声明，不作为事实 |
 
-`actor_surface`（`mcp`/`cli`/`system`）与 `actor_conn` 由服务端派生，不接受调用方传入。决策/风险/偏离不可编辑，只能追加更正（人面 `note` 或 REOPEN 后 agent 追加）。
+`actor_surface`（`mcp`/`cli`/`system`/`delegated`）与 `actor_conn` 由服务端派生，不接受调用方传入。`delegated`＝人面上代执行：人面入口（CLI `--on-behalf` / REST 受托 body）+ 结构有效受托参数 -> 服务端派生落此值，且该命令写出的每条事件必带 `payload.delegated={kind,basis}`（单点派生，配对；MCP `add_record` 自由 payload 可含同名键为登记例外，审计检索代执行面主键＝`actor_surface=delegated`）。delegated 的源必须是已发生的人的决定（statement＝人会话表态 / action＝人工作面动作中 agent 结构性做不了的），agent 只翻译不产生；MCP 面无受托参数入口，恒 mcp。决策/风险/偏离不可编辑，只能追加更正（人面 `note` 或 REOPEN 后 agent 追加）。
 
 ### 5.2 结构与声明的诚实区分
 

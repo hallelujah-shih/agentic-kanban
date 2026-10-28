@@ -49,6 +49,13 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 - 人与你 inline 交互（会话内当场问答）**不经看板**：结果记一条 decision 事件即可，不设标记，流程零中断。只有交接在会话之外（session 结束、人不在场）才需要 request_review / mark_blocked。
 - **永不声称 DONE**：DONE 只能人确认。你的 request_review 是"交回请审核"，不是完成。
 
+## 收尾协议（代执行）
+
+- **触发（pull）**：agent 侧工作完成后（PR 流＝PR 发起后 / 本地合流＝合入后），人表态（「合了」「收尾吧」）或 agent 检测到人工作面动作完成 -> 会话内 `list_awaiting` 查等待面，有待决任务即代执行收尾。
+- **kind 判据**：`statement`＝人会话表态（basis 指向可引用的真实原话）；`action`＝人工作面动作且 agent 结构性做不了（如远端 PR merge：git fetch 后确认目标 commit 在 origin main）。**本地仓检测不算**——本地 ff 折入 / 分支合并是 agent 自己的动作，标 action 即自我认证（显式反例）。
+- **执行**：`cli.py approve --requirement-id <id> --on-behalf "<kind>:<basis>"`（release 同，携 `--reason`）。受托痕在事件自身（payload.delegated），**不再要求前置 note**。
+- **禁**：agent 自产决定（编造 statement basis / 把自己动作标 action）。终态/确认迁移的源必须是已发生的人的决定。
+
 ## 错误码速查
 
 | 码 | 含义 | 你的动作 |
