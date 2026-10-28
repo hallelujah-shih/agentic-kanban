@@ -84,13 +84,13 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 
 ## 派发方协议
 
-把任务派给独立会话（sub agent / `opencode run`）执行，是派发方的责任。派发方照协议走，不自由发挥。规范入口 `agent-kanban dispatch --requirement-id <id> [--model <provider/model> --dir <dir> --budget <预算>（秒或 h/m/s 后缀）] [--bg]` 与 `agent-kanban resume --requirement-id <需求 id 或 ses_req_<8hex>> ["<指令>"] [--model <provider/model>]`（状态门 OPEN/REOPEN、派发稿五要素、板 note 留痕、超时 resume 提示由入口承担；下列手工条款在入口不可用时仍适用）。入口输出含 session id + 启动目录（directory）——人深挖 worker 现场 = `cd <directory>` + `opencode -s <session id>` 两要素（user 裁决 U1，2026-10-28：缺一即交接不完整），交接回报时两要素必带。
+把任务派给独立会话（sub agent / `opencode run`）执行，是派发方的责任。派发方照协议走，不自由发挥。规范入口 `agent-kanban dispatch --requirement-id <id> [--model <provider/model> --dir <dir> --budget <预算>（秒或 h/m/s 后缀）] [--bg]` 与 `agent-kanban resume --requirement-id <需求 id 或 ses_req_<8hex>> ["<指令>"] [--model <provider/model>]`（dispatch 承担：状态门 OPEN/REOPEN、派发稿五要素、板 note 留痕、超时 resume 提示；resume 承担：不限需求状态、续接指令参数、板 note 留痕；下列手工条款在入口不可用时仍适用）。入口输出含 session id + 启动目录（directory）——人深挖 worker 现场 = `cd <directory>` + `opencode -s <session id>` 两要素（user 裁决 U1，2026-10-28：缺一即交接不完整），交接回报时两要素必带。
 
 - **何时派**：复杂任务 / 长任务 / 跨目录。主循环只做单文件微调。一个需求 = 一个 worker，同需求不并行 worker。
 - **预检**：工作目录状态（脏/有并发会话 -> worktree 或等待）；环境卡存在（缺则按模板先建，或问人）；目标目录 kanban MCP 可达（全局注册为正典，见 mcp-config.md）。
 - **模型继承**：传派发方当前模型（`opencode run -m <provider/model>`），不落回默认模型（默认套餐额度可能见底）。
 - **派发稿**：prompt = 任务指针（需求 id + 标题 + 指针行）+ 协议入口（本 SKILL 路径）+ 环境卡路径 + 交付规格 + 红线提醒 + 墙钟预算。不把任务全文塞进 prompt，也不让 worker 自由发挥。交付规格禁向 worker 承诺 release（release 是人面 op，agent 面不可达——dogfood 真机实锤）：完成收尾＝worker note 报完成 + 派发方人面代执行 release。
-- **留痕**：dispatch 入口自动经人面 note 留痕（content 首行人话 = 恢复锚：分发/续跑 + 会话 id + 模型 + 结局）；手工派发时仍 `add_record(kind=note)`：session id + 模型 + transcript 路径 + 预算——这条 note 即恢复锚（见「Session 与恢复」）。transcript 落批次产物目录（tee，禁 /tmp）。
+- **留痕**：dispatch 入口自动经人面 note 留痕（恢复锚：dispatch note 首行 = 分发 + 会话 id + 模型，结局在 body；resume note 首行 = 续跑 + 指令摘要 + 需求状态）；手工派发时仍 `add_record(kind=note)`：session id + 模型 + transcript 路径 + 预算——这条 note 即恢复锚（见「Session 与恢复」）。transcript 落批次产物目录（tee，禁 /tmp）。
 - **验收**：worker 的 `request_review` 是回执；派发方按板面三问（对照预期/偏离/更好方案）自答核交付，不代 worker 交接。
 - **循环**：REOPEN -> `agent-kanban resume --requirement-id <需求 id 或 ses_req_<8hex>> "返工意见..." [--model <provider/model>]`（同会话带上下文）；手工 `opencode run -s <ses>` 仍可用（换模型 = `-s` + `-m`）。
 - **长段心跳**：--bg 长任务由 `dispatch --bg` 自动完成（独立 bg 子进程代人面续租，受托痕 basis 指向分发 note；心跳周期 env `AGENT_KANBAN_DISPATCH_HEARTBEAT_SEC` 默认 60s、pre-claim 窗口跳过；终态 note 含存活时长 / renew 总数），防活着的 worker 中途 SUSPECT。已知局限：bg 进程随派发方终端死则心跳停（结构替代 = B6 plugin 心跳）。

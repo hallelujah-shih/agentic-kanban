@@ -549,10 +549,13 @@ def run_bg_loop(requirement_id: str) -> dict:
         except DispatchError as exc:
             reason = f"服务不可达（{exc.message}）"
         else:
+            # 真服务 2.1.4 GET 200 body 为 {"data": {...}} 包装；裸形态亦容忍（版本漂移）。T5 审 D4
+            raw = body or {}
+            payload = raw.get("data") if isinstance(raw.get("data"), dict) else raw
             if code == 404:
                 reason = "session 消失（GET 404）"
-            elif code == 200 and (body or {}).get("outcome") in ("succeeded", "failed"):
-                reason = f"session 终态（outcome={(body or {}).get('outcome')}）"
+            elif code == 200 and payload.get("outcome") in ("succeeded", "failed"):
+                reason = f"session 终态（outcome={payload.get('outcome')}）"
             elif code == 401:
                 reason = "session 探测鉴权失败（GET 401）"
             elif code != 200:

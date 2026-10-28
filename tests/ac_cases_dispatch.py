@@ -56,7 +56,10 @@ class _MockOpencode(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/api/session/([^/]+)", parsed.path)
         if m:
             cfg = self.server._cfg
-            entry["body"] = json.dumps({"id": m.group(1), "outcome": cfg.get("outcome")})
+            # 真服务 2.1.4 形态（dogfood 探针实锤）：GET /api/session/{id} 200 body 为
+            # {"data": {...}} 包装；裸形态会使 bg 终态判据 outcome 恒 None（T5 审 D4）
+            entry["body"] = json.dumps({"data": {"id": m.group(1),
+                                                 "outcome": cfg.get("outcome")}})
             code = int(cfg.get("get_code", 404))
             # 状态化（T2 幂等复用）：未收到该 id 的 create POST 前 404，收到后 200；
             # get_code=401/200 保持静态语义（T1 夹具契约不动）

@@ -36,6 +36,6 @@
 | G23 | 超时 note 首行用正常「分发：」句式，超时事实只在「结局: 超时」行（plan 未钉超时变体，措辞裁量接受，T3 审 P2-3） | ② | 可选改进「分发（超时）：」首行变体，不强制 | B2 合入（2026-10-28） |
 | G24 | k_dispatch_timeout 的 _wait_completed 锚余量 ~8s（断言 ~t+2-3s 执行 vs daemon 置位 t+10s）：两事件均为墙钟量与机器速度无关，结构性成立；唯一失效模式＝机器停摆 >8s 假红（不假绿），属测试基建事实 | ② | 无需处置（假红可重跑显性化，不掩盖产品缺陷）；若停摆频繁可上调 daemon 置位间隔 | B2 合入（2026-10-28） |
 | G25 | opencode wait 为 experimental 端点（POST /api/experimental/session/{id}/wait）：漂移风险（升级后语义变化如立即返回不阻塞 -> dispatch 假完成写进 note，Premortem F2）；dogfood 锚定 opencode 2.1.4 | ② | 退化方案＝轮询 GET /api/session/{id}（outcome/time.idle，OpenAPI 实锤存在）；note 记服务 URL（版本可回溯）；升级 opencode 后先重跑 dogfood | B2 合入（2026-10-28） |
-| G26 | bg 子进程异常面（T4 审 P2 + 相邻登记 stderr=DEVNULL 合并）：① 非探测异常路径（循环体其他异常/预循环失败）不收敛终态 note，仅租约过期 -> SUSPECT/stale 板面显性化兜底（S8 钉死的探测路径四分支已全收敛）；② stderr=DEVNULL（防父端管道死锁的确定性取舍），未预期崩溃输出不落文件——板面留痕（分发 note + 委托 renew）是恢复锚，孤儿心跳的无人续租本身被租约机制显性化 | ② | 升级路径（低成本，单独立项可裁决）：循环体 + 预循环 try/except 收口终态 note + crash 落盘路径（批次产物目录） | B2 合入（2026-10-28） |
+| G26 | bg 子进程异常面（T4 审 P2 + 相邻登记 stderr=DEVNULL 合并）：① 非探测异常路径（循环体其他异常/预循环失败）不收敛终态 note，仅租约过期 -> SUSPECT/stale 板面显性化兜底（S8 钉死的探测路径四分支收敛；其中 200+outcome 分支 T6 前读裸 body、真服务 data 包装形态不命中 = T5 审 D4，T6 已修 + mock 改真服务形态作红锚）；② stderr=DEVNULL（防父端管道死锁的确定性取舍），未预期崩溃输出不落文件——板面留痕（分发 note + 委托 renew）是恢复锚，孤儿心跳的无人续租本身被租约机制显性化 | ② | 升级路径（低成本，单独立项可裁决）：循环体 + 预循环 try/except 收口终态 note + crash 落盘路径（批次产物目录） | B2 合入（2026-10-28） |
 
 登记规则：新增残余必须同时写明档位与生效点；档位 ③ 冒充 ① 或 ② 视为虚标，审查照报。
