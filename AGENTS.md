@@ -14,6 +14,10 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 人面 CLI（approve/release/note 等）：
   `AGENT_KANBAN_DB=/home/shih/.agent-kanban/kanban.db .venv/bin/python cli.py <cmd> --requirement-id <32hex>`
   （flag 式参数，非位置参数；approve/release 可省 --requirement-id＝零输入，agent 代执行携 `--on-behalf "<kind>:<basis>"`，判据见 SKILL.md 收尾协议）。
+- dispatch/resume（worker 分发正典入口，协议见 SKILL.md「派发方协议」）：
+  `AGENT_KANBAN_DB=/home/shih/.agent-kanban/kanban.db .venv/bin/python cli.py dispatch --requirement-id <id> [--model provider/model] [--dir D] [--budget <秒|h/m/s>] [--bg]`；
+  `cli.py resume --requirement-id <需求 id 或 ses_req_<8hex>> ["<指令>"] [--model provider/model]`（恢复/返工/换模型统一入口，不限需求状态）。
+- dispatch/resume 语义：--budget＝同步 wait 墙钟预算（超时 rc=1 不杀会话，stdout 带 resume 提示；resume 缺省 1h）；--bg＝投递后返回，独立 bg 子进程心跳续租（周期 env AGENT_KANBAN_DISPATCH_HEARTBEAT_SEC 默认 60s），终态写板 note。深挖锚：输出含 session id + directory 顶层字段，人深挖 worker 现场＝`cd <directory>` + `opencode -s <session id>`（缺一即交接不完整）。
 - 生产 DB `/home/shih/.agent-kanban/kanban.db` 只读侦察；操作面写走 CLI/MCP 正典路径。
 - 生产部署：`docker compose up -d --build kanban`（仓根 docker-compose.yml，build 仓根，
   host 网络，挂载 ~/.agent-kanban:/data）；部署后核验 = healthz 200 + 容器代码态
@@ -26,16 +30,17 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 入口形态：本地开发机＝构建机（仓根 `.venv`）；远端＝GitHub Actions。
 - tier 阶梯（低 -> 高；tier 命名与组成按 ci-verification.md 正典）：
   1. 快速反馈（折入重跑最低 tier，SDD 机器纪律款）：`TMPDIR=<产物目录>/tmp .venv/bin/python tests/run_ac.py --only <用例 id>`
-  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **696/696**
+  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **793/793**（B2 合入后；worktree 内跑必带 `PYTHONPATH=$PWD/src`，见下）
   3. 本地 e2e：`TMPDIR=<产物目录>/tmp AK_E2E_DB=<产物目录>/ak-e2e.db npx playwright test` —— 基线 **15/15**（撞端口加 `E2E_PORT`；sqlite disk I/O error 先查 /tmp quota＝环境面）
   4. 本地 docker 双轨：默认轨 build + smoke healthz 200；pypi 轨命令与
      办公网 MITM 局限见 ci-verification.md
-  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 696/696 +
+  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 793/793 +
      e2e 15/15 + docker 双轨 build + healthz 200）
   6. **CI 门槛（合并门槛，远端）**：特性分支 push -> GH Actions 三 job
      test/e2e/docker 全绿 + 分支保护必需 check `test`+`docker`（e2e 观察期：
      自 CI 首跑 2026-10-26 起一两周无连红后补设，交接命令
      ci-verification.md:230）
+- worktree 锚定：worktree 内跑全量套件必带 `PYTHONPATH=$PWD/src`（months_ago 管线修后 canonical 轨亦绿；锚定规则为 canonical 口径保留）。
 - **禁 /tmp 作产物/证据目录**（/tmp usrquota 慢性满，EDQUOT 两次先例）：
   本地一切 run 必带 `TMPDIR=/home/shih/.tmp-ak-m16/<batch>/tmp`；
   批次产物目录 = `/home/shih/.tmp-ak-m16/<batch>/`（ledger、dispatches/、红绿日志、审查报告）。
