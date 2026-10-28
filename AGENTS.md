@@ -9,7 +9,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   以 `skills/agent-kanban/SKILL.md` 为正典，本文件不重复。
 - **板上收尾动作**：agent 侧工作完成后（PR 流＝PR 发起后，本地合流＝合入后）
   立即调 `request_review`（evidence 含 pr_url/commit_range/test_summary，
-  附验收自评；协议细节见协议 skill 门 5）。板 awaiting_human 是唯一等待面，
+  附验收自评；协议细节见协议 skill 门 6）。板 awaiting_human 是唯一等待面，
   禁留任务等租约过期变 stale。
 - 人面 CLI（approve/release/note 等）：
   `AGENT_KANBAN_DB=/home/shih/.agent-kanban/kanban.db .venv/bin/python cli.py <cmd> --requirement-id <32hex>`
@@ -59,6 +59,19 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 每批判据：它让三问（PRD §1 C1）更可答（outcome），还是只减 builder 摩擦？
   后者仅在卡住正在运行的循环时合格。
 - M1 完成以 G3 试用/AC14 跑完为准（known-gaps G3）；试用裁决前不排纯人体工学批次。
+
+## 环境卡
+
+- workspace: /home/shih/test/AgenticKanban（主仓，main 只读）；开发工作走 .worktree/<name>；产物落点: docs/（文档）/ tests/（用例）；临时产物: /home/shih/.tmp-ak-m16/<batch>/
+- context: docs/PRD.md（spec v3.2）/ docs/design.md / docs/web.md / docs/ops/ci-verification.md / docs/adr/0000-known-gaps.md；看板协议 = skills/agent-kanban/SKILL.md
+- skills: strict-sdd-loop（开发循环）/ adversarial-review（审查）/ technical-research（调研，调研类任务默认）
+- tools/mcp: kanban（项目级 ./.venv/bin/agent-kanban mcp；跨目录用全局注册，见 docs/mcp-config.md §3.0）/ searxng（user 级）/ webfetch
+- reach: 操作面 = 本地构建机（仓根 .venv）；测试 = tests/run_ac.py + npx playwright e2e（tier 阶梯见上「验证入口」）；观察面 = 生产 DB ~/.agent-kanban/kanban.db（只读）+ docker 容器 + healthz
+- 红线: 禁直推 main（仅 MR）；生产 DB 只读，写走 CLI/MCP；禁 /tmp 作产物目录；Q1/Q2/Q3 裁决前禁 test/e2e 镜像现实现凑绿；merge 由 user 裁决
+- ops 教训:
+  - github ssh 路由（22/443）间歇挂；push 走 origin HTTPS（代理 127.0.0.1:8888）稳定；网络命令一律 timeout 包装，失败重试
+  - gh 无独立代理配置，读标准 env，须 bash -lc 加载
+  - 管道后 rc=$? 取的是管道末命令退出码；关键命令 rc 裸捕获（不接管道）
 
 ## 主循环纪律
 

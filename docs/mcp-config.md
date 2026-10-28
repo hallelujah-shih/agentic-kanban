@@ -64,6 +64,25 @@ curl -i http://127.0.0.1:8000/mcp -H "x-agent-kanban-token: ..." \
 
 ## 3. opencode v2
 
+### 3.0 全局注册（跨目录分发必需）
+
+worker 会话在 kanban 仓之外目录运行（如域项目目录）时，kanban MCP 必须注册在 user 级（绝对路径 + 显式 DB），否则 worker 在该目录没有看板，无法记录/交接：
+
+```jsonc
+// ~/.config/opencode/opencode.json(c)
+{
+  "mcp": {
+    "kanban": {
+      "type": "local",
+      "command": ["/path/to/agentic-kanban/.venv/bin/agent-kanban", "mcp"],
+      "environment": { "AGENT_KANBAN_DB": "/home/<user>/.agent-kanban/kanban.db" }
+    }
+  }
+}
+```
+
+项目级配置（相对路径 `./.venv/...`）只在 kanban 仓内有效；跨目录派发的正典装法是全局注册（SKILL「派发方协议」预检项）。
+
 ### 3.1 手工配置（推荐，可保留注释）
 
 `opencode.jsonc`（项目级）或 `~/.config/opencode/opencode.jsonc`（全局）：
