@@ -51,9 +51,15 @@ def ac1():
     req2 = seed_req(db, "ac1-kill-target")
     marker = db.parent / "claim-marker"
     killer = MCP(db, hook="block_after_insert", marker=marker).start()
-    kill_thread = threading.Thread(
-        target=lambda: killer.call("claim_task", {"requirement_id": req2, "agent_name": "killer"})
-    )
+    def _killer_claim() -> None:
+        # kill 锚刻意 SIGKILL server，reader 侧 EOFError 是确定性设计副产品（G15）；
+        # 只吞 EOFError，其他异常照抛（禁掩盖真失败）
+        try:
+            killer.call("claim_task", {"requirement_id": req2, "agent_name": "killer"})
+        except EOFError:
+            pass
+
+    kill_thread = threading.Thread(target=_killer_claim)
     kill_thread.start()
     seen = False
     deadline = time.monotonic() + 20
