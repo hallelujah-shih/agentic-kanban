@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from agent_kanban.db import get_session_factory, now_utc, run_op
+from agent_kanban.dispatch import DispatchError, run_bg_loop, run_dispatch, run_resume
 from agent_kanban.errors import BusinessError
 from agent_kanban.services import operations as ops
 from agent_kanban.services import reconcile, view
@@ -134,6 +135,42 @@ def _cmd_note(args: argparse.Namespace) -> int:
         return 1
     return _invoke("note", requirement_id=args.requirement_id, content=args.content,
                    delegated=delegated)
+
+
+def _cmd_dispatch(args: argparse.Namespace) -> int:
+    if args._bg_loop:
+        # --_bg-loop（隐藏 flag，不宣传）：bg 心跳子进程 re-entry（D1 Popen re-entry）
+        try:
+            result = run_bg_loop(args.requirement_id)
+        except (DispatchError, BusinessError) as exc:
+            print(f"{exc.code}: {exc.message}", file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    try:
+        result = run_dispatch(
+            args.requirement_id, model=args.model, directory=args.dir,
+            budget=args.budget, bg=args.bg,
+        )
+    except (DispatchError, BusinessError) as exc:
+        if isinstance(exc, DispatchError) and exc.code == "timeout":
+            # 超时契约（plan 步骤 8）：错误照旧进 stderr，stdout 额外输出契约行
+            print(f"timeout: 预算内未完成，会话保留未杀；续跑: agent-kanban resume {args.requirement_id}")
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_resume(args: argparse.Namespace) -> int:
+    try:
+        result = run_resume(args.requirement_id, args.instruction,
+                            model=args.model, budget=args.budget)
+    except (DispatchError, BusinessError) as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
 
 
 def _cmd_abandon(args: argparse.Namespace) -> int:
@@ -416,6 +453,28 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--on-behalf", metavar='"kind:basis"',
                    help="受托代执行（kind: statement|action，basis 一行指向依据）")
     p.set_defaults(handler=_cmd_note)
+
+    p = sub.add_parser("dispatch",
+                       help="分发需求到 opencode worker 会话（派生 session + 派发稿 + 板 note）")
+    p.add_argument("--requirement-id", required=True)
+    p.add_argument("--model", help="provider/model（缺省＝服务默认模型）")
+    p.add_argument("--dir", help="工作目录（优先于 description workspace 指针）")
+    p.add_argument("--budget", help="墙钟预算（裸数＝秒，或 h/m/s 后缀）")
+    p.add_argument("--bg", action="store_true",
+                   help="后台模式：投递后返回，独立 bg 进程心跳续租"
+                        "（周期＝AGENT_KANBAN_DISPATCH_HEARTBEAT_SEC，默认 60s），终态写板 note")
+    p.add_argument("--_bg-loop", dest="_bg_loop", action="store_true",
+                   help=argparse.SUPPRESS)
+    p.set_defaults(handler=_cmd_dispatch)
+
+    p = sub.add_parser("resume",
+                       help="续接需求的 worker 会话（恢复/返工/换模型统一入口；不限需求状态）")
+    p.add_argument("--requirement-id", required=True,
+                   help="需求 id（32hex）或派生 session id ses_req_<8hex>（前缀反查须唯一）")
+    p.add_argument("instruction", nargs="?", default=None, help="指令文本（空＝投「继续」）")
+    p.add_argument("--model", help="provider/model（先 switchModel 后投指令）")
+    p.add_argument("--budget", help="墙钟预算（裸数＝秒，或 h/m/s 后缀；默认 1h）")
+    p.set_defaults(handler=_cmd_resume)
 
     p = sub.add_parser("abandon", help="REJECTED / CANCELLED（同事务处置认领）")
     p.add_argument("--requirement-id", required=True)
