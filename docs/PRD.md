@@ -56,7 +56,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 
 | 表 | 关键字段 | 状态由谁写 |
 |---|---|---|
-| requirements | id, source(`jira`/`manual`), source_ref, title, description(摘要), acceptance[]（人写预期验收锚）, state, awaiting_human{reason,evidence,since,kind,summary_line}, created_at, updated_at | 状态机；acceptance 仅人面可写；DONE 仅人确认；source=`jira` 时 source_ref 存链接（引用登记，无自动导入）；description 存摘要，完整内容留源头（单一事件源）；summary_line 由 request_review 设置（评审交接一句话），mark_blocked 不设（blocked 用 reason） |
+| requirements | id, source(`jira`/`manual`), source_ref, title, description(摘要+工作区指针行), acceptance[]（人写预期验收锚）, state, awaiting_human{reason,evidence,since,kind,summary_line}, created_at, updated_at | 状态机；acceptance 仅人面可写；DONE 仅人确认；source=`jira` 时 source_ref 存链接（引用登记，无自动导入）；description 存摘要，完整内容留源头（单一事件源）；工作区指针行（`workspace=<dir> env-card=<路径>`，约定见 SKILL「工作区就绪」，结构化字段后置）；summary_line 由 request_review 设置（评审交接一句话），mark_blocked 不设（blocked 用 reason） |
 | claims | id, requirement_id, agent_name(声明), agent_conn(观测), started_at, lease_expires_at, last_activity_at, ended_at, release_reason | 系统推导（租约） |
 | subtasks | id, requirement_id, ordinal, title, acceptance[{item, criteria, state: met|not_met|deviated, deviation_reason?, links_to[]}], state, milestone_id?, created_at, updated_at | agent 报告，带 provenance |
 | milestones | id, requirement_id, title, planned_at?, actual_at?, state, created_at, updated_at | agent 报告，带 provenance |
