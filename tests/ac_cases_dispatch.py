@@ -49,6 +49,10 @@ class _MockOpencode(BaseHTTPRequestHandler):
             cfg = self.server._cfg
             entry["body"] = json.dumps({"id": m.group(1), "outcome": cfg.get("outcome")})
             code = int(cfg.get("get_code", 404))
+            # 状态化（T2 幂等复用）：未收到该 id 的 create POST 前 404，收到后 200；
+            # get_code=401/200 保持静态语义（T1 夹具契约不动）
+            if code == 404 and m.group(1) in self.server._exists:
+                code = 200
         else:
             code = 404
         log.append(entry)
@@ -62,6 +66,10 @@ class _MockOpencode(BaseHTTPRequestHandler):
         log.append({"method": "POST", "path": self.path, "body": body,
                     "auth": self.headers.get("Authorization")})
         if path == "/api/session":
+            try:
+                self.server._exists[json.loads(body)["id"]] = True
+            except (ValueError, KeyError):
+                pass
             self._send(200, body.encode())
         elif re.fullmatch(r"/api/session/[^/]+/prompt", path):
             self._send(200, b"{}")
@@ -92,6 +100,7 @@ def _mock_start(port: int, cfg: dict):
     srv._cfg = cfg
     srv._log = []
     srv._wait_completed = False
+    srv._exists = {}  # T2 状态化：已收到 create POST 的 session id 集合
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, lambda: srv.shutdown()
 
@@ -169,6 +178,10 @@ def k_dispatch_main():
             ok("note 结构化=模型/目录/结局",
                "ks-cp/glm-5-3-flash" in tail and str(ws) in tail and "完成" in tail, tail)
         ok("mock 无 delete 调用", not any("delete" in r["path"].lower() for r in log))
+        # 勘误 3：AUTH=none 时所有请求不带 auth 头（防生产覆盖误关鉴权的确定性锚）
+        ok("AUTH=none 全部请求 auth 头为 None",
+           log and all(r.get("auth") is None for r in log),
+           f"auths={[(r['path'], r['auth']) for r in log]}")
     finally:
         stop()
 
@@ -213,5 +226,118 @@ def k_dispatch_authfail():
         ok("错误含鉴权语义（auth/401）", "auth" in low or "401" in low, res.stderr)
         ok("无 create 调用", not any(r["method"] == "POST" and r["path"] == "/api/session"
                                      for r in srv._log), f"log={srv._log}")
+    finally:
+        stop()
+
+
+def k_dispatch_reuse():
+    print("== B2-T2: 幂等复用（req 保持 OPEN，dispatch 两次 -> create 恰 1 次 + 第二次投续接稿）")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-dispatch-reuse-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    rid = cli_ok(db, "new", "--title", "幂等复用需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    sid = f"ses_req_{rid[:8]}"
+    srv, stop = _mock_start(_find_port(), {"get_code": 404})
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    try:
+        res1 = cli(db, "dispatch", "--requirement-id", rid,
+                   "--model", "ks-cp/glm-5-3-flash", "--budget", "10m", extra=extra)
+        ok("第一次 dispatch rc=0", res1.returncode == 0,
+           f"rc={res1.returncode} stderr={res1.stderr}")
+        res2 = cli(db, "dispatch", "--requirement-id", rid,
+                   "--model", "ks-cp/glm-5-3-flash", "--budget", "10m", extra=extra)
+        ok("第二次 dispatch rc=0", res2.returncode == 0,
+           f"rc={res2.returncode} stderr={res2.stderr}")
+        log = list(srv._log)
+        creates = [r for r in log if r["method"] == "POST" and r["path"] == "/api/session"]
+        ok("create 计数=1（第二次不新 create）", len(creates) == 1, f"n={len(creates)}")
+        prompts = [r for r in log if r["method"] == "POST" and r["path"] == f"/api/session/{sid}/prompt"]
+        ok("同 session 收到 2 次 prompt", len(prompts) == 2, f"n={len(prompts)}")
+        if len(prompts) == 2:
+            t1 = json.loads(prompts[0]["body"])["text"]
+            t2 = json.loads(prompts[1]["body"])["text"]
+            ok("第一次是新建稿", "派发稿" in t1 and "会话已存在" not in t1, t1[:120])
+            ok("第二次是续接稿（会话已存在）", "会话已存在" in t2 and "派发稿" not in t2, t2[:120])
+            ok("续接稿 state=OPEN", "state: OPEN" in t2, t2)
+            ok("续接稿 awaiting 摘要（无）", "awaiting: 无" in t2, t2)
+            ok("续接稿子任务进度逐字 0/0", "0/0" in t2, t2)
+        contents = _note_contents(db, rid)
+        ok("板 note 共 2 条", len(contents) == 2, f"n={len(contents)}")
+        if len(contents) == 2:
+            first = contents[1].splitlines()[0]
+            ok("第二条 note 首行人话含会话 id", "分发" in first and sid in first, first)
+    finally:
+        stop()
+
+
+def k_resume():
+    print("== B2-T2: resume（需求 id + 指令逐字 + note 记当前 state；--model 先 switchModel 后 prompt）")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-resume-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    rid = cli_ok(db, "new", "--title", "resume 需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    _set_state(db, rid, "REOPEN")
+    sid = f"ses_req_{rid[:8]}"
+    srv, stop = _mock_start(_find_port(), {"get_code": 404})
+    srv._exists[sid] = True  # given：worker session 已存在（此前 dispatch 创建）
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    try:
+        # (a) 需求 id + 指令逐字
+        res = cli(db, "resume", "--requirement-id", rid, "落点改 tmp 目录", extra=extra)
+        ok("resume rc=0", res.returncode == 0, f"rc={res.returncode} stderr={res.stderr}")
+        log = list(srv._log)
+        prompts = [r for r in log if r["method"] == "POST" and r["path"] == f"/api/session/{sid}/prompt"]
+        ok("prompt 投同派生 session", len(prompts) == 1, f"n={len(prompts)}")
+        if prompts:
+            t = json.loads(prompts[0]["body"])["text"]
+            ok("text 逐字＝指令", t == "落点改 tmp 目录", t)
+        ok("无 --model 时不调 switchModel",
+           not any(r["method"] == "POST" and r["path"].endswith("/model") for r in log),
+           f"log={[r['path'] for r in log]}")
+        ok("resume 不 create session",
+           not any(r["method"] == "POST" and r["path"] == "/api/session" for r in log),
+           f"log={[r['path'] for r in log]}")
+        ok("同步 wait 被调",
+           any(r["method"] == "POST" and r["path"] == f"/api/experimental/session/{sid}/wait"
+               for r in log))
+        contents = _note_contents(db, rid)
+        ok("板 note 1 条", len(contents) == 1, f"n={len(contents)}")
+        if contents:
+            first, *rest = contents[0].splitlines()
+            ok("note 首行含 续跑 + 需求当前 state",
+               "续跑" in first and "REOPEN" in first, first)
+            tail = "\n".join(rest)
+            ok("note 结构化含 session id", sid in tail, tail)
+        # (b) ses 派生形态直给 + --model：先 switchModel 后 prompt
+        res2 = cli(db, "resume", "--requirement-id", sid, "继续",
+                   "--model", "other/model", extra=extra)
+        ok("resume --model rc=0", res2.returncode == 0,
+           f"rc={res2.returncode} stderr={res2.stderr}")
+        log = list(srv._log)
+        model_idx = [i for i, r in enumerate(log)
+                     if r["method"] == "POST" and r["path"] == f"/api/session/{sid}/model"]
+        prompt_idx = [i for i, r in enumerate(log)
+                      if r["method"] == "POST" and r["path"] == f"/api/session/{sid}/prompt"]
+        ok("switchModel 恰 1 次", len(model_idx) == 1, f"log={[r['path'] for r in log]}")
+        ok("顺序：model 在 prompt 之前",
+           len(model_idx) == 1 and len(prompt_idx) == 2 and model_idx[0] < prompt_idx[1],
+           f"model={model_idx} prompt={prompt_idx}")
+        if model_idx:
+            b = json.loads(log[model_idx[0]]["body"])
+            ok("switchModel body {model:{id,providerID}}",
+               b == {"model": {"id": "model", "providerID": "other"}}, b)
+        if len(prompt_idx) == 2:
+            t2 = json.loads(log[prompt_idx[1]]["body"])["text"]
+            ok("第二次 prompt text＝继续", t2 == "继续", t2)
+        contents = _note_contents(db, rid)
+        ok("板 note 共 2 条", len(contents) == 2, f"n={len(contents)}")
+        if len(contents) == 2:
+            first, *rest = contents[1].splitlines()
+            ok("第二条 note 首行含 续跑 + state", "续跑" in first and "REOPEN" in first, first)
+            ok("note 模型记新模型", "other/model" in "\n".join(rest), rest)
     finally:
         stop()

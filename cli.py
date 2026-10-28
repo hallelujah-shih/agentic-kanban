@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from agent_kanban.db import get_session_factory, now_utc, run_op
-from agent_kanban.dispatch import DispatchError, run_dispatch
+from agent_kanban.dispatch import DispatchError, run_dispatch, run_resume
 from agent_kanban.errors import BusinessError
 from agent_kanban.services import operations as ops
 from agent_kanban.services import reconcile, view
@@ -143,6 +143,17 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
             args.requirement_id, model=args.model, directory=args.dir,
             budget=args.budget, bg=args.bg,
         )
+    except (DispatchError, BusinessError) as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_resume(args: argparse.Namespace) -> int:
+    try:
+        result = run_resume(args.requirement_id, args.instruction,
+                            model=args.model, budget=args.budget)
     except (DispatchError, BusinessError) as exc:
         print(f"{exc.code}: {exc.message}", file=sys.stderr)
         return 1
@@ -439,6 +450,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--budget", help="墙钟预算（裸数＝秒，或 h/m/s 后缀）")
     p.add_argument("--bg", action="store_true", help="后台模式（本批只解析不实现）")
     p.set_defaults(handler=_cmd_dispatch)
+
+    p = sub.add_parser("resume",
+                       help="续接需求的 worker 会话（恢复/返工/换模型统一入口；不限需求状态）")
+    p.add_argument("--requirement-id", required=True,
+                   help="需求 id（32hex）或派生 session id ses_req_<8hex>（前缀反查须唯一）")
+    p.add_argument("instruction", nargs="?", default=None, help="指令文本（空＝投「继续」）")
+    p.add_argument("--model", help="provider/model（先 switchModel 后投指令）")
+    p.add_argument("--budget", help="墙钟预算（裸数＝秒，或 h/m/s 后缀；默认 1h）")
+    p.set_defaults(handler=_cmd_resume)
 
     p = sub.add_parser("abandon", help="REJECTED / CANCELLED（同事务处置认领）")
     p.add_argument("--requirement-id", required=True)

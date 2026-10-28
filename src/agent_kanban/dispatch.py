@@ -21,7 +21,11 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy import select
+
 from .db import get_read_session_factory, get_session_factory, run_op
+from .errors import BusinessError
+from .models import Subtask
 from .services import operations as ops
 from .services.ids import norm_id
 from .services.identity import cli_actor
@@ -99,6 +103,8 @@ def _parse_pointers(description: str | None, explicit_dir: str | None
                 val = tok[len("env-card="):]
                 if val:
                     env_card = val
+                else:
+                    warnings.append(f"env-card 指针值为空，忽略: {tok}")
     if explicit_dir:
         ws = explicit_dir
     if ws is None:
@@ -261,6 +267,33 @@ def _build_prompt(*, req, rid: str, ws: str | None, env_card: str | None,
     return "\n".join(lines)
 
 
+def _subtask_progress(rid: str) -> tuple[int, int]:
+    """子任务进度 done/total（只读直读，续接稿板面摘要用）。"""
+
+    async def _read(session):
+        rows = (await session.scalars(
+            select(Subtask).where(Subtask.requirement_id == rid))).all()
+        return sum(1 for s in rows if s.state == "done"), len(rows)
+
+    return asyncio.run(run_op(get_read_session_factory(), _read, is_write=False))
+
+
+def _build_continuation(req, rid: str) -> str:
+    """续接稿（GET 200 复用路径，P-imp4）：会话已存在，继续当前需求 + 最近板面状态摘要。"""
+    done, total = _subtask_progress(rid)
+    awaiting = req.awaiting_human
+    if isinstance(awaiting, dict) and awaiting:
+        kind = awaiting.get("kind") or "未知"
+        awaiting_desc = f"有（kind={kind}）"
+    else:
+        awaiting_desc = "无"
+    lines = ["【续接稿】会话已存在，继续当前需求。", "",
+             f"- 需求 id: {rid}", f"- 标题: {req.title}",
+             f"- state: {req.state}", f"- awaiting: {awaiting_desc}",
+             f"- 子任务进度: {done}/{total}"]
+    return "\n".join(lines)
+
+
 def _note_content(*, title: str, sid: str, model_desc: str, directory: str | None,
                   url: str, budget_desc: str, outcome: str) -> str:
     return "\n".join([
@@ -309,7 +342,8 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
             _check_http_error("GET", f"/api/session/{sid}", code)
         if code not in (200, 404):
             raise DispatchError("http_error", f"session 存在检查返回非预期状态 {code}")
-        if code == 404:
+        reused = code == 200
+        if not reused:
             body: dict = {"id": sid, "title": f"ak-{rid[:8]} {req.title}"}
             if model_ref is not None:
                 body["model"] = model_ref
@@ -320,9 +354,13 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
             if code != 200:
                 raise DispatchError("http_error", f"session 创建返回非预期状态 {code}")
             created = True
-        # 200：session 已存在 -> 复用（续接稿 + 板面状态摘要由 T2 交付；当前投新建稿）
-        prompt = _build_prompt(req=req, rid=rid, ws=ws, env_card=env_card,
-                               redline=redline, budget_raw=budget, warnings=warnings)
+        # 200：session 已存在 -> 复用投续接稿（P-imp4：同 id 不新 create）；
+        # 404->创建：投完整五要素新建稿
+        if reused:
+            prompt = _build_continuation(req, rid)
+        else:
+            prompt = _build_prompt(req=req, rid=rid, ws=ws, env_card=env_card,
+                                   redline=redline, budget_raw=budget, warnings=warnings)
         code, _ = _api(svc, "POST", f"/api/session/{sid}/prompt", {"text": prompt})
         _check_http_error("POST", f"/api/session/{sid}/prompt", code)
         if code >= 400:
@@ -360,3 +398,78 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
                                   model_desc=model or "未指定（服务默认）",
                                   directory=ws, url=svc.url,
                                   budget_desc=budget or "", outcome=outcome)}
+
+
+# ---------------------------------------------------------------- resume
+_REQ_ID_RE = re.compile(r"[0-9a-f]{32}")
+_SES_REQ_RE = re.compile(r"ses_req_([0-9a-f]{8})")
+
+
+def _resolve_resume_target(target: str):
+    """resume 目标定位：需求 id（32hex）或 ses_req_<8hex> 派生形态（前缀反查须存在且唯一）。
+
+    非派生形态 ses id 明确拒绝（看板是恢复入口，手工 session 不走本命令）。
+    不限需求状态（Q2：恢复/返工/换模型统一入口，note 如实记当前状态）。
+    """
+    t = target.strip()
+    m = _SES_REQ_RE.fullmatch(t)
+    if m:
+        try:
+            return _load_requirement(m.group(1))
+        except BusinessError as exc:
+            raise DispatchError(
+                "session_unmapped",
+                f"session 无法映射到需求: {t}（前缀反查 {exc.code}: {exc.message}）") from None
+    if _REQ_ID_RE.fullmatch(t):
+        return _load_requirement(t)
+    raise DispatchError(
+        "invalid_target",
+        f"resume 目标形态无效: {target!r}（接受需求 id 32hex 或派生 session ses_req_<8hex>）")
+
+
+def _resume_note_content(*, title: str, sid: str, model_desc: str, state: str,
+                         instruction: str) -> str:
+    summary = instruction if len(instruction) <= 40 else instruction[:40] + "…"
+    return "\n".join([
+        f"续跑：{title}，{summary}，需求状态 {state}",
+        f"session id: {sid}",
+        f"模型: {model_desc}",
+        f"需求 state: {state}",
+    ])
+
+
+def run_resume(target: str, instruction: str | None = None, *, model: str | None = None,
+               budget: str | None = None) -> dict:
+    """resume 主链：目标定位（不限状态）-> 服务发现 -> --model 先 switchModel（P-imp5）->
+    prompt（空指令=「继续」）-> 同步 wait（budget 默认 1h）-> 板 note（I3 恢复锚）。
+    不做计划外前置检查：session 不存在时 prompt 404 走既有 http_error 路径。"""
+    budget_secs = parse_budget(budget or "1h")
+    model_ref = split_model(model)
+    req = _resolve_resume_target(target)
+    rid = norm_id(req.id)
+    state = req.state
+    svc = discover_service()
+    sid = f"ses_req_{rid[:8]}"
+    text = (instruction or "").strip() or "继续"
+    model_path = f"/api/session/{sid}/model"
+    prompt_path = f"/api/session/{sid}/prompt"
+    wait_path = f"/api/experimental/session/{sid}/wait"
+    if model_ref is not None:
+        code, _ = _api(svc, "POST", model_path, {"model": model_ref})
+        _check_http_error("POST", model_path, code)
+        if code != 200:
+            raise DispatchError("http_error", f"switchModel 返回非预期状态 {code}")
+    code, _ = _api(svc, "POST", prompt_path, {"text": text})
+    _check_http_error("POST", prompt_path, code)
+    if code >= 400:
+        raise DispatchError("http_error", f"prompt 投递返回非预期状态 {code}")
+    code, _ = _api(svc, "POST", wait_path, timeout=budget_secs)
+    _check_http_error("POST", wait_path, code)
+    if code != 204:
+        raise DispatchError("http_error", f"wait 返回非预期状态 {code}")
+    note = _resume_note_content(title=req.title, sid=sid,
+                                model_desc=model or "未指定（未换模）",
+                                state=state, instruction=text)
+    _write_note(rid, note)
+    return {"requirement_id": rid, "session_id": sid, "outcome": "完成",
+            "service_url": svc.url, "note": note}

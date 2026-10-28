@@ -374,6 +374,7 @@ def months_ago():
     print("== M1-3.3 (viii): _months_ago 月末 clamp（fake now 直接断言，不进真实 CLI）")
     import sys
     sys.path.insert(0, str(REPO_ROOT))  # 从源码 cli.py 导入（site-packages 为安装时旧副本）
+    sys.path.insert(0, str(REPO_ROOT / "src"))  # cli.py 的 agent_kanban.* 导入须解析到本树 src（对齐 ac_cases_l）
     from cli import _months_ago
     ok("months_ago: 3-31 减 1 月 -> 2-28（月末回绕 clamp）",
        _months_ago(datetime(2026, 3, 31), 1) == datetime(2026, 2, 28),
