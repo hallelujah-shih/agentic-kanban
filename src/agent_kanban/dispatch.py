@@ -5,6 +5,9 @@ status` 末行（subprocess，10s）；鉴权＝env AGENT_KANBAN_OPENCODE_AUTH=n
 否则读 ~/.config/opencode/service.json 的 password 发 Basic（strace 实锤）。
 约束：stdlib urllib（不加依赖）；P-imp1 不自动拉起服务、不重试；密码永不进
 stdout/错误消息（URL 可回显）。
+--bg（T4，D1 Popen re-entry）：prompt 投递 + 分发 note 后 spawn 独立 bg 子进程
+跑心跳续租（run_bg_loop 单一实现），父进程立即返回；终态判据＝GET 404 或
+outcome ∈ {succeeded, failed}，终态 note 后退出。
 """
 
 from __future__ import annotations
@@ -16,6 +19,8 @@ import os
 import re
 import socket
 import subprocess
+import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -25,7 +30,7 @@ from sqlalchemy import select
 
 from .db import get_read_session_factory, get_session_factory, run_op
 from .errors import BusinessError
-from .models import Subtask
+from .models import Claim, Event, Subtask
 from .services import operations as ops
 from .services.ids import norm_id
 from .services.identity import cli_actor
@@ -33,9 +38,11 @@ from .services.write_guard import require_requirement
 
 URL_ENV = "AGENT_KANBAN_OPENCODE_URL"
 AUTH_ENV = "AGENT_KANBAN_OPENCODE_AUTH"
+HEARTBEAT_ENV = "AGENT_KANBAN_DISPATCH_HEARTBEAT_SEC"
 SERVICE_JSON = Path.home() / ".config" / "opencode" / "service.json"
 DISPATCHABLE_STATES = ("OPEN", "REOPEN")
 _SERVICE_TIMEOUT = 10  # 服务发现 subprocess 超时（秒）
+_DEFAULT_HEARTBEAT_SEC = 60.0
 
 
 class DispatchError(Exception):
@@ -325,12 +332,14 @@ def _delivery_fail_note(*, title: str, sid: str, model_desc: str, directory: str
 def run_dispatch(requirement_id: str, *, model: str | None = None,
                  directory: str | None = None, budget: str | None = None,
                  bg: bool = False) -> dict:
-    """dispatch 主链（同步路径）：状态门 -> 指针解析 -> 服务发现 -> 存在检查 ->
-    创建（404）-> 派发稿 prompt -> 同步 wait（budget 封顶）-> 板 note。
-    --bg 本阶段（T1）只解析不实现，T4 交付心跳。"""
-    _ = bg  # T1 解析不实现（T4）
+    """dispatch 主链：状态门 -> 指针解析 -> 服务发现 -> 存在检查 -> 创建（404）->
+    派发稿 prompt -> 同步 wait（budget 封顶）或 --bg 心跳子进程 -> 板 note。
+    --bg（D1）：不 wait，prompt 投递 + 分发 note 后 spawn 独立 bg 子进程
+    （Popen re-entry，run_bg_loop 单一实现），父进程立即返回。"""
     budget_secs = parse_budget(budget)
     model_ref = split_model(model)
+    if bg:
+        _heartbeat_sec()  # 心跳 env 先行校验（非法值在投递前失败，不 spawn 后静默死）
     req = _load_requirement(requirement_id)
     rid = norm_id(req.id)
     # I1 状态门先于一切 HTTP（含服务发现/存在检查）
@@ -348,7 +357,7 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
     created = False
     delivered = False
     prompt_code: int | None = None
-    outcome = "完成"
+    bg_pid: int | None = None
     wait_path = f"/api/experimental/session/{sid}/wait"
     try:
         # 存在检查前置：404 -> 创建（T1 主链）；401/400 -> 中止（P-imp1 类，不误判创建）
@@ -382,10 +391,11 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
         if code >= 400:
             raise DispatchError("http_error", f"prompt 投递返回非预期状态 {code}")
         delivered = True
-        code, _ = _api(svc, "POST", wait_path, timeout=budget_secs)
-        _check_http_error("POST", wait_path, code)
-        if code != 204:
-            raise DispatchError("http_error", f"wait 返回非预期状态 {code}")
+        if not bg:
+            code, _ = _api(svc, "POST", wait_path, timeout=budget_secs)
+            _check_http_error("POST", wait_path, code)
+            if code != 204:
+                raise DispatchError("http_error", f"wait 返回非预期状态 {code}")
     except DispatchError as exc:
         # 板留痕全路径（P-imp2）：投递失败（prompt_code 有值）与投递后异常
         # （delivered：wait 阶段超时/鉴权/网络）都写 note，派发方从板面知失败；
@@ -405,30 +415,181 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
                                        directory=ws, url=svc.url,
                                        budget_desc=budget or "", outcome=outcome))
         raise
-    _write_note(rid, _note_content(title=req.title, sid=sid,
-                                   model_desc=model or "未指定（服务默认）",
-                                   directory=ws, url=svc.url,
-                                   budget_desc=budget or "", outcome=outcome))
-    return {"requirement_id": rid, "session_id": sid, "created": created,
-            "outcome": outcome, "service_url": svc.url,
-            "note": _note_content(title=req.title, sid=sid,
-                                  model_desc=model or "未指定（服务默认）",
-                                  directory=ws, url=svc.url,
-                                  budget_desc=budget or "", outcome=outcome)}
+    outcome = "bg" if bg else "完成"
+    note = _note_content(title=req.title, sid=sid,
+                         model_desc=model or "未指定（服务默认）",
+                         directory=ws, url=svc.url,
+                         budget_desc=budget or "", outcome=outcome)
+    _write_note(rid, note)
+    bg_pid = None
+    if bg:
+        # --bg（D1）：分发 note 落库**后**才 spawn bg 子进程（T4 审 P1-1：子进程
+        # _bg_note_seq 读取必须晚于父进程 note 写，否则 delegated basis（P-imp3）
+        # 竞态取「缺失」或上一条 note 的 seq）
+        try:
+            bg_pid = _spawn_bg(rid).pid
+        except DispatchError:
+            # spawn 失败：prompt 已投递（session 活但无心跳）——板面记失败事实（P-imp2 类）
+            _write_note(rid, "\n".join([
+                f"分发失败：{req.title}，bg 子进程拉起失败（prompt 已投递，会话保留但心跳未启动）",
+                f"session id: {sid}",
+                f"模型: {model or '未指定（服务默认）'}",
+                f"目录: {ws or '未指定（workspace 指针缺失或未指定）'}",
+                f"服务 URL: {svc.url}",
+                "结局: 失败（bg spawn 失败）",
+            ]))
+            raise
+    result = {"requirement_id": rid, "session_id": sid, "created": created,
+              "outcome": outcome, "service_url": svc.url, "directory": ws,
+              "note": note}
+    if bg:
+        result["bg_pid"] = bg_pid
+    return result
+
+
+# ---------------------------------------------------------------- --bg 心跳（T4，D1 Popen re-entry）
+def _heartbeat_sec() -> float:
+    """心跳周期（I5 可注入常量）：env AGENT_KANBAN_DISPATCH_HEARTBEAT_SEC 覆盖，默认 60s。"""
+    raw = (os.environ.get(HEARTBEAT_ENV) or "").strip()
+    if not raw:
+        return _DEFAULT_HEARTBEAT_SEC
+    try:
+        secs = float(raw)
+    except ValueError:
+        raise DispatchError("invalid_heartbeat",
+                            f"心跳周期须为数字（秒）: {raw!r}") from None
+    if secs <= 0:
+        raise DispatchError("invalid_heartbeat", f"心跳周期须为正数（秒）: {raw!r}")
+    return secs
+
+
+def _spawn_bg(rid: str) -> subprocess.Popen:
+    """bg 子进程 Popen re-entry（D1）：同解释器 + 仓根 cli.py dispatch
+    --requirement-id <rid> --_bg-loop（隐藏 flag，不宣传）；stdin/stdout/stderr 全
+    DEVNULL——不继承父进程管道，否则父端读 stdout 会阻塞到子进程存活期。"""
+    cli_path = Path(__file__).resolve().parent.parent.parent / "cli.py"
+    try:
+        return subprocess.Popen(
+            [sys.executable, str(cli_path), "dispatch", "--requirement-id", rid, "--_bg-loop"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        raise DispatchError("bg_spawn_failed", f"bg 子进程拉起失败: {exc}") from None
+
+
+def _bg_note_seq(rid: str) -> int | None:
+    """分发 note seq（DB 读最新 note 事件）：renew delegated basis 的锚。"""
+
+    async def _read(session):
+        return await session.scalar(
+            select(Event.seq).where(Event.requirement_id == rid, Event.kind == "note")
+            .order_by(Event.seq.desc()).limit(1))
+
+    return asyncio.run(run_op(get_read_session_factory(), _read, is_write=False))
+
+
+def _bg_has_active_claim(rid: str) -> bool:
+    """pre-claim 窗口判定：session 活但无 active claim -> 跳过 renew。"""
+
+    async def _read(session):
+        return (await session.scalar(
+            select(Claim.id).where(Claim.requirement_id == rid, Claim.ended_at.is_(None)))) is not None
+
+    return asyncio.run(run_op(get_read_session_factory(), _read, is_write=False))
+
+
+def _bg_renew(rid: str, sid: str, note_seq: int | None) -> None:
+    """bg 续租（P-imp3）：合法人面 renew（actor_surface=cli），携 delegated 受托痕
+    （kind=statement，basis 指向分发 note seq + session id）。"""
+    surface, conn = cli_actor()
+    basis = f"分发 note seq {note_seq if note_seq is not None else '缺失'} + {sid}"
+
+    async def _do(session):
+        return await ops.renew(session, requirement_id=rid, actor_surface=surface,
+                               actor_conn=conn,
+                               delegated={"kind": "statement", "basis": basis})
+
+    asyncio.run(run_op(get_session_factory(), _do, is_write=True))
+
+
+def _bg_final_note(*, title: str, sid: str, elapsed: float, renews: int,
+                   pre_claim_skips: int, reason: str) -> str:
+    """终态 note（Premortem F3 判据）：首行人话 + bg 存活时长 + renew 总数 +
+    pre-claim 跳过次数 + 结束原因。"""
+    return "\n".join([
+        f"bg 心跳结束：{title}，会话 {sid}，renew {renews} 次，pre-claim 跳过 {pre_claim_skips} 次",
+        f"session id: {sid}",
+        f"bg 存活时长: {int(elapsed)}s",
+        f"renew 总数: {renews}",
+        f"pre-claim 跳过: {pre_claim_skips}",
+        f"原因: {reason}",
+    ])
+
+
+def run_bg_loop(requirement_id: str) -> dict:
+    """bg 心跳循环（T4；子进程经 cli.py dispatch --_bg-loop 进入，父/子共用本单一实现）：
+    每周期探测 GET /api/session/{sid}（周期＝_heartbeat_sec，测试注入 1s）；
+    存活且 claim active -> renew（delegated 受托痕）；pre-claim 窗口 -> 跳过，不报错、
+    不写板事件（计跳过次数）；终态判据（钉死）：GET 404（session 消失）或 GET 200 且
+    outcome ∈ {succeeded, failed} -> 终态 note 后退出；探测失败（服务不可达）-> 终态
+    note（原因=服务不可达）后退出（S8：不无限循环、不静默）。
+    已知局限（BCD Q1 裁决接受）：bg 进程随派发方终端死则心跳停。"""
+    svc = discover_service()
+    req = _load_requirement(requirement_id)
+    rid = norm_id(req.id)
+    sid = f"ses_req_{rid[:8]}"
+    period = _heartbeat_sec()
+    note_seq = _bg_note_seq(rid)
+    start = time.monotonic()
+    renews = 0
+    pre_claim_skips = 0
+    reason = ""
+    while True:
+        try:
+            code, body = _api(svc, "GET", f"/api/session/{sid}", timeout=10)
+        except DispatchError as exc:
+            reason = f"服务不可达（{exc.message}）"
+        else:
+            if code == 404:
+                reason = "session 消失（GET 404）"
+            elif code == 200 and (body or {}).get("outcome") in ("succeeded", "failed"):
+                reason = f"session 终态（outcome={(body or {}).get('outcome')}）"
+            elif code == 401:
+                reason = "session 探测鉴权失败（GET 401）"
+            elif code != 200:
+                reason = f"session 探测返回非预期状态 {code}"
+        if reason:
+            break
+        if _bg_has_active_claim(rid):
+            try:
+                _bg_renew(rid, sid, note_seq)
+                renews += 1
+            except BusinessError:
+                # claim 刚结束/租约过期（周期间隙）：不报错，下周期再判
+                pass
+        else:
+            pre_claim_skips += 1
+        time.sleep(period)
+    note = _bg_final_note(title=req.title, sid=sid, elapsed=time.monotonic() - start,
+                          renews=renews, pre_claim_skips=pre_claim_skips, reason=reason)
+    _write_note(rid, note)
+    return {"requirement_id": rid, "session_id": sid, "outcome": "bg-end",
+            "reason": reason, "renews": renews, "pre_claim_skips": pre_claim_skips,
+            "note": note}
 
 
 # ---------------------------------------------------------------- resume
-_REQ_ID_RE = re.compile(r"[0-9a-f]{32}")
+_REQ_PREFIX_RE = re.compile(r"[0-9a-f]{8,32}")  # R6：接受面对齐 dispatch（32 精确 / 8-31 唯一前缀）
 _SES_REQ_RE = re.compile(r"ses_req_([0-9a-f]{8})")
 
 
 def _resolve_resume_target(target: str):
-    """resume 目标定位：需求 id（32hex）或 ses_req_<8hex> 派生形态（前缀反查须存在且唯一）。
-
-    非派生形态 ses id 明确拒绝（看板是恢复入口，手工 session 不走本命令）。
-    不限需求状态（Q2：恢复/返工/换模型统一入口，note 如实记当前状态）。
+    """resume 目标定位（R6：接受面对齐 dispatch，与 write_guard.require_requirement
+    同源归一：strip / 大小写 / 连字符）：归一后 ses_req_<8hex> 全匹配 -> 前缀反查
+    （须存在且唯一）；[0-9a-f]{8,32} 全匹配 -> 需求 id（32 精确 / 8-31 唯一前缀）；
+    否则 invalid_target。非派生形态 ses id 明确拒绝（看板是恢复入口，手工 session
+    不走本命令）。不限需求状态（Q2：恢复/返工/换模型统一入口，note 如实记当前状态）。
     """
-    t = target.strip()
+    t = str(target).strip().lower().replace("-", "")
     m = _SES_REQ_RE.fullmatch(t)
     if m:
         try:
@@ -437,21 +598,23 @@ def _resolve_resume_target(target: str):
             raise DispatchError(
                 "session_unmapped",
                 f"session 无法映射到需求: {t}（前缀反查 {exc.code}: {exc.message}）") from None
-    if _REQ_ID_RE.fullmatch(t):
+    if _REQ_PREFIX_RE.fullmatch(t):
         return _load_requirement(t)
     raise DispatchError(
         "invalid_target",
-        f"resume 目标形态无效: {target!r}（接受需求 id 32hex 或派生 session ses_req_<8hex>）")
+        f"resume 目标形态无效: {target!r}（接受需求 id 32hex 或 8-31 位唯一前缀"
+        f"（大小写/连字符不敏感），或派生 session ses_req_<8hex>）")
 
 
 def _resume_note_content(*, title: str, sid: str, model_desc: str, state: str,
-                         instruction: str) -> str:
+                         instruction: str, directory: str | None) -> str:
     summary = instruction if len(instruction) <= 40 else instruction[:40] + "…"
     return "\n".join([
         f"续跑：{title}，{summary}，需求状态 {state}",
         f"session id: {sid}",
         f"模型: {model_desc}",
         f"需求 state: {state}",
+        f"目录: {directory or '未指定'}",
     ])
 
 
@@ -465,6 +628,8 @@ def run_resume(target: str, instruction: str | None = None, *, model: str | None
     req = _resolve_resume_target(target)
     rid = norm_id(req.id)
     state = req.state
+    # U1 深挖锚：需求指针行只读解析取目录（禁新增 HTTP 调用）；缺失记「未指定」
+    ws, _, _ = _parse_pointers(req.description, None)
     svc = discover_service()
     sid = f"ses_req_{rid[:8]}"
     text = (instruction or "").strip() or "继续"
@@ -486,7 +651,7 @@ def run_resume(target: str, instruction: str | None = None, *, model: str | None
         raise DispatchError("http_error", f"wait 返回非预期状态 {code}")
     note = _resume_note_content(title=req.title, sid=sid,
                                 model_desc=model or "未指定（未换模）",
-                                state=state, instruction=text)
+                                state=state, instruction=text, directory=ws)
     _write_note(rid, note)
     return {"requirement_id": rid, "session_id": sid, "outcome": "完成",
-            "service_url": svc.url, "note": note}
+            "service_url": svc.url, "directory": ws, "note": note}

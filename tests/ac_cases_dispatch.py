@@ -1,28 +1,35 @@
 """B2 dispatch 主链用例（T1 服务发现/状态门/create/prompt/wait/note；T2 复用/resume；
-T3 超时契约 + 投递失败/投递后异常留痕 + resume 错误分支）。
+T3 超时契约 + 投递失败/投递后异常留痕 + resume 错误分支；T4 --bg 心跳续租 + U1 深挖锚
+directory 字段 + R6 resume 目标接受面归一）。
 
-oracle 纪律：断言引 plan.md「dispatch 步骤 1-10」+「验证锚」/ BCD b2-dispatch.md
-（§3 P-imp1/P-imp2/P-imp4/P-imp6、§4 S1/S4/S5、§5 E7、§7 I1/I2/I3/I4/I6/I7）/
-SKILL.md「派发方协议」（派发稿五要素 + 留痕条款）。mock opencode 服务＝测试进程内
-threaded http.server（port=0 内核分配 + 读 server_address，无 bind-close 竞态）：
-请求全留痕（method/path/body），行为可配置（GET 200/404/401、outcome、wait 阻塞、
-prompt_code 可配失败）。超时确定性锚＝mock 侧 _wait_completed 未被记完成（禁墙钟）。
+oracle 纪律：断言引 plan.md「dispatch 步骤 1-10」+「心跳（--bg）」+「验证锚」/
+BCD b2-dispatch.md（§3 P-imp1/P-imp2/P-imp3/P-imp4/P-imp6、§4 S1/S4/S5/S7/S8、
+§5 E7、§7 I1-I7）/ SKILL.md「派发方协议」（派发稿五要素 + 留痕条款）。
+mock opencode 服务＝测试进程内 threaded http.server（port=0 内核分配 + 读
+server_address，无 bind-close 竞态）：请求全留痕（method/path/body），行为可配置
+（GET 200/404/401、outcome 运行中可翻转（测试线程改 srv._cfg["outcome"]）、
+wait 阻塞、prompt_code 可配失败）。超时确定性锚＝mock 侧 _wait_completed 未被记完成
+（禁墙钟）；bg 用例确定性锚＝mock 探测 GET 事件/DB 计数/renew 事件（有界 deadline
+仅用于等事件，超期即红）。
 红跑：dispatch 子命令未实现前 argparse invalid choice -> 全红。
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
 import tempfile
 import threading
 import time
 import urllib.parse
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ac_cases_k import _set_state
-from ac_lib import REPO_ROOT, cli, cli_ok, env_for, new_db, ok, query
+from ac_lib import MCP, REPO_ROOT, cli, cli_ok, env_for, new_db, ok, query
 
 
 class _MockOpencode(BaseHTTPRequestHandler):
@@ -122,6 +129,15 @@ def _workspace(tmp: Path) -> tuple[Path, Path]:
     return ws, env_card
 
 
+def _pid_alive(pid: int) -> bool:
+    """bg 子进程存活判定（非测试进程子进程，不能 waitpid；pid 未回收则 kill(pid,0) 成功）。"""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 def _note_contents(db, rid: str) -> list[str]:
     rows = query(db, "SELECT content FROM events WHERE requirement_id=? AND kind='note'", (rid,))
     return [r["content"] for r in rows if r["content"]]
@@ -147,6 +163,11 @@ def k_dispatch_main():
         res = cli(db, "dispatch", "--requirement-id", rid,
                   "--model", "ks-cp/glm-5-3-flash", "--budget", "10m", extra=extra)
         ok("dispatch rc=0", res.returncode == 0, f"rc={res.returncode} stderr={res.stderr}")
+        out = json.loads(res.stdout)
+        # U1 深挖锚（user 裁决 2026-10-28）：stdout 结果必含 session id + 启动目录两顶层字段
+        ok("stdout 结果顶层 directory＝workspace 指针值（深挖锚 cd <dir>）",
+           out.get("directory") == str(ws), out)
+        ok("stdout 结果顶层 session id＝派生 id", out.get("session_id") == sid, out)
         log = list(srv._log)
         creates = [r for r in log if r["method"] == "POST" and r["path"] == "/api/session"]
         ok("create 恰 1 次", len(creates) == 1, f"n={len(creates)}")
@@ -298,6 +319,10 @@ def k_resume():
         # (a) 需求 id + 指令逐字
         res = cli(db, "resume", "--requirement-id", rid, "落点改 tmp 目录", extra=extra)
         ok("resume rc=0", res.returncode == 0, f"rc={res.returncode} stderr={res.stderr}")
+        out = json.loads(res.stdout)
+        # U1 深挖锚（user 裁决 2026-10-28）：stdout 结果必含 session id + 启动目录两顶层字段
+        ok("stdout 结果顶层 directory＝workspace 指针值（深挖锚 cd <dir>）",
+           out.get("directory") == str(ws), out)
         log = list(srv._log)
         prompts = [r for r in log if r["method"] == "POST" and r["path"] == f"/api/session/{sid}/prompt"]
         ok("prompt 投同派生 session", len(prompts) == 1, f"n={len(prompts)}")
@@ -321,6 +346,7 @@ def k_resume():
                "续跑" in first and "REOPEN" in first, first)
             tail = "\n".join(rest)
             ok("note 结构化含 session id", sid in tail, tail)
+            ok("note 含目录行（U1 深挖锚，逐字）", f"目录: {ws}" in contents[0], contents[0])
         # (b) ses 派生形态直给 + --model：先 switchModel 后 prompt
         res2 = cli(db, "resume", "--requirement-id", sid, "继续",
                    "--model", "other/model", extra=extra)
@@ -348,6 +374,18 @@ def k_resume():
             first, *rest = contents[1].splitlines()
             ok("第二条 note 首行含 续跑 + state", "续跑" in first and "REOPEN" in first, first)
             ok("note 模型记新模型", "other/model" in "\n".join(rest), rest)
+        # (c) R6 resume 目标接受面对齐 dispatch（T3 盲审 P2-2 裁决）：
+        # 超时契约行回显的 dispatch 原样输入（8-hex 前缀/大写 32hex）resume 恒可执行
+        res3 = cli(db, "resume", "--requirement-id", rid[:8], "继续", extra=extra)
+        ok("8-hex 前缀形态目标 resume 成功", res3.returncode == 0,
+           f"rc={res3.returncode} stderr={res3.stderr}")
+        out3 = json.loads(res3.stdout)
+        ok("8-hex 前缀与 32hex 同 session id", out3.get("session_id") == sid, out3)
+        res4 = cli(db, "resume", "--requirement-id", rid.upper(), "继续", extra=extra)
+        ok("大写 32hex 形态目标 resume 成功（归一后）", res4.returncode == 0,
+           f"rc={res4.returncode} stderr={res4.stderr}")
+        out4 = json.loads(res4.stdout)
+        ok("大写 32hex 归一后同 session id", out4.get("session_id") == sid, out4)
     finally:
         stop()
 
@@ -430,4 +468,119 @@ def k_resume_errcase():
            not any(r["method"] == "POST" and "prompt" in r["path"] for r in srv._log),
            f"log={[r['path'] for r in srv._log]}")
     finally:
+        stop()
+
+
+def k_bg_heartbeat():
+    print("== B2-T4: --bg 心跳（pre-claim 跳过 -> claim 后周期 renew(delegated 受托痕) "
+          "-> outcome 翻转终态 note + bg 退出；断言全计数/事件，有界 deadline 仅等事件）")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-dispatch-bg-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    rid = cli_ok(db, "new", "--title", "bg 心跳需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    sid = f"ses_req_{rid[:8]}"
+    # mock 长活 session：GET 404（状态化：create POST 后 200）+ outcome=None 运行中可翻转
+    srv, stop = _mock_start({"get_code": 404})
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    extra["AGENT_KANBAN_DISPATCH_HEARTBEAT_SEC"] = "1"
+    proc_pid = None
+    try:
+        res = cli(db, "dispatch", "--requirement-id", rid, "--bg", extra=extra)
+        ok("dispatch --bg 投递后立即返回 rc=0", res.returncode == 0,
+           f"rc={res.returncode} stderr={res.stderr}")
+        out = json.loads(res.stdout)
+        proc_pid = out.get("bg_pid")
+        ok("stdout JSON 含 bg_pid", isinstance(proc_pid, int), out)
+        ok("stdout 顶层 directory（U1 深挖锚）", out.get("directory") == str(ws), out)
+        ok("结局=bg（未进同步 wait）", out.get("outcome") == "bg", out)
+        # (a) pre-claim 窗口先行：等第 2 个探测 GET（create POST 之后）再建 claim——
+        # 首探测结构上先于 claim，pre-claim 跳过 >=1 确定性成立（T4 审 P1-2：只等第 1 个
+        # 探测时，子进程被挂起可致跳过计数 0，(c) 段假红＝测试锚调度竞态非产品缺陷）；
+        # 建 claim 前无 renew 调用、无板事件（除分发 note）
+        deadline = time.monotonic() + 15
+        probed = False
+        while time.monotonic() < deadline:
+            log = list(srv._log)
+            post_idx = [i for i, r in enumerate(log)
+                        if r["method"] == "POST" and r["path"] == "/api/session"]
+            get_idx = [i for i, r in enumerate(log)
+                       if r["method"] == "GET" and r["path"] == f"/api/session/{sid}"]
+            if post_idx and len([i for i in get_idx if i > post_idx[0]]) >= 2:
+                probed = True
+                break
+            time.sleep(0.05)
+        ok("心跳跑过至少两个周期（bg 探测 GET >=2 次，create 后，pre-claim 窗口实证）",
+           probed, f"paths={[(r['method'], r['path']) for r in srv._log]}")
+        evs = query(db, "SELECT kind FROM events WHERE requirement_id=?", (rid,))
+        ok("pre-claim 窗口无 renew 调用",
+           not any(r["kind"] == "renew" for r in evs), f"events={[r['kind'] for r in evs]}")
+        ok("pre-claim 窗口无板事件（除分发 note）",
+           len(evs) == 1 and evs[0]["kind"] == "note", f"events={[r['kind'] for r in evs]}")
+        note_seq = query(db, "SELECT seq FROM events WHERE requirement_id=? AND kind='note'",
+                         (rid,))[0]["seq"]
+        # (b) 测试经 service 层建 active claim -> 周期 renew（计数/事件断言）
+        m = MCP(db, extra=extra).start()
+        m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "bg-heartbeat"})
+        la_before = query(
+            db, "SELECT last_activity_at FROM claims WHERE requirement_id=? AND ended_at IS NULL",
+            (rid,))[0]["last_activity_at"]
+        m.close()
+        deadline = time.monotonic() + 15
+        renews = []
+        while time.monotonic() < deadline:
+            renews = query(
+                db, "SELECT seq, payload FROM events WHERE requirement_id=? AND kind='renew' "
+                    "ORDER BY seq", (rid,))
+            if len(renews) >= 2:
+                break
+            time.sleep(0.05)
+        ok("renew 调用次数 >=2（claim active 后周期续租）", len(renews) >= 2, f"n={len(renews)}")
+        if renews:
+            p = json.loads(renews[0]["payload"])
+            d = p.get("delegated") or {}
+            ok("renew 事件 payload 带 delegated（kind=statement，P-imp3 受托痕）",
+               d.get("kind") == "statement", p)
+            ok("delegated basis 指向分发 note seq + session id",
+               str(note_seq) in d.get("basis", "") and sid in d.get("basis", ""), d)
+        la_after = query(
+            db, "SELECT last_activity_at FROM claims WHERE requirement_id=? AND ended_at IS NULL",
+            (rid,))[0]["last_activity_at"]
+        ok("claim.last_activity_at 递增（renew 触活）",
+           datetime.fromisoformat(str(la_after).replace(" ", "T"))
+           > datetime.fromisoformat(str(la_before).replace(" ", "T")),
+           f"before={la_before} after={la_after}")
+        # (c) mock 翻转 outcome=succeeded -> 有界等待（钉死 deadline=15s：心跳 1s 下
+        # 翻转后 2 周期内必达，超期＝真失败非 flake）终态 note + bg 进程退出
+        srv._cfg["outcome"] = "succeeded"
+        deadline = time.monotonic() + 15
+        final = []
+        while time.monotonic() < deadline:
+            final = [c for c in _note_contents(db, rid) if "bg 存活时长" in c]
+            if final and not _pid_alive(proc_pid):
+                break
+            time.sleep(0.05)
+        ok("终态 note 存在（含 bg 存活时长语义）", bool(final),
+           f"notes={_note_contents(db, rid)}")
+        if final:
+            c = final[0]
+            n_renew = len(query(
+                db, "SELECT seq FROM events WHERE requirement_id=? AND kind='renew'", (rid,)))
+            ok("终态 note 含 renew 总数（与 DB 事件计数一致）", f"renew 总数: {n_renew}" in c, c)
+            ok("终态 note 含 pre-claim 跳过次数（>=1）",
+               re.search(r"pre-claim 跳过: [1-9]\d*", c) is not None, c)
+            first = c.splitlines()[0]
+            ok("终态 note 首行人话（bg 心跳结束 + session id）",
+               "bg 心跳结束" in first and sid in first, first)
+            ok("终态 note 原因记 session 终态（outcome=succeeded）", "succeeded" in c, c)
+        ok("bg 进程退出（用例自清理）",
+           proc_pid is not None and not _pid_alive(proc_pid), f"pid={proc_pid}")
+    finally:
+        # 兜底：deadline 后仍未退出的子进程 kill 再停 mock，禁留孤儿
+        if proc_pid is not None and _pid_alive(proc_pid):
+            try:
+                os.kill(proc_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         stop()

@@ -21,9 +21,9 @@ from ac_cases_h import (months_ago, prune_confirm, prune_cross, prune_export, pr
 from ac_cases_i import (retry_board, retry_cross_window, retry_edge1, retry_edge2, retry_edge3,
                         retry_edge4, retry_edge5, retry_ex5, retry_s1, retry_s2, retry_s3)
 from ac_cases_j import export_csv
-from ac_cases_dispatch import (k_dispatch_authfail, k_dispatch_badstate, k_dispatch_failnote,
-                               k_dispatch_main, k_dispatch_reuse, k_dispatch_timeout, k_resume,
-                               k_resume_errcase)
+from ac_cases_dispatch import (k_bg_heartbeat, k_dispatch_authfail, k_dispatch_badstate,
+                               k_dispatch_failnote, k_dispatch_main, k_dispatch_reuse,
+                               k_dispatch_timeout, k_resume, k_resume_errcase)
 from ac_cases_k import k_state, k_archive, k_delete, k_web, k_g12
 from ac_cases_l import (l_audience, l_blocked_reason_chain, l_blocked_reason_empty,
                         l_export_stable, l_headline, l_latest_first, l_record_title,
@@ -62,6 +62,7 @@ TESTS: dict[str, object] = {
     "k_delete": k_delete,
     "k_web": k_web,
     "k_g12": k_g12,
+    "k_bg_heartbeat": k_bg_heartbeat,
     "k_dispatch_main": k_dispatch_main,
     "k_dispatch_badstate": k_dispatch_badstate,
     "k_dispatch_authfail": k_dispatch_authfail,

@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from agent_kanban.db import get_session_factory, now_utc, run_op
-from agent_kanban.dispatch import DispatchError, run_dispatch, run_resume
+from agent_kanban.dispatch import DispatchError, run_bg_loop, run_dispatch, run_resume
 from agent_kanban.errors import BusinessError
 from agent_kanban.services import operations as ops
 from agent_kanban.services import reconcile, view
@@ -138,6 +138,15 @@ def _cmd_note(args: argparse.Namespace) -> int:
 
 
 def _cmd_dispatch(args: argparse.Namespace) -> int:
+    if args._bg_loop:
+        # --_bg-loop（隐藏 flag，不宣传）：bg 心跳子进程 re-entry（D1 Popen re-entry）
+        try:
+            result = run_bg_loop(args.requirement_id)
+        except (DispatchError, BusinessError) as exc:
+            print(f"{exc.code}: {exc.message}", file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     try:
         result = run_dispatch(
             args.requirement_id, model=args.model, directory=args.dir,
@@ -446,12 +455,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.set_defaults(handler=_cmd_note)
 
     p = sub.add_parser("dispatch",
-                       help="分发需求到 opencode worker 会话（派生 session + 派发稿 + 板 note；--bg 本期只解析）")
+                       help="分发需求到 opencode worker 会话（派生 session + 派发稿 + 板 note）")
     p.add_argument("--requirement-id", required=True)
     p.add_argument("--model", help="provider/model（缺省＝服务默认模型）")
     p.add_argument("--dir", help="工作目录（优先于 description workspace 指针）")
     p.add_argument("--budget", help="墙钟预算（裸数＝秒，或 h/m/s 后缀）")
-    p.add_argument("--bg", action="store_true", help="后台模式（本批只解析不实现）")
+    p.add_argument("--bg", action="store_true",
+                   help="后台模式：投递后返回，独立 bg 进程心跳续租"
+                        "（周期＝AGENT_KANBAN_DISPATCH_HEARTBEAT_SEC，默认 60s），终态写板 note")
+    p.add_argument("--_bg-loop", dest="_bg_loop", action="store_true",
+                   help=argparse.SUPPRESS)
     p.set_defaults(handler=_cmd_dispatch)
 
     p = sub.add_parser("resume",
