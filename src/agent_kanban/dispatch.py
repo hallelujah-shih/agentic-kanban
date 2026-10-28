@@ -307,6 +307,20 @@ def _note_content(*, title: str, sid: str, model_desc: str, directory: str | Non
     ])
 
 
+def _delivery_fail_note(*, title: str, sid: str, model_desc: str, directory: str | None,
+                        url: str, budget_desc: str, code: int) -> str:
+    """投递失败 note（P-imp2）：首行人话含「分发失败」，content 记失败事实 + 错误码。"""
+    return "\n".join([
+        f"分发失败：{title}，prompt 投递返回 HTTP {code}",
+        f"session id: {sid}",
+        f"模型: {model_desc}",
+        f"目录: {directory or '未指定（workspace 指针缺失或未指定）'}",
+        f"服务 URL: {url}",
+        f"预算: {budget_desc or '未指定'}",
+        f"结局: 失败（prompt 投递 HTTP {code}）",
+    ])
+
+
 # ---------------------------------------------------------------- 主链
 def run_dispatch(requirement_id: str, *, model: str | None = None,
                  directory: str | None = None, budget: str | None = None,
@@ -333,6 +347,7 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
     sid = f"ses_req_{rid[:8]}"
     created = False
     delivered = False
+    prompt_code: int | None = None
     outcome = "完成"
     wait_path = f"/api/experimental/session/{sid}/wait"
     try:
@@ -362,6 +377,7 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
             prompt = _build_prompt(req=req, rid=rid, ws=ws, env_card=env_card,
                                    redline=redline, budget_raw=budget, warnings=warnings)
         code, _ = _api(svc, "POST", f"/api/session/{sid}/prompt", {"text": prompt})
+        prompt_code = code
         _check_http_error("POST", f"/api/session/{sid}/prompt", code)
         if code >= 400:
             raise DispatchError("http_error", f"prompt 投递返回非预期状态 {code}")
@@ -371,18 +387,19 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
         if code != 204:
             raise DispatchError("http_error", f"wait 返回非预期状态 {code}")
     except DispatchError as exc:
-        # 失败/超时写 note（派发方从板面知失败）。T1 只覆盖 wait 阶段（delivered=True）；
-        # 不写：prompt 投递失败（500 等，delivered=False，下方 raise）与投递后鉴权/
-        # 网络异常（下方 else: raise）＝T3 k_dispatch_failnote / 板留痕全路径（P-imp2）；
+        # 板留痕全路径（P-imp2）：投递失败（prompt_code 有值）与投递后异常
+        # （delivered：wait 阶段超时/鉴权/网络）都写 note，派发方从板面知失败；
         # 状态门/鉴权中止/服务不可达/创建失败（投递前）按契约不写
+        if prompt_code is not None and not delivered:
+            _write_note(rid, _delivery_fail_note(title=req.title, sid=sid,
+                                                  model_desc=model or "未指定（服务默认）",
+                                                  directory=ws, url=svc.url,
+                                                  budget_desc=budget or "",
+                                                  code=prompt_code))
+            raise
         if not delivered:
             raise
-        if exc.code == "timeout":
-            outcome = "超时"
-        elif exc.code == "http_error":
-            outcome = "失败"
-        else:
-            raise
+        outcome = "超时" if exc.code == "timeout" else "失败"
         _write_note(rid, _note_content(title=req.title, sid=sid,
                                        model_desc=model or "未指定（服务默认）",
                                        directory=ws, url=svc.url,

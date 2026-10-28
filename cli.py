@@ -144,6 +144,9 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
             budget=args.budget, bg=args.bg,
         )
     except (DispatchError, BusinessError) as exc:
+        if isinstance(exc, DispatchError) and exc.code == "timeout":
+            # 超时契约（plan 步骤 8）：错误照旧进 stderr，stdout 额外输出契约行
+            print(f"timeout: 预算内未完成，会话保留未杀；续跑: agent-kanban resume {args.requirement_id}")
         print(f"{exc.code}: {exc.message}", file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
