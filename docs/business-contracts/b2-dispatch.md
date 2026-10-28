@@ -46,30 +46,30 @@
   - P-imp1：opencode 服务假定已在运行且可达；dispatch 不自动拉起服务；不可达＝报错（消息含发现路径 + env 覆盖名），不重试。
   - P-imp2：投递失败时板 note 记失败事实 + 错误码（否则失败的分发在板上零痕迹，派发方无从得知）。
   - P-imp3：bg 续租由 CLI 以合法人面（actor_surface=cli）执行，携受托痕（delegated：kind=statement，basis 指向分发 note seq + session id）；租约时长/阈值语义不变（心跳形态＝派发方代理续租，即 user 已裁决项，本批落地）。
-  - P-imp4：一需求一 session（id 派生结构保证）；同需求并发 dispatch＝续接投递而非第二会话。
+  - P-imp4：一需求一 session（id 派生结构保证）；同需求并发 dispatch＝续接投递而非第二会话。**create 幂等实锤（真服务探测 2026-10-28）：同 id 重复 POST /api/session 返回 200（无 409），id 主键下并发竞态不可产生第二会话**。
   - P-imp5：resume 换模型走 switchModel 端点（prompt 的 OpenAPI schema 无 model 字段且 additionalProperties:false，已实锤），切换成功后再投 prompt。
   - P-imp6：派发稿只抽指针行字面量（workspace=/env-card=）+ 环境卡红线节原文；环境卡语义解释是 worker 就绪门的职责，CLI 不解释。
 
 ## 4. BDD Given-When-Then 场景
 
-1. **S1 首次分发（happy）**。Given：OPEN 需求，description 带工作区指针行，opencode 服务可达，派生 session 不存在。When：dispatch <req> --model provider/model --budget 2h。Then：POST /api/session 以派生 id 创建（title 含 ak-<id8> 与需求标题，model 解析正确，location.directory＝指针目录）；派发稿（五要素：任务指针/协议入口/环境卡路径/交付规格/红线提醒 + 预算）经 prompt 投递；wait 阻塞至 204；板 note 存在（人话 title + content 含 session id/模型/目录/结局=完成）；stdout 输出 session id 与 note。
+1. **S1 首次分发（happy）**。Given：OPEN 需求，description 带工作区指针行，opencode 服务可达，派生 session 不存在。When：dispatch <req> --model provider/model --budget 2h。Then：POST /api/session 以派生 id 创建（title 含 ak-<id8> 与需求标题，model 解析正确，location.directory＝指针目录）；派发稿（五要素：任务指针/协议入口/环境卡路径/交付规格/红线提醒 + 预算）经 prompt 投递；wait 阻塞至 204；板 note 存在（kind=note，**content 首行＝一行人话摘要**，content 含 session id/模型/目录/结局=完成；note() op 的 title 字段硬编码 "note"＝人面 note 命令既有语义，人话义务在 content 首行）；stdout 输出 session id 与 note。
 2. **S2 幂等复用（happy）**。Given：S1 完成，session 已存在。When：同需求再次 dispatch。Then：GET /api/session/{id} 200 -> 不新 create；同 id；投递续接稿（含板面状态摘要：state/awaiting/子任务进度）；板 note 第二条。
 3. **S3 resume 返工（happy）**。Given：需求 REOPEN（评审拒绝），worker session 存在。When：resume <req> 「返工意见...」。Then：同 session id 投 prompt（text＝指令）；板 note 含「续跑」+ 需求当前状态。
 4. **S4 状态门（edge）**。Given：需求 DONE。When：dispatch。Then：非零退出，错误消息含当前 state（DONE）；无 session 创建；无 note。
-5. **S5 超时（edge）**。Given：budget 2s，wait 阻塞 10s。When：dispatch --budget 2s。Then：超时退出（退出码与输出契约明确）；**不杀 session**（无 delete 调用）；note 记超时 + resume 提示；session 可被 resume 续跑。
+5. **S5 超时（edge）**。Given：budget 2s，wait 阻塞 10s。When：dispatch --budget 2s。Then：**rc=1 + stdout 一行含 `timeout` 与 resume 提示**（契约钉死：超时≠硬失败但命令未完成，派发方必须看见）；**不杀 session**（无 delete 调用）；note 记超时；session 可被 resume 续跑。断言禁墙钟时间（用 mock 侧 wait 未记完成作确定性锚）。
 6. **S6 服务不可达（配置变更）**。Given：AGENT_KANBAN_OPENCODE_URL 指向死端口。When：dispatch。Then：报错含发现路径 + env 覆盖名；无 session 操作；无 note（未触达需求写入前）；P-imp1 不重试。
-7. **S7 bg 心跳（跨时段）**。Given：--bg 分发，worker session 长活，claim active。When：bg 循环运行 10min。Then：周期 renew（claim last_activity_at 推进，renew 事件带 delegated 受托痕）；session idle 且无新 prompt -> 终态 note（含 bg 存活时长 + renew 次数）后退出。
+7. **S7 bg 心跳（跨时段）**。Given：--bg 分发，worker session 长活。When：bg 循环运行（心跳周期可注入，测试设短周期）。Then：**pre-claim 窗口（session 活但无 active claim）跳过 renew、不报错、不写板事件**；claim active 后周期 renew（claim last_activity_at 推进，renew 事件带 delegated 受托痕）；**终态判据（GET 404 或 outcome ∈ {succeeded, failed}）-> 终态 note（含 bg 存活时长 + renew 总数 + pre-claim 跳过次数）后退出**。断言只用计数/事件，禁墙钟。
 8. **S8 bg 终态（跨时段，session 消失）**。Given：S7 运行中 session 被外部终止。When：bg 循环探测。Then：终态 note（记 bg 结束原因）+ 退出，不无限循环、不静默。
 
 ## 5. Spec by Example
 
 - E1：req id=abcd1234…（OPEN，description 含 `workspace=/home/x/proj env-card=/home/x/proj/AGENTS.md`），服务可达。`agent-kanban dispatch abcd1234… --model ks-cp/glm-5-3-flash` -> 创建 {id:"ses_req_abcd1234", model:{id:"glm-5-3-flash",providerID:"ks-cp"}, location:{directory:"/home/x/proj"}}；prompt text 含五要素；note content 含 ses_req_abcd1234 / ks-cp/glm-5-3-flash / /home/x/proj / 结局。
-- E2：同 req 第二次 dispatch -> create 调用仍为 1 次（mock 计数）；prompt 为续接稿（含 state/awaiting 摘要）。
+- E2：同 req 第二次 dispatch（**req 保持 OPEN**——状态门恒先于存在检查；worker 认领后 dispatch 被 I1 拒绝，续接走 resume）-> create 调用仍为 1 次（mock 计数）；prompt 为续接稿（含 state/awaiting 摘要）。
 - E3：`agent-kanban resume abcd1234… 「落点改 tmp 目录」` -> 对 ses_req_abcd1234 投 prompt（text 逐字）；note「续跑：...」含需求当前状态。
 - E4：`agent-kanban resume ses_req_abcd1234 --model other/model 「继续」`（直给 ses id + 换模型）-> 先 switchModel（{model:{id:"model",providerID:"other"}}）后投 prompt。
 - E5：DONE 需求 dispatch -> 退出码非 0，stderr 含 DONE，mock 零调用。
 - E6：description 无指针行 -> 不阻塞；派发稿含「指针缺失」警示（P-imp6：CLI 不解释环境卡）；note 记目录=未指定。
-- E7：budget 2s / wait 10s -> 约 2s 后超时退出；mock 无 delete；note 含「超时」。
+- E7：budget 2s / wait 10s -> 超时退出：**rc=1 + stdout 含 `timeout` 与 resume 提示**（禁「约 Ns」墙钟断言；确定性锚＝mock 侧 wait 未被记完成）；mock 无 delete；note 含「超时」。
 
 **客户期望 vs 系统行为差异表**：
 
@@ -98,6 +98,10 @@
 
 软约束（违反可容忍）：
 
-- I5：bg 心跳周期与租约阈值的匹配——只要「worker 活着时不 SUSPECT」即满足，精确周期是实现细节。违反后果：心跳过密＝板事件噪声；过疏＝理论窗口 SUSPECT（B3b 面）。
+- I5：bg 心跳周期与租约阈值的匹配——只要「worker 活着时不 SUSPECT」即满足，周期是可注入常量（实现细节，测试覆盖用）。违反后果：心跳过密＝板事件噪声；过疏＝理论窗口 SUSPECT（B3b 面）。
 - I6：派发稿五要素齐全——单要素缺失可容忍**当且仅当** note/派发稿带警示（如指针缺失已警示）；红线提醒缺失且无警示＝协议违规（升级处理）。违反后果：worker 就绪门无料可核，落点/红线靠 worker 自由发挥（试验已证明会跑偏）。
-- I7：note title 一行人话——缺失时人面视图退化为机器日志，不破坏板链。违反后果：人读板体验下降，无业务失败。
+- I7：note **content 首行一行人话摘要**（note() op 的 title 字段硬编码 "note"＝人面 note 命令既有语义，本批不改 op；plan 盲审 r1 P0-1 裁决落位）——缺失时人面视图退化为机器日志，不破坏板链。违反后果：人读板体验下降，无业务失败。
+
+## 修订记录
+
+- 2026-10-28（plan 盲审 r1 REJECT 修订，主循环）：§3 P-imp4 补 create 幂等实锤（同 id 重复 POST 200，真服务探测）；§4 S1 note 断言改 content 首行人话（P0-1：add_record 需 active claim，dispatch 目标态无认领，人面 note() 为 pre-claim 唯一留痕 op）、S5 超时契约钉死（rc=1 + stdout 含 timeout/resume，禁墙钟断言）、S7 心跳可注入周期 + 终态判据 + pre-claim 跳过；§5 E2 状态前置（req 保持 OPEN）、E7 确定性断言；§7 I5 周期可注入、I7 改 content 首行。传播面：§4/§5/§7 修订 -> plan 续审走快审档。
