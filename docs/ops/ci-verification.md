@@ -72,6 +72,8 @@ TMPDIR=/home/shih/.tmp-ak-m16/ci-build \
 AK_E2E_DB=/home/shih/.tmp-ak-m16/ci-build/t3/ak-e2e.db \
 npx playwright test
 #   - 撞端口加 E2E_PORT=<port>；AK_E2E_DB 用绝对路径（本机 /tmp usrquota 慢性紧张，m1-6 两次 EDQUOT 先例）
+#   - 新检出 / 新 worktree 首次跑先 `npm ci`（node_modules 不入版本库；缺失时 npx playwright 报
+#     MODULE_NOT_FOUND = 环境面，非产品红；B3 实测 npm ci 673ms / 3 packages，浏览器缓存已装）
 #   - 本地 e2e 遇 sqlite disk I/O error 先查 /tmp quota = 环境面，非产品红
 #   - 浏览器仅本地首次装包需要（办公网 cdn.playwright.dev ~2MB/min 不可行）:
 #     PLAYWRIGHT_DOWNLOAD_HOST=cdn.npmmirror.com npx playwright install chromium

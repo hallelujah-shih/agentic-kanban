@@ -38,4 +38,6 @@
 | G25 | opencode wait 为 experimental 端点（POST /api/experimental/session/{id}/wait）：漂移风险（升级后语义变化如立即返回不阻塞 -> dispatch 假完成写进 note，Premortem F2）；dogfood 锚定 opencode 2.1.4 | ② | 退化方案＝轮询 GET /api/session/{id}（outcome/time.idle，OpenAPI 实锤存在）；note 记服务 URL（版本可回溯）；升级 opencode 后先重跑 dogfood | B2 合入（2026-10-28） |
 | G26 | bg 子进程异常面（T4 审 P2 + 相邻登记 stderr=DEVNULL 合并）：① 非探测异常路径（循环体其他异常/预循环失败）不收敛终态 note，仅租约过期 -> SUSPECT/stale 板面显性化兜底（S8 钉死的探测路径四分支收敛；其中 200+outcome 分支 T6 前读裸 body、真服务 data 包装形态不命中 = T5 审 D4，T6 已修 + mock 改真服务形态作红锚）；② stderr=DEVNULL（防父端管道死锁的确定性取舍），未预期崩溃输出不落文件——板面留痕（分发 note + 委托 renew）是恢复锚，孤儿心跳的无人续租本身被租约机制显性化 | ② | 升级路径（低成本，单独立项可裁决）：循环体 + 预循环 try/except 收口终态 note + crash 落盘路径（批次产物目录） | B2 合入（2026-10-28） |
 
+| G27 | B3 残余：(a) A1 接单确认 / A4 交付自检 / A6 收尾蒸馏为协议级软约束——无服务端门，worker 不执行则退回 B2 现状（BCD b3 P-imp3/I4；结构强制归 B4 permission 模板 / B6 plugin 守卫）；(b) 历轮交付物节不截断，多轮需求派发稿 token 随轮次线性增长；(c) env card 基线指针与同需求历史双源漂移靠 SKILL 预检纪律防，无结构检测；(d) evidence.document/note 为自由文本，含换行可伪造节标题或伪 `- 第 N 轮（seq …）` 行（I2 字面提取不归一化，自伤性质注入面） | ② | (a) 结构强制归 B4/B6；(b) 单需求轮次 >10 再议截断；(c) env card 与板面历史一致性校验归 B4；(d) 归一化（换行折叠/转义）属契约变更，随 B4 展示面锚约定一并裁决；(e) dispatch 续接稿不携带返工原因/指令（release payload.reason 需 worker 主动读板面，`resume` 才带指令参数；B3 dogfood R2 实测 worker 自述取自 release 事件），返工指令显式透传归 B4 | B3 合入（2026-10-29） |
+
 登记规则：新增残余必须同时写明档位与生效点；档位 ③ 冒充 ① 或 ② 视为虚标，审查照报。
