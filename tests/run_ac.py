@@ -22,7 +22,7 @@ from ac_cases_i import (retry_board, retry_cross_window, retry_edge1, retry_edge
                         retry_edge4, retry_edge5, retry_ex5, retry_s1, retry_s2, retry_s3)
 from ac_cases_j import export_csv
 from ac_cases_dispatch import (k_bg_claim_binding, k_bg_heartbeat, k_bg_note_basis,
-                               k_dispatch_authfail, k_dispatch_badstate,
+                               k_bg_renew_binding, k_dispatch_authfail, k_dispatch_badstate,
                                k_dispatch_failnote, k_dispatch_main, k_dispatch_reuse,
                                k_dispatch_timeout, k_history_assembly, k_resume, k_resume_errcase)
 from ac_cases_k import k_state, k_archive, k_delete, k_web, k_g12
@@ -66,6 +66,7 @@ TESTS: dict[str, object] = {
     "k_bg_heartbeat": k_bg_heartbeat,
     "k_bg_claim_binding": k_bg_claim_binding,
     "k_bg_note_basis": k_bg_note_basis,
+    "k_bg_renew_binding": k_bg_renew_binding,
     "k_dispatch_main": k_dispatch_main,
     "k_dispatch_badstate": k_dispatch_badstate,
     "k_dispatch_authfail": k_dispatch_authfail,

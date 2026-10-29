@@ -533,19 +533,29 @@ def _bg_active_claim_id(rid: str) -> str | None:
     """当前 active claim id（S9 认领绑定 + pre-claim 窗口判定；无 active claim -> None）。"""
 
     async def _read(session):
-        return await session.scalar(
+        claim_id = await session.scalar(
             select(Claim.id).where(Claim.requirement_id == rid, Claim.ended_at.is_(None)))
+        # Uuid(as_uuid=False) 读回 36-char 带连字符，归一 32-hex（与 MCP/事件引用一致）
+        return norm_id(claim_id) if claim_id is not None else None
 
     return asyncio.run(run_op(get_read_session_factory(), _read, is_write=False))
 
 
-def _bg_renew(rid: str, sid: str, note_seq: int | None) -> None:
-    """bg 续租（P-imp3）：合法人面 renew（actor_surface=cli），携 delegated 受托痕
-    （kind=statement，basis 指向分发 note seq + session id）。"""
+def _bg_renew(rid: str, sid: str, note_seq: int | None, *, expected_claim_id: str) -> None:
+    """bg 续租（P-imp3 + I8 写边界）：合法人面 renew（actor_surface=cli），携 delegated
+    受托痕（kind=statement，basis 指向分发 note seq + session id）；expected_claim_id 与
+    当前 active claim 在同一写事务内（写引擎 BEGIN IMMEDIATE，无跨写者交错）比对，
+    不等即拒写（I8：心跳只续它绑定的认领——读 claim 与写 renew 间的复派窗口不越权）。"""
     surface, conn = cli_actor()
     basis = f"分发 note seq {note_seq if note_seq is not None else '缺失'} + {sid}"
 
     async def _do(session):
+        active = await session.scalar(
+            select(Claim.id).where(Claim.requirement_id == rid, Claim.ended_at.is_(None)))
+        if active is None or norm_id(active) != norm_id(expected_claim_id):
+            raise BusinessError(
+                "claim_changed",
+                f"active claim {active} != bound {expected_claim_id}（拒写 renew）", rid)
         return await ops.renew(session, requirement_id=rid, actor_surface=surface,
                                actor_conn=conn,
                                delegated={"kind": "statement", "basis": basis})
@@ -620,10 +630,10 @@ def run_bg_loop(requirement_id: str) -> dict:
         else:
             bound_claim = bound_claim or claim_id  # 首次观测到 active claim 即绑定
             try:
-                _bg_renew(rid, sid, note_seq)
+                _bg_renew(rid, sid, note_seq, expected_claim_id=bound_claim)
                 renews += 1
             except BusinessError:
-                # claim 刚结束/租约过期（周期间隙）：不报错，下周期再判
+                # claim 刚结束/变更（写边界拒写）/租约过期（周期间隙）：不报错，下周期再判
                 pass
         time.sleep(period)
     note = _bg_final_note(title=req.title, sid=sid, elapsed=time.monotonic() - start,

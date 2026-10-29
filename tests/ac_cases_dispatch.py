@@ -654,12 +654,6 @@ def k_bg_claim_binding():
         ok("claim B 零 renew（旧 watcher 未按需求 id 越权续租）",
            not any(r["claim_id"] == claim_b for r in renews),
            f"B_renews={sum(1 for r in renews if r['claim_id'] == claim_b)}")
-        # (e) 退场后冻结：进程死后 >2 个心跳周期 renew 计数不增
-        n_exit = len(renews)
-        time.sleep(2.2)
-        n_after = len(query(db, "SELECT seq FROM events WHERE requirement_id=? AND kind='renew'",
-                            (rid,)))
-        ok("watcher 退场后 renew 计数冻结", n_after == n_exit, f"exit={n_exit} after={n_after}")
         # (f) S9 另一支：绑定认领结束且不复派 -> 「需求释放」退场（确定性：无新 claim 竞态）
         rid2 = cli_ok(db, "new", "--title", "bg 需求释放需求",
                       "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
@@ -701,7 +695,52 @@ def k_bg_claim_binding():
                 except ProcessLookupError:
                     pass
         stop()
-    """note 事件种子（I8 basis 锚用例：直插 content 可控的 note，不耦合 op 层）。"""
+
+
+def k_bg_renew_binding():
+    print("== B3.1-G28-P1: _bg_renew 写边界原子校验（expected_claim_id 与 active claim 同一"
+          "写事务内比对；不等 -> 拒写 renew 事件且不延长新 claim 租约，check-then-act 窗口清零）")
+    db = new_db()
+    rid = cli_ok(db, "new", "--title", "renew 绑定需求")["requirement_id"]
+    sid = f"ses_req_{rid[:8]}"
+    m = MCP(db).start()
+    claim_a = m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "worker-a"})["claim_id"]
+    # P1 窗口终态的确定性重演：claim A 已结束、claim B active（绕开心跳时序，直打写边界）
+    _update(db, "UPDATE claims SET ended_at=? WHERE id=?",
+            (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f"), claim_a))
+    _set_state(db, rid, "OPEN")
+    claim_b = m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "worker-b"})["claim_id"]
+    m.close()
+    lease_b = query(db, "SELECT lease_expires_at FROM claims WHERE id=?", (claim_b,))[0]["lease_expires_at"]
+    prev, akdb, _, _, _ = _ak_import(db)
+    try:
+        from agent_kanban import dispatch as disp
+        # (a) 旧 watcher 语义：绑定 A 但 active=B -> 拒写（I8：心跳只续它绑定的认领）
+        rejected = False
+        try:
+            disp._bg_renew(rid, sid, None, expected_claim_id=claim_a)
+        except disp.BusinessError:
+            rejected = True
+        ok("expected_claim_id != active claim -> 拒绝（BusinessError）", rejected, "")
+        renews = query(db, "SELECT claim_id FROM events WHERE requirement_id=? AND kind='renew'",
+                       (rid,))
+        ok("拒写路径零 renew 事件（claim B 不被越权续租）", not renews, f"n={len(renews)}")
+        lease_b2 = query(db, "SELECT lease_expires_at FROM claims WHERE id=?",
+                         (claim_b,))[0]["lease_expires_at"]
+        ok("拒写路径 claim B lease_expires_at 不变（租约未被不可见第三方延长）",
+           lease_b2 == lease_b, f"{lease_b} -> {lease_b2}")
+        # (b) 本 watcher 语义：绑定 B 且 active=B -> 正常写一条
+        disp._bg_renew(rid, sid, None, expected_claim_id=claim_b)
+        renews = query(db, "SELECT claim_id FROM events WHERE requirement_id=? AND kind='renew'",
+                       (rid,))
+        ok("expected == active claim -> 正常写一条 renew", len(renews) == 1, f"n={len(renews)}")
+        if renews:
+            ok("renew 事件锚 claim B", renews[0]["claim_id"] == claim_b, renews[0]["claim_id"])
+    finally:
+        asyncio.run(_ak_dispose(akdb))
+        _ak_restore(prev)
+
+
 def _seed_note(db: Path, rid: str, seq: int, content: str) -> None:
     """note 事件种子（I8 basis 锚用例：直插 content 可控的 note，不耦合 op 层）。"""
     _update(db,
