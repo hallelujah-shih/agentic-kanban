@@ -41,14 +41,16 @@ ASSESSMENT_FORM_EXAMPLE = (
 MAX_PAYLOAD_BYTES = 8192  # PRD §6：单事件 payload < 8 KB（写时强制）
 
 
-def _check_payload_size(requirement_id: str, *objects: Any) -> None:
+def _check_payload_size(requirement_id: str, *objects: Any, label: str | None = None) -> None:
     for obj in objects:
         if obj is None:
             continue
         size = len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
         if size > MAX_PAYLOAD_BYTES:
+            where = f"{label}: " if label else ""
             raise BusinessError(
-                "invalid_record", f"payload exceeds {MAX_PAYLOAD_BYTES} bytes", requirement_id
+                "invalid_record",
+                f"{where}payload exceeds {MAX_PAYLOAD_BYTES} bytes (got {size})", requirement_id,
             )
 
 
@@ -837,13 +839,16 @@ async def request_review(
 
 
 def _acc_text(a: Any) -> str | None:
-    """验收条目文本归一（normalize_anchors 同口径：裸字符串 str -> {"item": str}）。"""
-    if isinstance(a, dict):
-        v = a.get("item")
-        return str(v) if v is not None else None
-    if a is None:
+    """验收条目文本归一（normalize_anchors 同口径：裸字符串 str -> {"item": str}）。
+
+    空白/空文本条目返回 None（既不进覆盖分母也不参与匹配）：这种条目无法被逐字匹配
+    （提交同样文本会在 item 校验处被拒），若计入分母则需求永久卡在漏评。
+    """
+    v = a.get("item") if isinstance(a, dict) else a
+    if v is None:
         return None
-    return str(a)
+    t = str(v)
+    return t if t.strip() else None
 
 
 def _assessment_available(subtasks: list) -> str:
@@ -1022,7 +1027,10 @@ def _persist_self_assessment(requirement_id: str, validated: list[dict], subtask
             t = _acc_text(a)
             if t is None or t not in seen:
                 new_acc.append(a)
-        _check_payload_size(requirement_id, new_acc)  # PRD §6：落库后 acceptance < 8KB（S19）
+        _check_payload_size(
+            requirement_id, new_acc,
+            label=f"subtask_id={norm_id(st.id)} 合并后 acceptance",  # PRD §6：< 8KB（S19）
+        )
         st.acceptance = new_acc
         st.updated_at = now
     return {

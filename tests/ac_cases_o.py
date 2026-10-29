@@ -369,13 +369,44 @@ def sa_size():
     st2 = m.call_ok("add_subtask", {"requirement_id": rid2, "title": "impl", "ordinal": 1})
     before2 = _snapshot(db, rid2)
     items = [{"item": f"自拟条目 {i} 等等等等等等等等", "state": "met"} for i in range(600)]
-    code, _ = _call_err2(m, "request_review", {
+    code, msg = _call_err2(m, "request_review", {
         "requirement_id": rid2, "evidence": {"test_summary": "t"}, "summary_line": "x",
         "assessments": [{"subtask_id": st2["subtask_id"], "items": items}]})
     ok("sa_size: 自拟 600 条（acceptance>8KB）-> invalid_record", code == "invalid_record", code)
+    ok("sa_size: acceptance 超限消息点名 subtask_id + 字节数（可自纠）",
+       st2["subtask_id"] in msg and "8192" in msg, msg[:240])
     after2 = _snapshot(db, rid2)
     ok("sa_size: acceptance 超限零写入（落库前拒）", before2 == after2,
        f"before={before2} after={after2}")
+    m.close()
+
+
+def sa_blankacc():
+    """S18 相邻（R1 复审 P2-9）：空白/空文本验收条目不进覆盖分母。
+
+    这种条目无法被逐字匹配（提交同样文本会在 item 校验处被判「缺 item」），若计入分母，
+    需求就永久卡在漏评、唯一出路是 abandon 子任务。
+    """
+    print("== sa_blankacc: 空白文本验收条目不进分母（不卡死交接）")
+    db = new_db()
+    rid, m, (s1,) = _mk_claimed(db, "sa-blankacc", [
+        {"title": "impl1", "ordinal": 1, "acceptance": [{"item": "   "}, {"item": "Y1"}]},
+    ])
+    m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "t"},
+                                 "summary_line": "sa 交接",
+                                 "assessments": [{"subtask_id": s1["subtask_id"],
+                                                  "items": [{"item": "Y1", "state": "met"}]}]})
+    asm = _rr_payload(db, rid).get("assessment")
+    ok("sa_blankacc: 空白条目不计分母（required:1 covered:1）",
+       asm == {"required": 1, "covered": 1, "added": 0, "received_subtasks": 1, "received_items": 1},
+       json.dumps(asm))
+    _i11("sa_blankacc", asm)
+    d = m.call_ok("get_task_detail", {"requirement_id": rid})
+    acc = d["subtasks"][0]["acceptance"]
+    ok("sa_blankacc: 空白条目保留且不重复（另无重复 Y1）",
+       sorted(str(a.get("item")) for a in acc) == ["   ", "Y1"], json.dumps(acc))
+    ok("sa_blankacc: Y1 落 state=met（其余键不丢）",
+       [a for a in acc if a.get("item") == "Y1"] == [{"item": "Y1", "state": "met"}], json.dumps(acc))
     m.close()
 
 
