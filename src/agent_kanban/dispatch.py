@@ -244,8 +244,8 @@ def _redline_text(env_card: str) -> str | None:
 
 def _build_prompt(*, req, rid: str, ws: str | None, env_card: str | None,
                   redline: str | None, budget_raw: str | None,
-                  warnings: list[str]) -> str:
-    """新建派发稿（五要素 + 预算 + 警示）：任务指针/协议入口/环境卡路径/交付规格/红线提醒。"""
+                  warnings: list[str], history: list[str]) -> str:
+    """新建派发稿（五要素 + 预算 + 警示 + 有历史时的历轮交付物）：任务指针/协议入口/环境卡路径/交付规格/历轮交付物（仅当有历史）/红线提醒。"""
     lines = ["【派发稿】你是本需求的 worker 会话，按看板协议执行。", "", "## 任务指针",
              f"- 需求 id: {rid}", f"- 标题: {req.title}"]
     ptr_lines = [l.strip() for l in (req.description or "").splitlines()
@@ -264,6 +264,9 @@ def _build_prompt(*, req, rid: str, ws: str | None, env_card: str | None,
             lines.append(f"- {item}")
     else:
         lines.append("无需求级锚，拆出子任务验收=事实锚")
+    if history:
+        lines += ["", "## 历轮交付物（本需求历史 request_review，seq 升序）"]
+        lines += history
     lines += ["", "## 红线提醒"]
     if redline:
         lines.append(redline)
@@ -285,8 +288,40 @@ def _subtask_progress(rid: str) -> tuple[int, int]:
     return asyncio.run(run_op(get_read_session_factory(), _read, is_write=False))
 
 
-def _build_continuation(req, rid: str) -> str:
-    """续接稿（GET 200 复用路径，P-imp4）：会话已存在，继续当前需求 + 最近板面状态摘要。"""
+def _history_digest(rid: str) -> list[str]:
+    """历轮交付物（A2）：本需求 review_request 事件 evidence 字面提取，seq 升序。
+
+    无历史返回空列表（调用方不加节）；只抽字面量（document/note/seq），不解释、
+    不做存在检查（BCD b3 §3 P-imp1/P-imp2）；document/note 为协议级可选键
+    （SKILL 交接条款），皆缺的轮次跳过；payload/evidence 非 dict 的畸形行跳过不崩。
+    """
+
+    async def _read(session):
+        rows = (await session.scalars(
+            select(Event).where(Event.requirement_id == rid)
+            .where(Event.kind == "review_request")
+            .order_by(Event.seq.asc()))).all()
+        lines: list[str] = []
+        n = 0
+        for e in rows:
+            payload = e.payload or {}
+            ev = payload.get("evidence") if isinstance(payload, dict) else None
+            doc = ev.get("document") if isinstance(ev, dict) else None
+            note = ev.get("note") if isinstance(ev, dict) else None
+            if not doc and not note:
+                continue
+            n += 1
+            if doc:
+                lines.append(f"- 第 {n} 轮（seq {e.seq}）: 交付物 {doc}")
+            if note:
+                lines.append(f"- note: {note}")
+        return lines
+
+    return asyncio.run(run_op(get_read_session_factory(), _read, is_write=False))
+
+
+def _build_continuation(req, rid: str, history: list[str]) -> str:
+    """续接稿（GET 200 复用路径，P-imp4）：会话已存在，继续当前需求 + 最近板面状态摘要 + 有历史时的历轮交付物。"""
     done, total = _subtask_progress(rid)
     awaiting = req.awaiting_human
     if isinstance(awaiting, dict) and awaiting:
@@ -298,6 +333,9 @@ def _build_continuation(req, rid: str) -> str:
              f"- 需求 id: {rid}", f"- 标题: {req.title}",
              f"- state: {req.state}", f"- awaiting: {awaiting_desc}",
              f"- 子任务进度: {done}/{total}"]
+    if history:
+        lines += ["", "## 历轮交付物（本需求历史 request_review，seq 升序）"]
+        lines += history
     return "\n".join(lines)
 
 
@@ -352,6 +390,7 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
         warnings.append("环境卡红线节缺失（worker 就绪门自核红线）")
     elif env_card is None:
         warnings.append("无环境卡路径，无红线提醒可给")
+    history = _history_digest(rid)  # 板面只读，先于一切 HTTP（读失败不留半建会话）
     svc = discover_service()
     sid = f"ses_req_{rid[:8]}"
     created = False
@@ -381,10 +420,11 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
         # 200：session 已存在 -> 复用投续接稿（P-imp4：同 id 不新 create）；
         # 404->创建：投完整五要素新建稿
         if reused:
-            prompt = _build_continuation(req, rid)
+            prompt = _build_continuation(req, rid, history)
         else:
             prompt = _build_prompt(req=req, rid=rid, ws=ws, env_card=env_card,
-                                   redline=redline, budget_raw=budget, warnings=warnings)
+                                   redline=redline, budget_raw=budget, warnings=warnings,
+                                   history=history)
         code, _ = _api(svc, "POST", f"/api/session/{sid}/prompt", {"text": prompt})
         prompt_code = code
         _check_http_error("POST", f"/api/session/{sid}/prompt", code)

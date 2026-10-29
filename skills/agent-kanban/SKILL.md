@@ -11,11 +11,12 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 
 1. 读：`list_tasks`（按状态过滤）-> `get_task_detail`（需求登记 = 来源指针 + 摘要 + requirement.acceptance 预期锚 + 现有拆解/里程碑/关键事件；看 description 是否带**工作区指针**）。先读后动，尤其先看预期验收锚；完整内容（Jira 详情/原文）按链接从源头获取（单一事件源）。
 2. 认领：`claim_task`。独占；`already_claimed` 说明别人持有，换任务，不要抢。
-3. 就绪：见「工作区就绪」。不就绪按分级处置，不盲目开工。
-4. 拆解：`add_subtask`，每条带 acceptance[]（验收项 + 链接预期锚 links_to）。不要窄化范围；锚项无覆盖会显示覆盖缺口，这是有意的下界语义。需求 acceptance 为空时，你拆出的子任务验收 = 事实锚，交接时提请人确认/升格。
-5. 执行 + 记录：见「记录纪律」。
-6. 交接：`request_review`（附证据 + 验收自评表），然后**等人**。
-7. 等裁决：DONE 由人确认（approve）。人可能拒绝/要求返工（REOPEN 后你继续）。
+3. 接单确认：认领后、拆解前，留一条接单确认记录 `add_record(kind=note, title="接单确认", content=三段)`——`title` 只写一行提纲，三段写 `content`：**理解**（用自己的话把需求压缩到 1-2 行，照抄需求原文视为未执行）/ **假设**（需求缺失的约束项，逐条列出取值；需求显式委托你定的项也算假设）/ **缺口**（需求缺失的关键信息，逐条列出）。判缺口前先读环境卡（context / reach / 红线 / ops 教训）与需求已有信息——已写明的不算缺口。缺口处置：不靠人决策干不下去 -> `mark_blocked`（reason＝缺什么 + 已核实到哪），不拆解不执行；可假设继续 -> 记入假设并继续，交接时提请人确认该假设（交接说明中点明）。需求清晰也要留记录（缺口写「无」）——这是把理解偏差在接单时刻暴露的门。
+4. 就绪：见「工作区就绪」。不就绪按分级处置，不盲目开工。
+5. 拆解：`add_subtask`，每条带 acceptance[]（验收项 + 链接预期锚 links_to）。不要窄化范围；锚项无覆盖会显示覆盖缺口，这是有意的下界语义。需求 acceptance 为空时，你拆出的子任务验收 = 事实锚，交接时提请人确认/升格。
+6. 执行 + 记录：见「记录纪律」。
+7. 交接：`request_review`（附证据 + 验收自评表），然后**等人**。
+8. 等裁决：DONE 由人确认（approve）。人可能拒绝/要求返工（REOPEN 后你继续）。
 
 ## 认领纪律
 
@@ -70,7 +71,9 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 
 ## 交接与等待
 
-- `request_review`：要求 state=CLAIMED；必须附证据（PR 链接 / commit 区间 / 测试摘要，至少一项，缺了被拒 invalid_record）+ summary_line（交接一句话：做了什么/先看哪，缺/空 -> invalid_record）+ 逐项验收自评（met / not_met / deviated + 原因）。附三行人简报：做了什么 / 先看哪 / 还剩什么，summary_line 承载第一二句。它**不改状态**，只设 awaiting_human(kind=review)。
+- `request_review`：要求 state=CLAIMED；必须附证据（PR 链接 / commit 区间 / 测试摘要，至少一项，缺了被拒 invalid_record）+ summary_line（交接一句话：做了什么/先看哪，缺/空 -> invalid_record）+ 逐项验收自评（met / not_met / deviated + 原因）。附三行人简报：做了什么 / 先看哪 / 还剩什么，summary_line 承载第一二句。可选键：`evidence` 内 `document`＝交付物路径、`note`＝收尾说明（必须在 `evidence` dict 内，传顶层会被静默丢弃）——dispatch 入口把历轮这两键装配进同需求下一轮派发稿/续接稿「历轮交付物」节（A2 自动装配，同需求单一事实源）。它**不改状态**，只设 awaiting_human(kind=review)。
+- **交付自检（request_review 前必做）**：① evidence 含至少一项指向真实交付物（`pr_url`/`commit_range`/`test_summary` 硬要求不变；`document`/`note` 为 evidence 内可选附加键，交付物类需求把路径写 `document`）；② 逐项验收自评已填（met / not_met / deviated + 原因）；③ 红线自守已核（交付物只落约定位置、板面只动本需求、未声称 DONE、未代执行 release/approve——两者都是人面 op）；④ 三行人简报齐（做了什么 / 先看哪 / 还剩什么），summary_line 承载第一二句（按 request_review 条款）。
+- **收尾蒸馏（request_review 前必做）**：把本轮持久教训（可达路由 / flake 签名 / 环境事实）提炼落地——主形态＝追加环境卡「ops 教训」+ 板 `add_record(kind=note)` 一行（摘要 + 落点）；环境卡不可写（主仓只读等）＝板 note 记教训全文；本轮无持久教训＝板 note 显式记「无持久教训」。板 note 恒有，禁静默省略（三种形态必居其一）。环境卡是仓内分支工作副本时，教训随本分支 commit 落地，不写主仓。这是 harness 越用越稳的来源，下一轮 worker 先读这些教训。
 - `mark_blocked`：只有真需要人决策才用（需求转 BLOCKED + awaiting_human(kind=blocked)）。reason 必写一行人话原因（报节点不报流水账），进事件链可回溯。
 - 人与你 inline 交互（会话内当场问答）**不经看板**：结果记一条 decision 事件即可，不设标记，流程零中断。只有交接在会话之外（session 结束、人不在场）才需要 request_review / mark_blocked。
 - **永不声称 DONE**：DONE 只能人确认。你的 request_review 是"交回请审核"，不是完成。
@@ -87,14 +90,14 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 把任务派给独立会话（sub agent / `opencode run`）执行，是派发方的责任。派发方照协议走，不自由发挥。规范入口 `agent-kanban dispatch --requirement-id <id> [--model <provider/model> --dir <dir> --budget <预算>（秒或 h/m/s 后缀）] [--bg]` 与 `agent-kanban resume --requirement-id <需求 id 或 ses_req_<8hex>> ["<指令>"] [--model <provider/model>]`（dispatch 承担：状态门 OPEN/REOPEN、派发稿五要素、板 note 留痕、超时 resume 提示；resume 承担：不限需求状态、续接指令参数、板 note 留痕；下列手工条款在入口不可用时仍适用）。入口输出含 session id + 启动目录（directory）——人深挖 worker 现场 = `cd <directory>` + `opencode -s <session id>` 两要素（user 裁决 U1，2026-10-28：缺一即交接不完整），交接回报时两要素必带。
 
 - **何时派**：复杂任务 / 长任务 / 跨目录。主循环只做单文件微调。一个需求 = 一个 worker，同需求不并行 worker。
-- **预检**：工作目录状态（脏/有并发会话 -> worktree 或等待）；环境卡存在（缺则按模板先建，或问人）；目标目录 kanban MCP 可达（全局注册为正典，见 mcp-config.md）。
+- **预检**：工作目录状态（脏/有并发会话 -> worktree 或等待）；环境卡存在（缺则按模板先建，或问人）；目标目录 kanban MCP 可达（全局注册为正典，见 mcp-config.md）。同需求历轮交付物由 dispatch 入口自动装配（「历轮交付物」节），env card 基线指针只用于跨需求（supersede）场景，不手抄同需求历史进 env card（双源漂移，BCD b3 D2）。
 - **模型继承**：传派发方当前模型（`opencode run -m <provider/model>`），不落回默认模型（默认套餐额度可能见底）。
-- **派发稿**：prompt = 任务指针（需求 id + 标题 + 指针行）+ 协议入口（本 SKILL 路径）+ 环境卡路径 + 交付规格 + 红线提醒 + 墙钟预算。不把任务全文塞进 prompt，也不让 worker 自由发挥。交付规格禁向 worker 承诺 release（release 是人面 op，agent 面不可达——dogfood 真机实锤）：完成收尾＝worker note 报完成 + 派发方人面代执行 release。
+- **派发稿**：prompt = 任务指针（需求 id + 标题 + 指针行）+ 协议入口（本 SKILL 路径）+ 环境卡路径 + 交付规格 + 历轮交付物（同需求有历史时；dispatch 入口自动装配）+ 红线提醒 + 墙钟预算。不把任务全文塞进 prompt，也不让 worker 自由发挥。交付规格禁向 worker 承诺 release（release 是人面 op，agent 面不可达——dogfood 真机实锤）：完成收尾＝worker note 报完成 + 派发方人面代执行 release。
 - **留痕**：dispatch 入口自动经人面 note 留痕（恢复锚：dispatch note 首行 = 分发 + 会话 id + 模型，结局在 body；resume note 首行 = 续跑 + 指令摘要 + 需求状态）；手工派发时仍 `add_record(kind=note)`：session id + 模型 + transcript 路径 + 预算——这条 note 即恢复锚（见「Session 与恢复」）。transcript 落批次产物目录（tee，禁 /tmp）。
 - **验收**：worker 的 `request_review` 是回执；派发方按板面三问（对照预期/偏离/更好方案）自答核交付，不代 worker 交接。
 - **循环**：REOPEN -> `agent-kanban resume --requirement-id <需求 id 或 ses_req_<8hex>> "返工意见..." [--model <provider/model>]`（同会话带上下文）；手工 `opencode run -s <ses>` 仍可用（换模型 = `-s` + `-m`）。
 - **长段心跳**：--bg 长任务由 `dispatch --bg` 自动完成（独立 bg 子进程代人面续租，受托痕 basis 指向分发 note；心跳周期 env `AGENT_KANBAN_DISPATCH_HEARTBEAT_SEC` 默认 60s、pre-claim 窗口跳过；终态 note 含存活时长 / renew 总数），防活着的 worker 中途 SUSPECT。已知局限：bg 进程随派发方终端死则心跳停（结构替代 = B6 plugin 心跳）。
-- **收尾蒸馏**：收尾后把本轮持久教训（可达路由 / flake 签名 / 环境事实）写进环境卡「ops 教训」——harness 越用越稳的来源。
+- **收尾蒸馏核验**：worker 按「交接与等待 -> 收尾蒸馏」条款自蒸馏（环境卡 + 板 note）；派发方只核验落点在板面可见，缺则补记，不重复定义义务。
 
 ## 收尾协议（代执行）
 

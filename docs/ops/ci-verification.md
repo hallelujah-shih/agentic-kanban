@@ -8,7 +8,7 @@
 
 ## tier / 入口
 
-- 最高 tier（本地，合并门槛）: 全量 run_ac **696/696** + e2e **15/15** + docker 双轨 build + healthz 200
+- 最高 tier（本地，合并门槛）: 全量 run_ac **816/816**（断言数；B3 合入后，历史批次的 696/521 等数字为当时基线，勿再引用）+ e2e **15/15** + docker 双轨 build + healthz 200（tier 组成的活口径以 AGENTS.md tier 2/5 为准）
   - 默认轨（aliyun frozen）本地绿（t1/g4.log + t1/smoke-probes.log）；pypi 轨容器段办公网环境面阻塞，闭合点 = GH 首跑 docker job（见已知局限）
   - G12 批次红绿索引（2026-10-26，套件基线 514->521，k_g12 增例 N=7）: 红 = R1 泄漏复现 2 断言皆红（r1-red.log 0/2）/ 绿 = 521/521（g2-full.log）；产物目录 /home/shih/.tmp-ak-m16/g12/t1/；生产生效窗 = merge 回 main + 生产容器下次重启后启动自愈自动回填，此前生产行为不变（存量行数未知，自愈幂等 0 行也安全）
 - CI 门槛: PR 三 job（test/e2e/docker）真实 GH run 全绿 + 分支保护必需 check
@@ -58,7 +58,7 @@ PY
 for f in "$L"/ak-board-*.js "$L"/ak-detail-*.js; do node --check "$f"; done   # 每壳 1 块，双 PASS
 
 # 6) 全量套件（ci.yml:53 同源；S1 加 TMPDIR = /tmp usrquota 绕行）
-TMPDIR=$L $L/venv-pypi/bin/python -u tests/run_ac.py   # 预期 "== 结果: 696/696 PASS"（~6 min）
+TMPDIR=$L $L/venv-pypi/bin/python -u tests/run_ac.py   # 预期 "== 结果: <当前基线>/<当前基线> PASS"（~6 min；当前基线看 AGENTS.md tier 2，B3 后＝816；696 为 CI 建设批的历史值）
 ```
 
 ### b) e2e（证据 t3/）
@@ -72,6 +72,8 @@ TMPDIR=/home/shih/.tmp-ak-m16/ci-build \
 AK_E2E_DB=/home/shih/.tmp-ak-m16/ci-build/t3/ak-e2e.db \
 npx playwright test
 #   - 撞端口加 E2E_PORT=<port>；AK_E2E_DB 用绝对路径（本机 /tmp usrquota 慢性紧张，m1-6 两次 EDQUOT 先例）
+#   - 新检出 / 新 worktree 首次跑先 `npm ci`（node_modules 不入版本库；缺失时 npx playwright 报
+#     MODULE_NOT_FOUND = 环境面，非产品红；B3 实测 npm ci 673ms / 3 packages，浏览器缓存已装）
 #   - 本地 e2e 遇 sqlite disk I/O error 先查 /tmp quota = 环境面，非产品红
 #   - 浏览器仅本地首次装包需要（办公网 cdn.playwright.dev ~2MB/min 不可行）:
 #     PLAYWRIGHT_DOWNLOAD_HOST=cdn.npmmirror.com npx playwright install chromium

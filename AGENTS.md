@@ -9,7 +9,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   以 `skills/agent-kanban/SKILL.md` 为正典，本文件不重复。
 - **板上收尾动作**：agent 侧工作完成后（PR 流＝PR 发起后，本地合流＝合入后）
   立即调 `request_review`（evidence 含 pr_url/commit_range/test_summary，
-  附验收自评；协议细节见协议 skill 门 6）。板 awaiting_human 是唯一等待面，
+  附验收自评；协议细节见协议 skill 门 7）。板 awaiting_human 是唯一等待面，
   禁留任务等租约过期变 stale。
 - 人面 CLI（approve/release/note 等）：
   `AGENT_KANBAN_DB=/home/shih/.agent-kanban/kanban.db .venv/bin/python cli.py <cmd> --requirement-id <32hex>`
@@ -30,11 +30,11 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 入口形态：本地开发机＝构建机（仓根 `.venv`）；远端＝GitHub Actions。
 - tier 阶梯（低 -> 高；tier 命名与组成按 ci-verification.md 正典）：
   1. 快速反馈（折入重跑最低 tier，SDD 机器纪律款）：`TMPDIR=<产物目录>/tmp .venv/bin/python tests/run_ac.py --only <用例 id>`
-  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **793/793**（B2 合入后；worktree 内跑必带 `PYTHONPATH=$PWD/src`，见下）
+  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **816/816**（B3 合入后；worktree 内跑必带 `PYTHONPATH=$PWD/src`，见下）
   3. 本地 e2e：`TMPDIR=<产物目录>/tmp AK_E2E_DB=<产物目录>/ak-e2e.db npx playwright test` —— 基线 **15/15**（撞端口加 `E2E_PORT`；sqlite disk I/O error 先查 /tmp quota＝环境面）
   4. 本地 docker 双轨：默认轨 build + smoke healthz 200；pypi 轨命令与
      办公网 MITM 局限见 ci-verification.md
-  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 793/793 +
+  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 816/816 +
      e2e 15/15 + docker 双轨 build + healthz 200）
   6. **CI 门槛（合并门槛，远端）**：特性分支 push -> GH Actions 三 job
      test/e2e/docker 全绿 + 分支保护必需 check `test`+`docker`（e2e 观察期：
@@ -75,7 +75,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 红线: 禁直推 main（仅 MR）；生产 DB 只读，写走 CLI/MCP；禁 /tmp 作产物目录；Q1/Q2/Q3 裁决前禁 test/e2e 镜像现实现凑绿；merge 由 user 裁决
 - ops 教训:
   - github ssh 路由（22/443）间歇挂；push 走 origin HTTPS（代理 127.0.0.1:8888）稳定；网络命令一律 timeout 包装，失败重试
-  - gh 无独立代理配置，读标准 env，须 bash -lc 加载
+  - gh 无独立代理配置，读标准 env；`bash -lc` 登录 shell **不含**代理变量，必须命令前显式带（`HTTPS_PROXY=http://127.0.0.1:8888 HTTP_PROXY=... gh ...`），只靠 git 的 `http.proxy` 配置无效（B3 开 PR 实测：不带 env 报 TLS handshake timeout，带上立即成功）
   - 管道后 rc=$? 取的是管道末命令退出码；关键命令 rc 裸捕获（不接管道）
 
 ## 主循环纪律
