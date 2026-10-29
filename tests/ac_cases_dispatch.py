@@ -16,6 +16,7 @@ wait 阻塞、prompt_code 可配失败）。超时确定性锚＝mock 侧 _wait_
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -24,11 +25,13 @@ import tempfile
 import threading
 import time
 import urllib.parse
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ac_cases_k import _set_state, _update
+from ac_cases_l import _ak_dispose, _ak_import, _ak_restore
 from ac_lib import MCP, REPO_ROOT, cli, cli_ok, env_for, new_db, ok, query
 
 
@@ -587,6 +590,188 @@ def k_bg_heartbeat():
             except ProcessLookupError:
                 pass
         stop()
+
+
+def k_bg_claim_binding():
+    print("== B3.1-G28: bg 心跳认领绑定（S9：watcher 绑定启动后首个 active claim；认领结束/变更 "
+          "-> 终态 note 记原因后退出；复派新 claim 后旧 watcher 无新增 renew）")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-dispatch-bgbind-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    rid = cli_ok(db, "new", "--title", "bg 认领绑定需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    srv, stop = _mock_start({"get_code": 404})
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    extra["AGENT_KANBAN_DISPATCH_HEARTBEAT_SEC"] = "1"
+    proc_pid = None
+    try:
+        res = cli(db, "dispatch", "--requirement-id", rid, "--bg", extra=extra)
+        ok("dispatch --bg rc=0", res.returncode == 0, f"rc={res.returncode} stderr={res.stderr}")
+        proc_pid = json.loads(res.stdout).get("bg_pid")
+        # (a) claim A 建立 -> watcher 绑定并周期续租（>=1 条 renew 事件锚定「已绑定」）
+        m = MCP(db, extra=extra).start()
+        claim_a = m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "worker-a"})["claim_id"]
+        deadline = time.monotonic() + 15
+        renews_a = []
+        while time.monotonic() < deadline:
+            renews_a = query(db, "SELECT claim_id FROM events WHERE requirement_id=? AND kind='renew'",
+                             (rid,))
+            if renews_a:
+                break
+            time.sleep(0.05)
+        ok("claim A active 后 watcher 续租（绑定成立，renew >=1）", bool(renews_a),
+           f"n={len(renews_a)}")
+        # (b) G28 实锤序列：人面释放（claim A 结束 + 需求回 OPEN）+ 复派产生 claim B。
+        # 释放与新认领间 >watcher 读->写间隙（MCP 往返 >> 单次读间隙），无 TOCTOU 窗
+        _update(db, "UPDATE claims SET ended_at=? WHERE id=?",
+                (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f"), claim_a))
+        _set_state(db, rid, "OPEN")
+        claim_b = m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "worker-b"})["claim_id"]
+        m.close()
+        # (c) 旧 watcher 下一探测周期观测到认领变更/消失 -> 终态 note（记原因）+ 进程退出
+        deadline = time.monotonic() + 15
+        final = []
+        while time.monotonic() < deadline:
+            final = [c for c in _note_contents(db, rid) if "bg 存活时长" in c]
+            if final and not _pid_alive(proc_pid):
+                break
+            time.sleep(0.05)
+        ok("旧 watcher 终态 note 存在（认领结束后退场，S9）", bool(final),
+           f"notes={_note_contents(db, rid)}")
+        ok("终态 note 恰 1 条（G28 重复终态 note 不复现）", len(final) == 1, f"n={len(final)}")
+        if final:
+            ok("终态 note 记结束原因（认领变更/需求释放）",
+               "认领变更" in final[0] or "需求释放" in final[0], final[0].splitlines()[-1])
+        ok("bg 进程退出（旧 watcher 不再存活）",
+           proc_pid is not None and not _pid_alive(proc_pid), f"pid={proc_pid}")
+        # (d) 越权续租判别：renew 事件 claim_id 恒为 A；claim B 零 renew（BCD I8/S9 核心）
+        renews = query(db, "SELECT claim_id FROM events WHERE requirement_id=? AND kind='renew'",
+                       (rid,))
+        ok("renew 全部锚 claim A（复派后旧 watcher 未续租新 claim）",
+           bool(renews) and all(r["claim_id"] == claim_a for r in renews),
+           f"claim_ids={[r['claim_id'] for r in renews]} A={claim_a} B={claim_b}")
+        ok("claim B 零 renew（旧 watcher 未按需求 id 越权续租）",
+           not any(r["claim_id"] == claim_b for r in renews),
+           f"B_renews={sum(1 for r in renews if r['claim_id'] == claim_b)}")
+        # (f) S9 另一支：绑定认领结束且不复派 -> 「需求释放」退场（确定性：无新 claim 竞态）
+        rid2 = cli_ok(db, "new", "--title", "bg 需求释放需求",
+                      "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+        res2 = cli(db, "dispatch", "--requirement-id", rid2, "--bg", extra=extra)
+        ok("需求释放支 dispatch --bg rc=0", res2.returncode == 0,
+           f"rc={res2.returncode} stderr={res2.stderr}")
+        proc_pid2 = json.loads(res2.stdout).get("bg_pid")
+        m2 = MCP(db, extra=extra).start()
+        claim_c = m2.call_ok("claim_task", {"requirement_id": rid2, "agent_name": "worker-c"})["claim_id"]
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if query(db, "SELECT seq FROM events WHERE requirement_id=? AND kind='renew'", (rid2,)):
+                break
+            time.sleep(0.05)
+        _update(db, "UPDATE claims SET ended_at=? WHERE id=?",
+                (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f"), claim_c))
+        _set_state(db, rid2, "OPEN")
+        m2.close()
+        deadline = time.monotonic() + 15
+        final2 = []
+        while time.monotonic() < deadline:
+            final2 = [c for c in _note_contents(db, rid2) if "bg 存活时长" in c]
+            if final2 and not _pid_alive(proc_pid2):
+                break
+            time.sleep(0.05)
+        ok("不复派时旧 watcher 终态 note 存在", bool(final2),
+           f"notes={_note_contents(db, rid2)}")
+        if final2:
+            ok("终态 note 原因记需求释放（绑定认领已结束）",
+               "需求释放" in final2[0], final2[0].splitlines()[-1])
+        ok("需求释放支 bg 进程退出",
+           proc_pid2 is not None and not _pid_alive(proc_pid2), f"pid={proc_pid2}")
+    finally:
+        # 兜底：deadline 后仍未退出的子进程 kill 再停 mock，禁留孤儿
+        for pid in (proc_pid, locals().get("proc_pid2")):
+            if pid is not None and _pid_alive(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        stop()
+
+
+def k_bg_renew_binding():
+    print("== B3.1-G28-P1: _bg_renew 写边界原子校验（expected_claim_id 与 active claim 同一"
+          "写事务内比对；不等 -> 拒写 renew 事件且不延长新 claim 租约，check-then-act 窗口清零）")
+    db = new_db()
+    rid = cli_ok(db, "new", "--title", "renew 绑定需求")["requirement_id"]
+    sid = f"ses_req_{rid[:8]}"
+    m = MCP(db).start()
+    claim_a = m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "worker-a"})["claim_id"]
+    # P1 窗口终态的确定性重演：claim A 已结束、claim B active（绕开心跳时序，直打写边界）
+    _update(db, "UPDATE claims SET ended_at=? WHERE id=?",
+            (datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f"), claim_a))
+    _set_state(db, rid, "OPEN")
+    claim_b = m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "worker-b"})["claim_id"]
+    m.close()
+    lease_b = query(db, "SELECT lease_expires_at FROM claims WHERE id=?", (claim_b,))[0]["lease_expires_at"]
+    prev, akdb, _, _, _ = _ak_import(db)
+    try:
+        from agent_kanban import dispatch as disp
+        # (a) 旧 watcher 语义：绑定 A 但 active=B -> 拒写（I8：心跳只续它绑定的认领）
+        rejected = False
+        try:
+            disp._bg_renew(rid, sid, None, expected_claim_id=claim_a)
+        except disp.BusinessError:
+            rejected = True
+        ok("expected_claim_id != active claim -> 拒绝（BusinessError）", rejected, "")
+        renews = query(db, "SELECT claim_id FROM events WHERE requirement_id=? AND kind='renew'",
+                       (rid,))
+        ok("拒写路径零 renew 事件（claim B 不被越权续租）", not renews, f"n={len(renews)}")
+        lease_b2 = query(db, "SELECT lease_expires_at FROM claims WHERE id=?",
+                         (claim_b,))[0]["lease_expires_at"]
+        ok("拒写路径 claim B lease_expires_at 不变（租约未被不可见第三方延长）",
+           lease_b2 == lease_b, f"{lease_b} -> {lease_b2}")
+        # (b) 本 watcher 语义：绑定 B 且 active=B -> 正常写一条
+        disp._bg_renew(rid, sid, None, expected_claim_id=claim_b)
+        renews = query(db, "SELECT claim_id FROM events WHERE requirement_id=? AND kind='renew'",
+                       (rid,))
+        ok("expected == active claim -> 正常写一条 renew", len(renews) == 1, f"n={len(renews)}")
+        if renews:
+            ok("renew 事件锚 claim B", renews[0]["claim_id"] == claim_b, renews[0]["claim_id"])
+    finally:
+        asyncio.run(_ak_dispose(akdb))
+        _ak_restore(prev)
+
+
+def _seed_note(db: Path, rid: str, seq: int, content: str) -> None:
+    """note 事件种子（I8 basis 锚用例：直插 content 可控的 note，不耦合 op 层）。"""
+    _update(db,
+            "INSERT INTO events (id, requirement_id, kind, severity, title, content, "
+            "actor_surface, seq, ts) VALUES (?, ?, 'note', 'info', 'note', ?, 'cli', ?, "
+            "'2026-10-29 00:00:00')",
+            (uuid.uuid4().hex, rid, content, seq))
+
+
+def k_bg_note_basis():
+    print("== B3.1-G28: renew delegated basis 锚分发 note（I8：_bg_note_seq 只取 content 前缀 "
+          "「分发：」的最新 note；worker 认领后写的接单确认 note 不夺锚；无分发 note -> None）")
+    db = new_db()
+    rid = cli_ok(db, "new", "--title", "basis 锚需求")["requirement_id"]
+    _seed_note(db, rid, 101, "分发：basis 锚需求，会话 ses_req_x，模型 m\nsession id: ses_req_x")
+    _seed_note(db, rid, 102, "接单确认\n理解：...（worker 认领后写，不得夺锚）")
+    _seed_note(db, rid, 103, "进度：做到一半")
+    rid2 = cli_ok(db, "new", "--title", "无分发 note 需求")["requirement_id"]
+    _seed_note(db, rid2, 101, "接单确认\n理解：...")
+    prev, akdb, _, _, _ = _ak_import(db)
+    try:
+        from agent_kanban import dispatch as disp
+        got = disp._bg_note_seq(rid)
+        ok("basis 锚最新「分发：」note（seq 101），后续非分发 note 不夺锚",
+           got == 101, f"got={got}")
+        got2 = disp._bg_note_seq(rid2)
+        ok("无分发 note -> None（basis 记缺失，不误锚接单确认类 note）",
+           got2 is None, f"got={got2}")
+    finally:
+        asyncio.run(_ak_dispose(akdb))
+        _ak_restore(prev)
 
 
 def _seed_review(db: Path, rid: str, seq: int, evidence, kind: str = "review_request") -> None:

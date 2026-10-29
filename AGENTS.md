@@ -30,11 +30,11 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 入口形态：本地开发机＝构建机（仓根 `.venv`）；远端＝GitHub Actions。
 - tier 阶梯（低 -> 高；tier 命名与组成按 ci-verification.md 正典）：
   1. 快速反馈（折入重跑最低 tier，SDD 机器纪律款）：`TMPDIR=<产物目录>/tmp .venv/bin/python tests/run_ac.py --only <用例 id>`
-  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **816/816**（B3 合入后；worktree 内跑必带 `PYTHONPATH=$PWD/src`，见下）
+  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **835/835**（B3.1 合入后；worktree 内跑必带 `PYTHONPATH=$PWD/src`，见下）
   3. 本地 e2e：`TMPDIR=<产物目录>/tmp AK_E2E_DB=<产物目录>/ak-e2e.db npx playwright test` —— 基线 **15/15**（撞端口加 `E2E_PORT`；sqlite disk I/O error 先查 /tmp quota＝环境面）
   4. 本地 docker 双轨：默认轨 build + smoke healthz 200；pypi 轨命令与
      办公网 MITM 局限见 ci-verification.md
-  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 816/816 +
+  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 835/835 +
      e2e 15/15 + docker 双轨 build + healthz 200）
   6. **CI 门槛（合并门槛，远端）**：特性分支 push -> GH Actions 三 job
      test/e2e/docker 全绿 + 分支保护必需 check `test`+`docker`（e2e 观察期：
@@ -77,6 +77,9 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   - github ssh 路由（22/443）间歇挂；push 走 origin HTTPS（代理 127.0.0.1:8888）稳定；网络命令一律 timeout 包装，失败重试
   - gh 无独立代理配置，读标准 env；`bash -lc` 登录 shell **不含**代理变量，必须命令前显式带（`HTTPS_PROXY=http://127.0.0.1:8888 HTTP_PROXY=... gh ...`），只靠 git 的 `http.proxy` 配置无效（B3 开 PR 实测：不带 env 报 TLS handshake timeout，带上立即成功）
   - 管道后 rc=$? 取的是管道末命令退出码；关键命令 rc 裸捕获（不接管道）
+  - 测试种子插 events 表：id 是全局主键（跨需求也须唯一，用 uuid），seq 才是每需求维度；_seed_review 的 f"{seq:032x}" 形态只在 seq 全局唯一时安全
+  - request_review 逐项自评 assessments 正典形态＝[{subtask_id, items:[{item 逐字（按子任务验收文本精确匹配）, state, deviation_reason}]}]；形态错被静默跳过（服务端不报错），交接前 get_task_detail 核子任务 acceptance 落 state
+  - models 的 UUIDHex＝sa.Uuid(as_uuid=False)：ORM 读回 36-char 带连字符，写路径/MCP 返回/事件 claim_id 均 32-hex——跨面比对先 services.ids.norm_id 归一
 
 ## 主循环纪律
 
