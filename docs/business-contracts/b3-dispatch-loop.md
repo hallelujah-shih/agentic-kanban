@@ -47,7 +47,7 @@
 
 ## 4. BDD Given-When-Then 场景
 
-1. **S1 A2 装配（happy，代码面）**。Given：REOPEN 需求，板上有 2 条 review_request 事件（第 1 轮 evidence={document:"/a.md", note:"..."}，第 2 轮 document="/b.md"，note 缺省）。When：dispatch（session 已存在走续接稿）。Then：续接稿含「历轮交付物」节，条目 seq 升序：`- 交付物: /a.md` + `- note: ...`；第二条只有交付物行（note 缺省不报错）；其余既有摘要行（state/awaiting/子任务进度）不变。
+1. **S1 A2 装配（happy，代码面）**。Given：REOPEN 需求，板上有 2 条 review_request 事件（第 1 轮 evidence={document:"/a.md", note:"..."}，第 2 轮 document="/b.md"，note 缺省）。When：dispatch（session 已存在走续接稿）。Then：续接稿含「历轮交付物」节，条目 seq 升序：`- 第 1 轮（seq <seq>）: 交付物 /a.md` + `- note: ...`；第二条只有交付物行（`- 第 2 轮（seq <seq>）: 交付物 /b.md`，note 缺省不报错）；其余既有摘要行（state/awaiting/子任务进度）不变。
 2. **S2 A2 首轮（edge，代码面）**。Given：OPEN 需求，无 review_request 事件。When：dispatch（新建走派发稿）。Then：派发稿**不含**「历轮交付物」节（无占位）；B2 五要素断言全部不变（存量用例回归不红）。
 3. **S3 A1 阻塞缺口（协议面，dogfood 真机 oracle）**。Given：描述含阻塞缺口的需求。When：worker 按 SKILL 执行。Then：板上 mark_blocked（reason＝缺什么 + 已核实到哪），无子任务执行记录。
 4. **S4 A1 非阻塞缺口 + A4 自检（协议面，dogfood 真机 oracle）**。Given：描述含非阻塞缺口（约束缺失但可假设）的需求。When：worker 执行。Then：接单确认记录含「理解/假设/缺口」三段（理解＝转述非照抄原文）；request_review 时 evidence 指向真实交付物 + 逐项自评 + summary_line 三行简报，红线未越。
@@ -102,5 +102,6 @@ S1/S2 为 ac 用例（mock opencode HTTP + 真 sqlite）；S3/S4/S5 为 T3 dogfo
 
 ## 修订记录
 
+- 2026-10-29 r3（T1 盲审折入，主循环）：§4 S1 条目格式对齐 §5 E1/§7 I5（`- 第 N 轮（seq X）: 交付物 <path>`）；§4 S5 蒸馏判据钉死为三形态（环境卡 + 板 note / 板 note 全文 / 板 note「无持久教训」），板 note 恒有。
 - 2026-10-28 r2（plan 盲审 r1 折入，主循环）：§1 补原话 c（设计门委托裁决原话，兼 dogfood release 受托 basis 引用锚）。
 - 2026-10-28 r1（主循环）：Q2 裁决变更——A2 装配点从「只加 _build_prompt」修正为「派发稿 + 续接稿双点装配（共享 _history_digest）」；实核依据＝REOPEN 复派走 _build_continuation（dispatch.py 主链 reused 分支），只改 _build_prompt 则返工轮永不命中历史节。传播面：§3 P-imp1、§4 S1、§5 E1/E5。
