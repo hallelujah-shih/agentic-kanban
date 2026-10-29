@@ -32,7 +32,7 @@ def ac11():
                                   "summary_line": "ac11 交接",
                                  "assessments": [
                                      {"subtask_id": st1["subtask_id"], "items": [{"item": "x works", "state": "met"}]},
-                                     {"subtask_id": st2["subtask_id"], "items": [{"item": "y works", "state": "not_met"}]},
+                                     {"subtask_id": st2["subtask_id"], "items": [{"item": "y works", "state": "not_met", "deviation_reason": "未实现"}]},
                                  ]})
     m.close()
     rest = REST(db).start()

@@ -35,6 +35,9 @@ from ac_cases_m import (m_echo, m_full_id, m_cross_surface, m_normalization,
 from ac_cases_n import (n1, n10, n11, n12, n13, n14, n15, n16, n17, n17b, n18,
                         n19, n2, n20, n21, n22, n23, n24, n26, n27, n28, n29,
                         n3, n4, n5, n6, n7, n8, n9, n_parse)
+from ac_cases_o import (sa_added, sa_blankacc, sa_coverage, sa_dup, sa_empty,
+                        sa_foreign, sa_form, sa_happy, sa_omit, sa_reason,
+                        sa_size, sa_stracc)
 
 TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
@@ -92,6 +95,10 @@ TESTS: dict[str, object] = {
     "n17": n17, "n17b": n17b, "n18": n18,
     "n19": n19, "n20": n20, "n21": n21, "n22": n22, "n23": n23, "n24": n24,
     "n26": n26, "n27": n27, "n29": n29,
+    "sa_happy": sa_happy, "sa_form": sa_form, "sa_foreign": sa_foreign,
+    "sa_coverage": sa_coverage, "sa_added": sa_added, "sa_empty": sa_empty,
+    "sa_omit": sa_omit, "sa_dup": sa_dup, "sa_reason": sa_reason,
+    "sa_stracc": sa_stracc, "sa_size": sa_size, "sa_blankacc": sa_blankacc,
 }
 
 

@@ -159,8 +159,10 @@ async def request_review(
 ) -> CallToolResult:
     """交接评审：置 awaiting_human(kind=review)，写 review_request 事件（severity=attention）。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, evidence（pr_url/commit_range/test_summary 至少一项）,
-          assessments, summary_line（交接一句话：做了什么/先看哪）。
-    错误: illegal_state（非 CLAIMED）/ invalid_record（缺 evidence 或 summary_line）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
+          assessments＝逐项验收自评，形态 [{subtask_id: <子任务 id>, items: [{item: <该子任务验收文本逐字>, state: "met"|"not_met"|"deviated", deviation_reason: <not_met/deviated 必填；met 时忽略并清除旧值>}]}]；
+          有验收条目的子任务（非 abandoned）必须逐项覆盖，不传 assessments 不构成豁免；漏项/形态错/重复引用/引用已 abandoned 子任务 -> invalid_record（消息含可用 subtask_id 与条目清单）,
+          summary_line（交接一句话：做了什么/先看哪）。
+    错误: illegal_state（非 CLAIMED）/ invalid_record（缺 evidence 或 summary_line / assessments 形态错或漏项）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     记录契约: summary_line 必写「做了什么/先看哪」一句话，缺/空 -> invalid_record。
     """
     return await _call(
