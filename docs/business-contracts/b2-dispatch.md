@@ -58,8 +58,9 @@
 4. **S4 状态门（edge）**。Given：需求 DONE。When：dispatch。Then：非零退出，错误消息含当前 state（DONE）；无 session 创建；无 note。
 5. **S5 超时（edge）**。Given：budget 2s，wait 阻塞 10s。When：dispatch --budget 2s。Then：**rc=1 + stdout 一行含 `timeout` 与 resume 提示**（契约钉死：超时≠硬失败但命令未完成，派发方必须看见）；**不杀 session**（无 delete 调用）；note 记超时；session 可被 resume 续跑。断言禁墙钟时间（用 mock 侧 wait 未记完成作确定性锚）。
 6. **S6 服务不可达（配置变更）**。Given：AGENT_KANBAN_OPENCODE_URL 指向死端口。When：dispatch。Then：报错含发现路径 + env 覆盖名；无 session 操作；无 note（未触达需求写入前）；P-imp1 不重试。
-7. **S7 bg 心跳（跨时段）**。Given：--bg 分发，worker session 长活。When：bg 循环运行（心跳周期可注入，测试设短周期）。Then：**pre-claim 窗口（session 活但无 active claim）跳过 renew、不报错、不写板事件**；claim active 后周期 renew（claim last_activity_at 推进，renew 事件带 delegated 受托痕）；**终态判据（GET 404 或 outcome ∈ {succeeded, failed}）-> 终态 note（含 bg 存活时长 + renew 总数 + pre-claim 跳过次数）后退出**。断言只用计数/事件，禁墙钟。
+7. **S7 bg 心跳（跨时段）**。Given：--bg 分发，worker session 长活。When：bg 循环运行（心跳周期可注入，测试设短周期）。Then：**pre-claim 窗口（session 活但无 active claim）跳过 renew、不报错、不写板事件**；claim active 后周期 renew（claim last_activity_at 推进，renew 事件带 delegated 受托痕）；**终态判据（GET 404 或 outcome ∈ {succeeded, failed} 或 S9 认领绑定判据）-> 终态 note（含 bg 存活时长 + renew 总数 + pre-claim 跳过次数 + 结束原因）后退出**。断言只用计数/事件，禁墙钟。
 8. **S8 bg 终态（跨时段，session 消失）**。Given：S7 运行中 session 被外部终止。When：bg 循环探测。Then：终态 note（记 bg 结束原因）+ 退出，不无限循环、不静默。
+9. **S9 bg 心跳认领绑定（跨派发，退场）**。Given：需求 R 的 bg 心跳已绑定认领 claim A（启动后首次观测到 active claim 即绑定）。When：claim A 结束（request_review 后 release / 需求回 OPEN / 租约过期被回收），随后人面复派产生 claim B，或不复派。Then：旧心跳在下一探测周期发现「active claim ≠ A」或「已绑定过但无 active claim」-> 写终态 note（原因＝认领变更/需求释放）后退出；**旧心跳不再向 claim B 续租**。新派发拉起的 watcher 独立绑定 B、basis 指向自己的分发 note。pre-claim 窗口（尚未绑定）维持既有跳过语义，不因无 claim 退出。
 
 ## 5. Spec by Example
 
@@ -95,6 +96,7 @@
 - I2 **id 派生 1:1**：session id＝ses_req_<需求 id 前 8hex>，与需求一一对应、无查表。违反后果（随机 id/查表 id）：零查表恢复承诺失效；dispatch 幂等失效（重复 dispatch 开第二会话，两 worker 抢一需求）。
 - I3 **恢复锚强制**：成功分发必留板 note 含 session id + 模型 + 目录 + 结局；失败分发必留 note 含失败事实；**resume 成功 note 同含目录**；dispatch/resume 的 stdout 结果**必含 session id + 启动目录（`directory`）两顶层字段**（user 裁决 2026-10-28：人深挖锚＝`cd <dir>` + `opencode -s <ses>` 两要素，缺一即交接不完整）。违反后果：worker 死后无人可恢复（gmail 试验教训：session 死，人不知怎么续）；缺深挖锚则人无法进入 worker 现场核实。
 - I4 **超时不杀**：budget 超时不终止 session。违反后果：数十分钟长调研工作被销毁，无产物可 resume，重试成本（token/墙钟）全损。
+- I8 **心跳认领绑定**：bg 心跳的 renew 只作用于启动后首次绑定的那个 claim；绑定后 active claim 变更或消失 -> 心跳退场，不改绑。renew 的 delegated basis 必须锚本需求最近一条**分发 note**（content 前缀「分发：」），不得取「同需求最新 note」。违反后果（改绑）：旧心跳按需求 id 续租新认领——事件链出现指向过期分发的 renew（谁在代续租不可读），且旧 watcher 与新人认领寿命耦合，租约被不可见第三方延长；违反后果（basis 取最新 note）：worker 认领即写接单确认 note（B3 门序 3），basis 串到非分发事件，恢复锚不可信。
 
 软约束（违反可容忍）：
 
@@ -104,5 +106,6 @@
 
 ## 修订记录
 
+- 2026-10-29 r3（B3.1 缺陷批，主循环）：S7 终态判据补 S9 一支；新增 S9「bg 心跳认领绑定」与 I8（renew 只续绑定 claim + basis 锚分发 note）。依据＝known-gaps G28（B3 dogfood D1 实测：R1 watcher 在 release + 复派后仍续租 R2 的新 claim，basis 指向过期分发 note seq 258，并写出两条同秒终态 note）。传播面：§4 S7/S9、§7 I8、实现 `run_bg_loop`/`_bg_note_seq`、用例 `k_bg_heartbeat`、known-gaps G28 关闭。
 - 2026-10-28 r2（user 裁决，主循环）：I3 扩展——resume note 补目录行 + dispatch/resume stdout 结果必含 session id 与启动目录（`directory`）顶层字段（人深挖锚 `cd <dir>` + `opencode -s <ses>`）。传播面：plan 步骤 10 / resume 步骤 4 / 验证锚 k_dispatch_main、k_resume；实现折入 T4（T3 运行中不插入）。
 - 2026-10-28（plan 盲审 r1 REJECT 修订，主循环）：§3 P-imp4 补 create 幂等实锤（同 id 重复 POST 200，真服务探测）；§4 S1 note 断言改 content 首行人话（P0-1：add_record 需 active claim，dispatch 目标态无认领，人面 note() 为 pre-claim 唯一留痕 op）、S5 超时契约钉死（rc=1 + stdout 含 timeout/resume，禁墙钟断言）、S7 心跳可注入周期 + 终态判据 + pre-claim 跳过；§5 E2 状态前置（req 保持 OPEN）、E7 确定性断言；§7 I5 周期可注入、I7 改 content 首行。传播面：§4/§5/§7 修订 -> plan 续审走快审档。
