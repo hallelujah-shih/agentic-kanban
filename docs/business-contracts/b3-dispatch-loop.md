@@ -55,6 +55,8 @@
 
 S1/S2 为 ac 用例（mock opencode HTTP + 真 sqlite）；S3/S4/S5 为 T3 dogfood 真机 oracle（故意含模糊性的需求派发，判据写进 dogfood 脚本）。
 
+真机覆盖边界（2026-10-29 实测，勿读作全覆盖）：S3 pass（D2b mark_blocked，零子任务）；S4 的接单确认三段/假设处置 pass（D1/D2/D2b），但 **A4② 逐项验收自评零覆盖**（三条 dogfood 需求 acceptance=[]）；S5 只覆盖主形态（环境卡 + 板 note），另两形态（板 note 全文 / 「无持久教训」）未真机触发；A2 真机装配（E5）pass，证据＝D1 R2 续接稿会话原文（批次产物 dispatches/dogfood-d1-r2.md，属批外留证不随仓）。边界与残余同见 known-gaps G27(a)。
+
 ## 5. Spec by Example
 
 - E1（代码）：需求 2 轮 review_request（document=/a.md note=「遗留：X 待核」；document=/b.md）。续接稿含节：
@@ -98,7 +100,7 @@ S1/S2 为 ac 用例（mock opencode HTTP + 真 sqlite）；S3/S4/S5 为 T3 dogfo
 软约束（违反可容忍）：
 
 - I4：A1/A4/A6 为协议条款（提醒级），行为 oracle＝T3 dogfood 真机；无服务端门。违反后果：worker 未执行门 -> 退回 B2 现状（不失败，只退化）。
-- I5：历史节格式稳定（每轮：`第 N 轮（seq X）: 交付物 <path>` + 可选 note 行，seq 升序；note-only 轮次按 E3 只有 note 行、不带轮次/seq 锚）——B4 展示面（轮次总结/状态卡）的机器可读锚，解析需容忍无锚 note 行。违反后果：B4 无可解析锚，重新约定。
+- I5：历史节格式稳定（每轮：`第 N 轮（seq X）: 交付物 <path>` + 可选 note 行，seq 升序；**N＝产出轮序号**——只计数出现 document 或 note 的 review_request，跳过轮不占号；note-only 轮次按 E3 只有 note 行、不带轮次/seq 锚）——B4 展示面（轮次总结/状态卡）的机器可读锚，解析需容忍无锚 note 行。违反后果：B4 无可解析锚，重新约定。
 
 ## 修订记录
 
