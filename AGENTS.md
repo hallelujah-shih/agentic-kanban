@@ -9,7 +9,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   以 `skills/agent-kanban/SKILL.md` 为正典，本文件不重复。
 - **板上收尾动作**：agent 侧工作完成后（PR 流＝PR 发起后，本地合流＝合入后）
   立即调 `request_review`（evidence 含 pr_url/commit_range/test_summary，
-  附验收自评；协议细节见协议 skill 门 6）。板 awaiting_human 是唯一等待面，
+  附验收自评；协议细节见协议 skill 门 7）。板 awaiting_human 是唯一等待面，
   禁留任务等租约过期变 stale。
 - 人面 CLI（approve/release/note 等）：
   `AGENT_KANBAN_DB=/home/shih/.agent-kanban/kanban.db .venv/bin/python cli.py <cmd> --requirement-id <32hex>`
