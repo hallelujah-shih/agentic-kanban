@@ -815,7 +815,7 @@ async def request_review(
         select(Subtask).where(Subtask.requirement_id == requirement_id).order_by(Subtask.ordinal)
     )).all()
     validated = _validate_assessments(requirement_id, assessments, subtasks)
-    assessment = _persist_self_assessment(validated, subtasks, now)
+    assessment = _persist_self_assessment(requirement_id, validated, subtasks, now)
     req.awaiting_human = {
         "reason": "review requested",
         "evidence": evidence,
@@ -823,30 +823,45 @@ async def request_review(
         "kind": "review",
         "summary_line": str(summary_line).strip(),
     }
+    payload = {"evidence": evidence, "summary_line": str(summary_line).strip(),
+               "assessment": assessment}
+    _check_payload_size(requirement_id, payload)  # PRD §6：事件 payload < 8KB（S19）
     await add_event(
         session, requirement_id=requirement_id, kind="review_request", severity="attention",
         title="review requested",
-        payload={"evidence": evidence, "summary_line": str(summary_line).strip(),
-                 "assessment": assessment},
+        payload=payload,
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
     await lease_svc.touch_activity(session, requirement_id, now)
     return {"requirement_id": requirement_id, "awaiting_human": req.awaiting_human}
 
 
+def _acc_text(a: Any) -> str | None:
+    """验收条目文本归一（normalize_anchors 同口径：裸字符串 str -> {"item": str}）。"""
+    if isinstance(a, dict):
+        v = a.get("item")
+        return str(v) if v is not None else None
+    if a is None:
+        return None
+    return str(a)
+
+
 def _assessment_available(subtasks: list) -> str:
     """本需求可用 subtask_id 与验收条目清单（错误消息自纠用，BCD b3.2 S11）。"""
     lines = []
     for st in subtasks:
-        items = [str(a.get("item")) for a in (st.acceptance or []) if isinstance(a, dict)]
+        items = [t for t in (_acc_text(a) for a in (st.acceptance or [])) if t is not None]
         lines.append(f"subtask_id={norm_id(st.id)} (state={st.state}): acceptance={items}")
     return "\n".join(lines) if lines else "（本需求无子任务）"
 
 
 def _validate_assessments(requirement_id: str, assessments: Any, subtasks: list) -> list[dict]:
-    """形态+归属+覆盖全量校验（BCD b3.2 I6/I7/I8）：任何一项不合法整单拒写、零写入。"""
+    """形态+归属+重复+覆盖全量校验（BCD b3.2 v2 I6/I7/I8）：任何一项不合法整单拒写、零写入。
+
+    None 与 [] 同路径（S15：省略不构成豁免——有验收条目即漏评拒写）。
+    """
     if assessments is None:
-        return []
+        assessments = []
     if not isinstance(assessments, list):
         raise BusinessError(
             "invalid_record",
@@ -856,6 +871,7 @@ def _validate_assessments(requirement_id: str, assessments: Any, subtasks: list)
         )
     by_id = {norm_id(st.id): st for st in subtasks}
     out: list[dict] = []
+    seen_sid: dict[str, int] = {}
     for i, asm in enumerate(assessments):
         loc = f"assessments[{i}]"
         if not isinstance(asm, dict) or not asm.get("subtask_id"):
@@ -873,6 +889,22 @@ def _validate_assessments(requirement_id: str, assessments: Any, subtasks: list)
                 f"本需求可用：\n{_assessment_available(subtasks)}",
                 requirement_id,
             )
+        if sid in seen_sid:
+            raise BusinessError(
+                "invalid_record",
+                f"{loc} subtask_id={sid} 重复引用（同一 subtask_id 只能出现一次，"
+                f"首次出现于 assessments[{seen_sid[sid]}]）；正典形态：{ASSESSMENT_FORM_EXAMPLE}",
+                requirement_id,
+            )
+        seen_sid[sid] = i
+        st = by_id[sid]
+        if st.state == "abandoned":
+            raise BusinessError(
+                "invalid_record",
+                f"{loc} subtask_id={sid} 已放弃（abandoned），不计入覆盖分母、不接受评估；"
+                f"如需评估先 update_subtask 改回非 abandoned 状态。",
+                requirement_id,
+            )
         items = asm.get("items")
         if not isinstance(items, list):
             raise BusinessError(
@@ -882,6 +914,7 @@ def _validate_assessments(requirement_id: str, assessments: Any, subtasks: list)
                 requirement_id,
             )
         norm_items = []
+        seen_items: set[str] = set()
         for j, it in enumerate(items):
             iloc = f"{loc}.items[{j}]"
             if not isinstance(it, dict) or not str(it.get("item") or "").strip():
@@ -891,6 +924,14 @@ def _validate_assessments(requirement_id: str, assessments: Any, subtasks: list)
                     f"本需求可用：\n{_assessment_available(subtasks)}",
                     requirement_id,
                 )
+            text = str(it["item"])
+            if text in seen_items:
+                raise BusinessError(
+                    "invalid_record",
+                    f"{iloc} 条目「{text}」重复条目（同一子任务内同一验收文本只能评一次）",
+                    requirement_id,
+                )
+            seen_items.add(text)
             state = it.get("state")
             if state not in ASSESSMENT_STATES:
                 raise BusinessError(
@@ -899,55 +940,78 @@ def _validate_assessments(requirement_id: str, assessments: Any, subtasks: list)
                     f"正典形态：{ASSESSMENT_FORM_EXAMPLE}",
                     requirement_id,
                 )
-            entry = {"item": str(it["item"]), "state": state}
-            if it.get("deviation_reason"):
-                entry["deviation_reason"] = str(it["deviation_reason"])
+            reason = str(it.get("deviation_reason") or "").strip()
+            if state in {"not_met", "deviated"} and not reason:
+                raise BusinessError(
+                    "invalid_record",
+                    f"{iloc} state={state} 必须给 deviation_reason（说明偏离原因）；"
+                    f"正典形态：{ASSESSMENT_FORM_EXAMPLE}",
+                    requirement_id,
+                )
+            entry = {"item": text, "state": state}
+            if state in {"not_met", "deviated"}:
+                entry["deviation_reason"] = reason
             norm_items.append(entry)
-        out.append({"subtask": by_id[sid], "items": norm_items})
-    assessed = {(norm_id(v["subtask"].id), it["item"]) for v in out for it in v["items"]}
+        out.append({"subtask": st, "items": norm_items})
+    submitted: dict[str, list[str]] = {}
+    for v in out:
+        submitted[norm_id(v["subtask"].id)] = [it["item"] for it in v["items"]]
+    assessed = {(s, t) for s, ts in submitted.items() for t in ts}
     missing = []
     for st in subtasks:
         if st.state == "abandoned":
             continue
+        sid = norm_id(st.id)
         for a in (st.acceptance or []):
-            if isinstance(a, dict) and (norm_id(st.id), str(a.get("item"))) not in assessed:
-                missing.append(f"subtask_id={norm_id(st.id)} 条目「{a.get('item')}」")
+            t = _acc_text(a)
+            if t is not None and (sid, t) not in assessed:
+                got = "、".join(f"『{x}』" for x in submitted.get(sid, [])) or "（未提交该子任务）"
+                missing.append(f"subtask_id={sid} 期望逐字「{t}」（你提交的：{got}）")
     if missing:
         raise BusinessError(
             "invalid_record",
             "assessments 漏评：" + "；".join(missing) +
-            "。出路：① 补评漏项后重交；② 若该子任务不再需要，"
+            "。按逐字匹配，不做 trim/大小写归一。"
+            "出路：① 补评漏项后重交；② 若该子任务不再需要，"
             "先 update_subtask(state=abandoned) 将其移出覆盖分母。",
             requirement_id,
         )
     return out
 
 
-def _persist_self_assessment(validated: list[dict], subtasks: list, now: datetime) -> dict:
-    """验收自评持久化到 subtasks.acceptance[].state（按 item 文本精确匹配）。
+def _persist_self_assessment(requirement_id: str, validated: list[dict], subtasks: list, now: datetime) -> dict:
+    """验收自评持久化到 subtasks.acceptance[].state（按 item 文本逐字匹配）。
 
     只在全量校验通过后调用（BCD b3.2 I8）；返回 payload.assessment 计数
-    {required, covered, added, received_subtasks, received_items}（§3）。
+    {required, covered, added, received_subtasks, received_items}（§3 + I11）。
+    met 落库时清除旧 deviation_reason（S16/E10 以最新自评为准）。
     """
     required = sum(
         1 for st in subtasks if st.state != "abandoned"
-        for a in (st.acceptance or []) if isinstance(a, dict)
+        for a in (st.acceptance or []) if _acc_text(a) is not None
     )
     covered = 0
     added = 0
     for v in validated:
         st = v["subtask"]
         current = list(st.acceptance or [])
-        by_item = {str(a.get("item")): a for a in current if isinstance(a, dict)}
+        by_item: dict[str, Any] = {}
+        for a in current:
+            t = _acc_text(a)
+            if t is not None and t not in by_item:
+                by_item[t] = a
         seen: set[str] = set()
         new_acc = []
         for item in v["items"]:
             key = item["item"]
             seen.add(key)
             if key in by_item:
-                entry = dict(by_item[key])
+                a0 = by_item[key]
+                entry = dict(a0) if isinstance(a0, dict) else {"item": key}
                 entry["state"] = item["state"]
-                if item.get("deviation_reason"):
+                if item["state"] == "met":
+                    entry.pop("deviation_reason", None)
+                else:
                     entry["deviation_reason"] = item["deviation_reason"]
                 covered += 1
             else:
@@ -955,8 +1019,10 @@ def _persist_self_assessment(validated: list[dict], subtasks: list, now: datetim
                 added += 1
             new_acc.append(entry)
         for a in current:
-            if not (isinstance(a, dict) and str(a.get("item")) in seen):
+            t = _acc_text(a)
+            if t is None or t not in seen:
                 new_acc.append(a)
+        _check_payload_size(requirement_id, new_acc)  # PRD §6：落库后 acceptance < 8KB（S19）
         st.acceptance = new_acc
         st.updated_at = now
     return {

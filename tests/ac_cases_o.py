@@ -1,8 +1,9 @@
-"""B3.2 交接自评不静默丢弃（BCD b3.2-self-assessment.md v1 §4/§5/§7，I6-I9）。
+"""B3.2 交接自评不静默丢弃（BCD b3.2-self-assessment.md v2 §4/§5/§7，I6-I9/I11）。
 
 oracle 纪律：断言引 BCD 场景/不变量；DB 事后 sqlite3 直查（query）；真实 MCP stdio
 子进程，禁 mock。错误消息断言用 _call_err2（ac_cases_m 同模式，ac_lib.call_err 不返
-message）。
+message）。v2 增量：S15 省略不豁免 / S16 deviation_reason 双向 / S17 重复拒写 /
+S18 字符串归一 / S19 8KB 门 / I11 计数不变式。
 """
 
 from __future__ import annotations
@@ -35,6 +36,13 @@ def _rr_payload(db, rid: str) -> dict:
     row = query(db, "SELECT payload FROM events WHERE requirement_id=? "
                     "AND kind='review_request' ORDER BY seq DESC LIMIT 1", (rid,))[0]
     return json.loads(row["payload"])
+
+
+def _i11(tag: str, asm: dict) -> None:
+    """I11 计数不变式：成功路径 covered<=required 且 covered+added==received_items。"""
+    ok(f"{tag}: I11 covered<=required 且 covered+added==received_items",
+       asm["covered"] <= asm["required"] and asm["covered"] + asm["added"] == asm["received_items"],
+       json.dumps(asm))
 
 
 def _mk_claimed(db, title: str, subs: list[dict]) -> tuple[str, MCP, list[dict]]:
@@ -76,6 +84,7 @@ def sa_happy():
     ok("sa_happy: payload.assessment == {required:2,covered:2,added:0,received_subtasks:2,received_items:2}",
        asm == {"required": 2, "covered": 2, "added": 0, "received_subtasks": 2, "received_items": 2},
        json.dumps(asm))
+    _i11("sa_happy", asm)
     # E10：返工再次交接，以最新自评为准，计数随之更新
     m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "t2"},
                                  "summary_line": "sa 返工交接",
@@ -136,12 +145,11 @@ def sa_form():
 
 
 def sa_foreign():
-    """S13/E4：引用他需求 subtask_id -> invalid_record，消息含本需求可用清单。"""
+    """S13/E4：引用他需求 subtask_id -> invalid_record（P2-1：本需求无验收条目，
+    唯一可能的错误来源就是归属校验，覆盖门不可能顶替报错——M3 变异判别锚）。"""
     print("== sa_foreign: 子任务归属错 -> invalid_record（不得静默跳过）")
     db = new_db()
-    rid, m, (s1,) = _mk_claimed(db, "sa-foreign", [
-        {"title": "impl1", "ordinal": 1, "acceptance": [{"item": "Y1"}]},
-    ])
+    rid, m, (s1,) = _mk_claimed(db, "sa-foreign", [{"title": "impl1", "ordinal": 1}])
     rid_b = seed_req(db, "sa-foreign-b")
     m.call_ok("claim_task", {"requirement_id": rid_b, "agent_name": "b"})
     st_b = m.call_ok("add_subtask", {"requirement_id": rid_b, "title": "other", "ordinal": 1,
@@ -151,15 +159,16 @@ def sa_foreign():
         "requirement_id": rid, "evidence": {"test_summary": "t"}, "summary_line": "x",
         "assessments": [{"subtask_id": st_b["subtask_id"], "items": [{"item": "Z1", "state": "met"}]}]})
     ok("sa_foreign: 引用他需求 subtask_id -> invalid_record", code == "invalid_record", code)
-    ok("sa_foreign: 消息含本需求可用清单（subtask_id + 条目）",
-       s1["subtask_id"] in msg and "Y1" in msg, msg[:300])
+    ok("sa_foreign: 消息指明不属于本需求（判别归属校验本身，非覆盖门顶替）",
+       "不属于本需求" in msg, msg[:200])
+    ok("sa_foreign: 消息含本需求可用清单（subtask_id）", s1["subtask_id"] in msg, msg[:300])
     after = _snapshot(db, rid)
     ok("sa_foreign: 零写入", before == after, f"before={before} after={after}")
     m.close()
 
 
 def sa_coverage():
-    """S12/E3+E8：漏评拒写点名漏项 + 两条出路；abandoned 子任务不计 required。"""
+    """S12/E3+E8+P2-7：漏评拒写点名漏项 + 两条出路 + 期望/提交对照；abandoned 出分母。"""
     print("== sa_coverage: 漏评 -> invalid_record 点名漏项 + 出路；abandoned 出分母")
     db = new_db()
     rid, m, (s1, s2) = _mk_claimed(db, "sa-coverage", [
@@ -177,6 +186,18 @@ def sa_coverage():
        "补评" in msg and "abandoned" in msg, msg[:300])
     after = _snapshot(db, rid)
     ok("sa_coverage: 零写入", before == after, f"before={before} after={after}")
+    # P2-7：逐字不匹配（多空格）-> 消息给期望逐字/你提交的对照 + 逐字说明
+    before = _snapshot(db, rid)
+    code, msg = _call_err2(m, "request_review", {
+        "requirement_id": rid, "evidence": {"test_summary": "t"}, "summary_line": "x",
+        "assessments": [
+            {"subtask_id": s1["subtask_id"], "items": [{"item": " Y1 ", "state": "met"}]},
+            {"subtask_id": s2["subtask_id"], "items": [{"item": "Y2", "state": "met"}]}]})
+    ok("sa_coverage: 逐字不匹配（\" Y1 \" 多空格）-> invalid_record", code == "invalid_record", code)
+    ok("sa_coverage: 消息给期望逐字与你提交的对照", "「Y1」" in msg and " Y1 " in msg, msg[:300])
+    ok("sa_coverage: 消息声明按逐字匹配（不做 trim/大小写归一）", "逐字匹配" in msg, msg[:300])
+    after = _snapshot(db, rid)
+    ok("sa_coverage: 逐字不匹配拒写零写入", before == after, f"before={before} after={after}")
     # E8：把 s2 置 abandoned 后出分母，只评 Y1 即成功
     m.call_ok("update_subtask", {"requirement_id": rid, "subtask_id": s2["subtask_id"],
                                  "state": "abandoned"})
@@ -188,6 +209,173 @@ def sa_coverage():
     ok("sa_coverage: abandoned 不计 required（required:1 covered:1）",
        asm == {"required": 1, "covered": 1, "added": 0, "received_subtasks": 1, "received_items": 1},
        json.dumps(asm))
+    _i11("sa_coverage", asm)
+    m.close()
+
+
+def sa_omit():
+    """S15/E11：有验收条目时省略 assessments 不构成豁免；不传/None/[] 三者一致。"""
+    print("== sa_omit: 有验收条目 + 省略 assessments -> invalid_record（三种输入一致）")
+    db = new_db()
+    rid, m, (s1,) = _mk_claimed(db, "sa-omit", [
+        {"title": "impl1", "ordinal": 1, "acceptance": [{"item": "Y1"}]},
+    ])
+    for label, kw in (("不传", {}), ("显式 None", {"assessments": None}),
+                      ("空列表 []", {"assessments": []})):
+        before = _snapshot(db, rid)
+        args = {"requirement_id": rid, "evidence": {"test_summary": "t"}, "summary_line": "x"}
+        args.update(kw)
+        code, msg = _call_err2(m, "request_review", args)
+        ok(f"sa_omit: {label} -> invalid_record（省略不构成豁免）", code == "invalid_record", code)
+        ok(f"sa_omit: {label} 消息点名漏评 Y1 + 出路", "Y1" in msg and "abandoned" in msg, msg[:200])
+        after = _snapshot(db, rid)
+        ok(f"sa_omit: {label} 零写入", before == after, f"{label}")
+    m.close()
+
+
+def sa_dup():
+    """S17/E14：重复引用 subtask_id / 重复条目 / 引用已 abandoned 子任务 -> 拒写。"""
+    print("== sa_dup: 重复引用 / 重复条目 / 引用 abandoned -> invalid_record")
+    db = new_db()
+    rid, m, (s1, s2) = _mk_claimed(db, "sa-dup", [
+        {"title": "impl1", "ordinal": 1, "acceptance": [{"item": "Y1"}]},
+        {"title": "impl2", "ordinal": 2},
+    ])
+    # 同一 subtask_id 出现两次
+    before = _snapshot(db, rid)
+    code, msg = _call_err2(m, "request_review", {
+        "requirement_id": rid, "evidence": {"test_summary": "t"}, "summary_line": "x",
+        "assessments": [
+            {"subtask_id": s1["subtask_id"], "items": [{"item": "Y1", "state": "met"}]},
+            {"subtask_id": s1["subtask_id"], "items": [{"item": "Y1", "state": "met"}]}]})
+    ok("sa_dup: 同一 subtask_id 两次 -> invalid_record", code == "invalid_record", code)
+    ok("sa_dup: 消息含定位 assessments[1] + 重复引用",
+       "assessments[1]" in msg and "重复引用" in msg, msg[:200])
+    after = _snapshot(db, rid)
+    ok("sa_dup: 重复引用零写入", before == after, f"before={before} after={after}")
+    # 同一子任务 items 内同一文本两次
+    before = _snapshot(db, rid)
+    code, msg = _call_err2(m, "request_review", {
+        "requirement_id": rid, "evidence": {"test_summary": "t"}, "summary_line": "x",
+        "assessments": [{"subtask_id": s1["subtask_id"], "items": [
+            {"item": "Y1", "state": "met"},
+            {"item": "Y1", "state": "not_met", "deviation_reason": "x"}]}]})
+    ok("sa_dup: 同子任务同文本两次 -> invalid_record", code == "invalid_record", code)
+    ok("sa_dup: 消息含定位 assessments[0].items[1] + 重复条目",
+       "assessments[0].items[1]" in msg and "重复条目" in msg, msg[:200])
+    after = _snapshot(db, rid)
+    ok("sa_dup: 重复条目零写入", before == after, f"before={before} after={after}")
+    # 引用已 abandoned 子任务
+    m.call_ok("update_subtask", {"requirement_id": rid, "subtask_id": s2["subtask_id"],
+                                 "state": "abandoned"})
+    before = _snapshot(db, rid)
+    code, msg = _call_err2(m, "request_review", {
+        "requirement_id": rid, "evidence": {"test_summary": "t"}, "summary_line": "x",
+        "assessments": [
+            {"subtask_id": s1["subtask_id"], "items": [{"item": "Y1", "state": "met"}]},
+            {"subtask_id": s2["subtask_id"], "items": [{"item": "X", "state": "met"}]}]})
+    ok("sa_dup: 引用 abandoned 子任务 -> invalid_record", code == "invalid_record", code)
+    ok("sa_dup: 消息说明已放弃+不计入分母+改回出路",
+       "已放弃" in msg and s2["subtask_id"] in msg and "update_subtask" in msg, msg[:300])
+    after = _snapshot(db, rid)
+    ok("sa_dup: 引用 abandoned 零写入", before == after, f"before={before} after={after}")
+    m.close()
+
+
+def sa_reason():
+    """S16/E12/E13：deviation_reason 双向一致（not_met/deviated 必填；met 清旧值）。"""
+    print("== sa_reason: deviation_reason 必填 + met 清旧值")
+    db = new_db()
+    rid, m, (s1,) = _mk_claimed(db, "sa-reason", [
+        {"title": "impl1", "ordinal": 1, "acceptance": [{"item": "Y2"}]},
+    ])
+    # E12：not_met 无原因 -> invalid_record
+    before = _snapshot(db, rid)
+    code, msg = _call_err2(m, "request_review", {
+        "requirement_id": rid, "evidence": {"test_summary": "t"}, "summary_line": "x",
+        "assessments": [{"subtask_id": s1["subtask_id"],
+                         "items": [{"item": "Y2", "state": "not_met"}]}]})
+    ok("sa_reason: not_met 无 deviation_reason -> invalid_record", code == "invalid_record", code)
+    ok("sa_reason: 消息含定位 + 必填说明",
+       "assessments[0].items[0]" in msg and "deviation_reason" in msg, msg[:200])
+    # deviated 纯空白原因 -> invalid_record
+    code, msg = _call_err2(m, "request_review", {
+        "requirement_id": rid, "evidence": {"test_summary": "t"}, "summary_line": "x",
+        "assessments": [{"subtask_id": s1["subtask_id"],
+                         "items": [{"item": "Y2", "state": "deviated", "deviation_reason": "  "}]}]})
+    ok("sa_reason: deviated 纯空白原因 -> invalid_record", code == "invalid_record", code)
+    after = _snapshot(db, rid)
+    ok("sa_reason: 两次拒写零写入", before == after, f"before={before} after={after}")
+    # 正常：not_met + 原因 -> 成功落库
+    m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "t"},
+                                 "summary_line": "sa 交接",
+                                 "assessments": [{"subtask_id": s1["subtask_id"], "items": [
+                                     {"item": "Y2", "state": "not_met",
+                                      "deviation_reason": "只跑了单测"}]}]})
+    # E13：返工 met 不给原因 -> 旧 deviation_reason 清除（以最新自评为准）
+    m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "t2"},
+                                 "summary_line": "sa 返工交接",
+                                 "assessments": [{"subtask_id": s1["subtask_id"],
+                                                  "items": [{"item": "Y2", "state": "met"}]}]})
+    d = m.call_ok("get_task_detail", {"requirement_id": rid})
+    acc = d["subtasks"][0]["acceptance"]
+    ok("sa_reason: met 后旧 deviation_reason 清除（条目只剩 item+state）",
+       acc == [{"item": "Y2", "state": "met"}], json.dumps(acc))
+    m.close()
+
+
+def sa_stracc():
+    """S18：字符串形态既有验收条目归一——不出现同文本双份，计数归位。"""
+    print("== sa_stracc: 字符串 acceptance 归一（normalize_anchors 同口径）")
+    db = new_db()
+    rid, m, (s1,) = _mk_claimed(db, "sa-stracc", [
+        {"title": "impl1", "ordinal": 1, "acceptance": ["实现可回滚"]},
+    ])
+    m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "t"},
+                                 "summary_line": "sa 交接",
+                                 "assessments": [{"subtask_id": s1["subtask_id"], "items": [
+                                     {"item": "实现可回滚", "state": "met"}]}]})
+    d = m.call_ok("get_task_detail", {"requirement_id": rid})
+    acc = d["subtasks"][0]["acceptance"]
+    ok("sa_stracc: 落库单份且归一为 {item,state}（无同文本双份）",
+       acc == [{"item": "实现可回滚", "state": "met"}], json.dumps(acc))
+    asm = _rr_payload(db, rid).get("assessment")
+    ok("sa_stracc: payload.assessment required=1 covered=1 added=0（计数归位）",
+       asm == {"required": 1, "covered": 1, "added": 0, "received_subtasks": 1, "received_items": 1},
+       json.dumps(asm))
+    _i11("sa_stracc", asm)
+    m.close()
+
+
+def sa_size():
+    """S19/E15：8KB 双门——事件 payload 超限 / 落库后 acceptance 超限 -> 拒写零写入。"""
+    print("== sa_size: 8KB 体积门（summary_line 过长 + 自拟条目过多）")
+    db = new_db()
+    rid, m, (s1,) = _mk_claimed(db, "sa-size", [
+        {"title": "impl1", "ordinal": 1, "acceptance": [{"item": "Y1"}]},
+    ])
+    # E15：超长 summary_line -> 事件 payload > 8KB
+    before = _snapshot(db, rid)
+    code, _ = _call_err2(m, "request_review", {
+        "requirement_id": rid, "evidence": {"test_summary": "t"},
+        "summary_line": "长" * 9000,
+        "assessments": [{"subtask_id": s1["subtask_id"], "items": [{"item": "Y1", "state": "met"}]}]})
+    ok("sa_size: summary_line 9000 字（payload>8KB）-> invalid_record", code == "invalid_record", code)
+    after = _snapshot(db, rid)
+    ok("sa_size: 事件 payload 超限零写入", before == after, f"before={before} after={after}")
+    # 自拟条目过多 -> 落库后 acceptance > 8KB（与 add_subtask 同口径）
+    rid2 = seed_req(db, "sa-size-added")
+    m.call_ok("claim_task", {"requirement_id": rid2, "agent_name": "b"})
+    st2 = m.call_ok("add_subtask", {"requirement_id": rid2, "title": "impl", "ordinal": 1})
+    before2 = _snapshot(db, rid2)
+    items = [{"item": f"自拟条目 {i} 等等等等等等等等", "state": "met"} for i in range(600)]
+    code, _ = _call_err2(m, "request_review", {
+        "requirement_id": rid2, "evidence": {"test_summary": "t"}, "summary_line": "x",
+        "assessments": [{"subtask_id": st2["subtask_id"], "items": items}]})
+    ok("sa_size: 自拟 600 条（acceptance>8KB）-> invalid_record", code == "invalid_record", code)
+    after2 = _snapshot(db, rid2)
+    ok("sa_size: acceptance 超限零写入（落库前拒）", before2 == after2,
+       f"before={before2} after={after2}")
     m.close()
 
 
@@ -209,12 +397,13 @@ def sa_added():
     ok("sa_added: payload.assessment added=1 required=0",
        asm == {"required": 0, "covered": 0, "added": 1, "received_subtasks": 1, "received_items": 1},
        json.dumps(asm))
+    _i11("sa_added", asm)
     m.close()
 
 
 def sa_empty():
     """S14/E7：无验收条目且未传 assessments -> 成功，payload.assessment 恒在全 0。"""
-    print("== sa_empty: 无 assessments -> payload.assessment 字段恒在（全 0）")
+    print("== sa_empty: 无验收条目才可省略 assessments -> payload.assessment 字段恒在（全 0）")
     db = new_db()
     rid, m, _ = _mk_claimed(db, "sa-empty", [{"title": "impl1", "ordinal": 1}])
     m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "t"},
