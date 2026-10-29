@@ -28,7 +28,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from ac_cases_k import _set_state
+from ac_cases_k import _set_state, _update
 from ac_lib import MCP, REPO_ROOT, cli, cli_ok, env_for, new_db, ok, query
 
 
@@ -586,4 +586,78 @@ def k_bg_heartbeat():
                 os.kill(proc_pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        stop()
+
+
+def _seed_review(db: Path, rid: str, seq: int, evidence) -> None:
+    """直插 review_request 事件种子（读路径测试不耦合状态机；evidence=None 模拟缺键，str 模拟非 dict）。"""
+    payload = ({"evidence": evidence, "summary_line": f"seed r{seq}"}
+               if evidence is not None else {"summary_line": "no evidence key"})
+    _update(db,
+            "INSERT INTO events (id, requirement_id, kind, severity, title, payload, actor_surface, seq, ts) "
+            "VALUES (?, ?, 'review_request', 'attention', 'review requested', ?, 'mcp', ?, '2026-10-28 00:00:00')",
+            (f"{seq:032x}", rid, json.dumps(payload), seq))
+
+
+def k_history_assembly():
+    print("== B3-T2: A2 历轮交付物装配（续接稿装配 + 无历史零差异 + evidence 可选键形态 + 畸形 payload + 无存在检查）")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-dispatch-history-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    doc1 = ws / "deliverables" / "v1.md"
+    doc1.parent.mkdir()
+    doc1.write_text("v1", encoding="utf-8")
+    rid = cli_ok(db, "new", "--title", "A2 装配需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    sid = f"ses_req_{rid[:8]}"
+    # 六种轮次形态（BCD §5 E1/E3 + P-imp2）：9001=doc+note；9002=仅 note；9003=doc/note 皆缺（跳过）；
+    # 9004=缺 evidence 键（跳过）；9005=doc 指不存在路径（字面输出，无存在检查）；9006=evidence 非 dict（跳过不崩）
+    _seed_review(db, rid, 9001, {"document": str(doc1), "note": "遗留：X 待核", "test_summary": "s1"})
+    _seed_review(db, rid, 9002, {"note": "第 2 轮无交付物路径", "test_summary": "s2"})
+    _seed_review(db, rid, 9003, {"test_summary": "s3"})
+    _seed_review(db, rid, 9004, None)
+    _seed_review(db, rid, 9005, {"document": "/nonexistent/b3-nonexistent.md", "test_summary": "s5"})
+    _seed_review(db, rid, 9006, "oops-not-a-dict")
+    _set_state(db, rid, "REOPEN")
+    srv, stop = _mock_start({"get_code": 404})
+    srv._exists[sid] = True  # 预置 session 存在 -> 复用路径（续接稿），BCD Q2 主命中场景
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    try:
+        res = cli(db, "dispatch", "--requirement-id", rid,
+                  "--model", "ks-cp/glm-5-3-flash", "--budget", "10m", extra=extra)
+        ok("REOPEN 复派 rc=0", res.returncode == 0, f"rc={res.returncode} stderr={res.stderr}")
+        prompts = [r for r in srv._log
+                   if r["method"] == "POST" and r["path"] == f"/api/session/{sid}/prompt"]
+        ok("续接稿已投递", len(prompts) == 1, f"n={len(prompts)}")
+        if prompts:
+            t = json.loads(prompts[0]["body"])["text"]
+            ok("续接稿含历史节标题（BCD E1 字面）",
+               "## 历轮交付物（本需求历史 request_review，seq 升序）" in t, t)
+            ok("轮 1 交付物字面", f"- 第 1 轮（seq 9001）: 交付物 {doc1}" in t, t)
+            ok("轮 1 note 字面", "- note: 遗留：X 待核" in t, t)
+            ok("轮 2 无 doc 只出 note 行（BCD E3）",
+               "- 第 2 轮（seq 9002）" not in t and "- note: 第 2 轮无交付物路径" in t, t)
+            ok("轮 3 doc/note 皆缺跳过", "seq 9003" not in t, t)
+            ok("缺 evidence 键跳过不崩", "seq 9004" not in t, t)
+            ok("不存在路径按字面输出且无警示（P-imp2 无存在检查）",
+               "- 第 3 轮（seq 9005）: 交付物 /nonexistent/b3-nonexistent.md" in t and "警示" not in t, t)
+            ok("非 dict evidence 跳过不崩", "seq 9006" not in t, t)
+            ok("轮次序升序", t.index("seq 9001") < t.index("- note: 第 2 轮无交付物路径")
+               < t.index("seq 9005"), "")
+            ok("既有摘要行不变（回归）", "- state: REOPEN" in t and "子任务进度: 0/0" in t, t)
+        # 无历史需求 -> 新建派发稿零差异（BCD S2/E2）
+        rid2 = cli_ok(db, "new", "--title", "A2 无历史需求",
+                      "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+        res2 = cli(db, "dispatch", "--requirement-id", rid2,
+                   "--model", "ks-cp/glm-5-3-flash", "--budget", "10m", extra=extra)
+        ok("无历史 dispatch rc=0", res2.returncode == 0, f"rc={res2.returncode} stderr={res2.stderr}")
+        p2 = [r for r in srv._log
+              if r["method"] == "POST" and r["path"] == f"/api/session/ses_req_{rid2[:8]}/prompt"]
+        ok("新需求派发稿已投递", len(p2) == 1, f"n={len(p2)}")
+        if p2:
+            t2 = json.loads(p2[0]["body"])["text"]
+            ok("无历史无历史节（无占位，BCD I2）", "历轮交付物" not in t2, t2)
+            ok("五要素逐字回归", "## 任务指针" in t2 and "## 交付规格" in t2 and "## 红线提醒" in t2, t2)
+    finally:
         stop()
