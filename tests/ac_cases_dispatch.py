@@ -875,3 +875,47 @@ def k_history_assembly():
                and t3.index("## 交付规格") < t3.index("## 历轮交付物") < t3.index("## 红线提醒"), t3)
     finally:
         stop()
+
+
+def k_dispatch_placement():
+    print("== 落点纪律: 交付规格带环境卡产物落点 + 交付物永久位置提醒；无落点给跨项目指路")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-dispatch-place-"))
+    db = new_db()
+    ws1, env1 = _workspace(tmp)
+    env1.write_text(
+        "## 环境卡\n"
+        f"- workspace: {ws1}；产物落点: docs/（文档）/ tests/（用例）；临时产物: /home/x/tmp/\n"
+        "- 红线: 禁推 main\n", encoding="utf-8")
+    ws2 = tmp / "ws2"
+    ws2.mkdir()
+    env2 = ws2 / "AGENTS.md"
+    env2.write_text(f"## 环境卡\n- workspace: {ws2}\n- 红线: 禁推 main\n", encoding="utf-8")
+    rids = [cli_ok(db, "new", "--title", t, "--description", f"workspace={w} env-card={e}")
+            ["requirement_id"]
+            for t, w, e in (("落点声明需求", ws1, env1), ("落点缺失需求", ws2, env2))]
+    srv, stop = _mock_start({})
+    extra = _dispatch_env(db, srv.server_address[1])
+    try:
+        for rid in rids:
+            res = cli(db, "dispatch", "--requirement-id", rid, extra=extra)
+            ok(f"dispatch rc=0 ({rid[:8]})", res.returncode == 0,
+               f"rc={res.returncode} stderr={res.stderr}")
+
+        def prompt_of(rid):
+            path = f"/api/session/ses_req_{rid[:8]}/prompt"
+            rows = [r for r in srv._log if r["method"] == "POST" and r["path"] == path]
+            return json.loads(rows[0]["body"])["text"] if rows else None
+
+        t1, t2 = prompt_of(rids[0]), prompt_of(rids[1])
+        ok("两稿均投递", t1 is not None and t2 is not None, f"{t1 is not None}/{t2 is not None}")
+        if t1:
+            ok("产物落点＝环境卡字段原文（分号分隔字段可抽取）",
+               "- 产物落点: docs/（文档）/ tests/（用例）" in t1, t1)
+            ok("交付物永久位置提醒在规格内（禁 tmp 作唯一副本）",
+               "禁作唯一副本" in t1 and t1.index("## 交付规格") < t1.index("禁作唯一副本"), t1)
+        if t2:
+            ok("无落点 -> 指路跨项目归属与问人（不静默省略）",
+               "- 产物落点: 环境卡未声明" in t2 and "问人" in t2
+               and "禁在本仓新建目录" in t2, t2)
+    finally:
+        stop()

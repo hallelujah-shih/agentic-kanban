@@ -242,8 +242,28 @@ def _redline_text(env_card: str) -> str | None:
     return None
 
 
+def _placement_text(env_card: str) -> str | None:
+    """环境卡「产物落点」字段原文（只抽字面量，不解释）。
+
+    环境卡把落点写在 workspace 行的分号分隔字段里，不是行首键；按 ;/； 切段后
+    找以「产物落点」开头的段。
+    """
+    try:
+        text = Path(env_card).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        for seg in re.split(r"[;；]", line):
+            s = seg.strip().lstrip("-* ").strip()
+            if s.startswith("产物落点") and (":" in s or "：" in s):
+                sep = ":" if ":" in s else "："
+                return s.split(sep, 1)[-1].strip() or None
+    return None
+
+
 def _build_prompt(*, req, rid: str, ws: str | None, env_card: str | None,
-                  redline: str | None, budget_raw: str | None,
+                  redline: str | None, placement: str | None,
+                  budget_raw: str | None,
                   warnings: list[str], history: list[str]) -> str:
     """新建派发稿（五要素 + 预算 + 警示 + 有历史时的历轮交付物）：任务指针/协议入口/环境卡路径/交付规格/历轮交付物（仅当有历史）/红线提醒。"""
     lines = ["【派发稿】你是本需求的 worker 会话，按看板协议执行。", "", "## 任务指针",
@@ -264,6 +284,12 @@ def _build_prompt(*, req, rid: str, ws: str | None, env_card: str | None,
             lines.append(f"- {item}")
     else:
         lines.append("无需求级锚，拆出子任务验收=事实锚")
+    if placement:
+        lines.append(f"- 产物落点: {placement}")
+    else:
+        lines.append("- 产物落点: 环境卡未声明（按协议「工作区就绪」定落点："
+                     "跨项目产物落所属项目仓，禁在本仓新建目录；无归属问人）")
+    lines.append("- 交付物须落永久位置并用 ls 核存在（会话目录/批次 tmp 不是交付物落点，禁作唯一副本）")
     if history:
         lines += ["", "## 历轮交付物（本需求历史 request_review，seq 升序）"]
         lines += history
@@ -386,6 +412,7 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
                             f"dispatch 仅支持 OPEN/REOPEN 需求，当前 state {req.state}")
     ws, env_card, warnings = _parse_pointers(req.description, directory)
     redline = _redline_text(env_card) if env_card else None
+    placement = _placement_text(env_card) if env_card else None
     if env_card and redline is None:
         warnings.append("环境卡红线节缺失（worker 就绪门自核红线）")
     elif env_card is None:
@@ -423,7 +450,8 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
             prompt = _build_continuation(req, rid, history)
         else:
             prompt = _build_prompt(req=req, rid=rid, ws=ws, env_card=env_card,
-                                   redline=redline, budget_raw=budget, warnings=warnings,
+                                   redline=redline, placement=placement,
+                                   budget_raw=budget, warnings=warnings,
                                    history=history)
         code, _ = _api(svc, "POST", f"/api/session/{sid}/prompt", {"text": prompt})
         prompt_code = code
