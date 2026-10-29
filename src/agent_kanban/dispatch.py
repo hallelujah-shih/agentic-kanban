@@ -245,7 +245,7 @@ def _redline_text(env_card: str) -> str | None:
 def _build_prompt(*, req, rid: str, ws: str | None, env_card: str | None,
                   redline: str | None, budget_raw: str | None,
                   warnings: list[str], history: list[str]) -> str:
-    """新建派发稿（五要素 + 预算 + 警示）：任务指针/协议入口/环境卡路径/交付规格/红线提醒。"""
+    """新建派发稿（五要素 + 预算 + 警示 + 有历史时的历轮交付物）：任务指针/协议入口/环境卡路径/交付规格/历轮交付物（仅当有历史）/红线提醒。"""
     lines = ["【派发稿】你是本需求的 worker 会话，按看板协议执行。", "", "## 任务指针",
              f"- 需求 id: {rid}", f"- 标题: {req.title}"]
     ptr_lines = [l.strip() for l in (req.description or "").splitlines()
@@ -321,7 +321,7 @@ def _history_digest(rid: str) -> list[str]:
 
 
 def _build_continuation(req, rid: str, history: list[str]) -> str:
-    """续接稿（GET 200 复用路径，P-imp4）：会话已存在，继续当前需求 + 最近板面状态摘要。"""
+    """续接稿（GET 200 复用路径，P-imp4）：会话已存在，继续当前需求 + 最近板面状态摘要 + 有历史时的历轮交付物。"""
     done, total = _subtask_progress(rid)
     awaiting = req.awaiting_human
     if isinstance(awaiting, dict) and awaiting:
@@ -390,6 +390,7 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
         warnings.append("环境卡红线节缺失（worker 就绪门自核红线）")
     elif env_card is None:
         warnings.append("无环境卡路径，无红线提醒可给")
+    history = _history_digest(rid)  # 板面只读，先于一切 HTTP（读失败不留半建会话）
     svc = discover_service()
     sid = f"ses_req_{rid[:8]}"
     created = False
@@ -416,7 +417,6 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
             if code != 200:
                 raise DispatchError("http_error", f"session 创建返回非预期状态 {code}")
             created = True
-        history = _history_digest(rid)
         # 200：session 已存在 -> 复用投续接稿（P-imp4：同 id 不新 create）；
         # 404->创建：投完整五要素新建稿
         if reused:

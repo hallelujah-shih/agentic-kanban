@@ -589,18 +589,18 @@ def k_bg_heartbeat():
         stop()
 
 
-def _seed_review(db: Path, rid: str, seq: int, evidence) -> None:
-    """直插 review_request 事件种子（读路径测试不耦合状态机；evidence=None 模拟缺键，str 模拟非 dict）。"""
+def _seed_review(db: Path, rid: str, seq: int, evidence, kind: str = "review_request") -> None:
+    """直插事件种子（读路径测试不耦合状态机；evidence=None 模拟缺键，str 模拟非 dict）。"""
     payload = ({"evidence": evidence, "summary_line": f"seed r{seq}"}
                if evidence is not None else {"summary_line": "no evidence key"})
     _update(db,
             "INSERT INTO events (id, requirement_id, kind, severity, title, payload, actor_surface, seq, ts) "
-            "VALUES (?, ?, 'review_request', 'attention', 'review requested', ?, 'mcp', ?, '2026-10-28 00:00:00')",
-            (f"{seq:032x}", rid, json.dumps(payload), seq))
+            "VALUES (?, ?, ?, 'attention', 'seeded', ?, 'mcp', ?, '2026-10-28 00:00:00')",
+            (f"{seq:032x}", rid, kind, json.dumps(payload), seq))
 
 
 def k_history_assembly():
-    print("== B3-T2: A2 历轮交付物装配（续接稿装配 + 无历史零差异 + evidence 可选键形态 + 畸形 payload + 无存在检查）")
+    print("== B3-T2: A2 历轮交付物装配（续接稿/派发稿双点 + 无历史零差异 + evidence 可选键形态 + 畸形 payload + 无存在检查）")
     tmp = Path(tempfile.mkdtemp(prefix="ak-dispatch-history-"))
     db = new_db()
     ws, env_card = _workspace(tmp)
@@ -611,13 +611,15 @@ def k_history_assembly():
                  "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
     sid = f"ses_req_{rid[:8]}"
     # 六种轮次形态（BCD §5 E1/E3 + P-imp2）：9001=doc+note；9002=仅 note；9003=doc/note 皆缺（跳过）；
-    # 9004=缺 evidence 键（跳过）；9005=doc 指不存在路径（字面输出，无存在检查）；9006=evidence 非 dict（跳过不崩）
+    # 9004=缺 evidence 键（跳过）；9005=doc 指不存在路径（字面输出，无存在检查）；9006=evidence 非 dict（跳过不崩）；
+    # 9007=非 review_request 事件但含 evidence（跳过）。插入序 != seq 序：9005 先入（删 order_by 必乱序）。
+    _seed_review(db, rid, 9005, {"document": "/nonexistent/b3-nonexistent.md", "test_summary": "s5"})
     _seed_review(db, rid, 9001, {"document": str(doc1), "note": "遗留：X 待核", "test_summary": "s1"})
     _seed_review(db, rid, 9002, {"note": "第 2 轮无交付物路径", "test_summary": "s2"})
     _seed_review(db, rid, 9003, {"test_summary": "s3"})
     _seed_review(db, rid, 9004, None)
-    _seed_review(db, rid, 9005, {"document": "/nonexistent/b3-nonexistent.md", "test_summary": "s5"})
     _seed_review(db, rid, 9006, "oops-not-a-dict")
+    _seed_review(db, rid, 9007, {"document": "/note-event-should-not-appear.md"}, kind="note")
     _set_state(db, rid, "REOPEN")
     srv, stop = _mock_start({"get_code": 404})
     srv._exists[sid] = True  # 预置 session 存在 -> 复用路径（续接稿），BCD Q2 主命中场景
@@ -643,8 +645,19 @@ def k_history_assembly():
             ok("不存在路径按字面输出且无警示（P-imp2 无存在检查）",
                "- 第 3 轮（seq 9005）: 交付物 /nonexistent/b3-nonexistent.md" in t and "警示" not in t, t)
             ok("非 dict evidence 跳过不崩", "seq 9006" not in t, t)
-            ok("轮次序升序", t.index("seq 9001") < t.index("- note: 第 2 轮无交付物路径")
-               < t.index("seq 9005"), "")
+            ok("非 review_request 事件不入节（历史源边界）",
+               "note-event-should-not-appear" not in t and "seq 9007" not in t, t)
+            anchors = ("seq 9001", "- note: 遗留：X 待核",
+                       "- note: 第 2 轮无交付物路径", "seq 9005")
+            present = all(a in t for a in anchors)
+            ok("升序锚点齐（先验存在，缺锚不裸抛）", present,
+               str([a for a in anchors if a not in t]))
+            ok("轮次序升序（插入序与 seq 序相反）",
+               present and t.index(anchors[0]) < t.index(anchors[1])
+               < t.index(anchors[2]) < t.index(anchors[3]), "")
+            ok("节位置在摘要之后（续接稿）",
+               "## 历轮交付物" in t
+               and t.index("## 历轮交付物") > t.index("- 子任务进度: 0/0"), "")
             ok("既有摘要行不变（回归）", "- state: REOPEN" in t and "子任务进度: 0/0" in t, t)
         # 无历史需求 -> 新建派发稿零差异（BCD S2/E2）
         rid2 = cli_ok(db, "new", "--title", "A2 无历史需求",
@@ -659,5 +672,21 @@ def k_history_assembly():
             t2 = json.loads(p2[0]["body"])["text"]
             ok("无历史无历史节（无占位，BCD I2）", "历轮交付物" not in t2, t2)
             ok("五要素逐字回归", "## 任务指针" in t2 and "## 交付规格" in t2 and "## 红线提醒" in t2, t2)
+        # 有历史但 session 不存在 -> create 分支仍装历史节，位置在交付规格与红线提醒之间
+        rid3 = cli_ok(db, "new", "--title", "A2 建链有历史需求",
+                      "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+        _seed_review(db, rid3, 9101, {"document": "/create-branch-v1.md"})
+        res3 = cli(db, "dispatch", "--requirement-id", rid3,
+                   "--model", "ks-cp/glm-5-3-flash", "--budget", "10m", extra=extra)
+        ok("建链有历史 dispatch rc=0", res3.returncode == 0, f"rc={res3.returncode} stderr={res3.stderr}")
+        p3 = [r for r in srv._log
+              if r["method"] == "POST" and r["path"] == f"/api/session/ses_req_{rid3[:8]}/prompt"]
+        ok("建链派发稿已投递", len(p3) == 1, f"n={len(p3)}")
+        if p3:
+            t3 = json.loads(p3[0]["body"])["text"]
+            ok("建链派发稿含历史节", "- 第 1 轮（seq 9101）: 交付物 /create-branch-v1.md" in t3, t3)
+            ok("历史节位于交付规格与红线提醒之间",
+               "## 历轮交付物" in t3 and "## 交付规格" in t3 and "## 红线提醒" in t3
+               and t3.index("## 交付规格") < t3.index("## 历轮交付物") < t3.index("## 红线提醒"), t3)
     finally:
         stop()

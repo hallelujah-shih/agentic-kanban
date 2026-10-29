@@ -98,10 +98,11 @@ S1/S2 为 ac 用例（mock opencode HTTP + 真 sqlite）；S3/S4/S5 为 T3 dogfo
 软约束（违反可容忍）：
 
 - I4：A1/A4/A6 为协议条款（提醒级），行为 oracle＝T3 dogfood 真机；无服务端门。违反后果：worker 未执行门 -> 退回 B2 现状（不失败，只退化）。
-- I5：历史节格式稳定（每轮：`第 N 轮（seq X）: 交付物 <path>` + 可选 note 行，seq 升序）——B4 展示面（轮次总结/状态卡）的机器可读锚。违反后果：B4 无可解析锚，重新约定。
+- I5：历史节格式稳定（每轮：`第 N 轮（seq X）: 交付物 <path>` + 可选 note 行，seq 升序；note-only 轮次按 E3 只有 note 行、不带轮次/seq 锚）——B4 展示面（轮次总结/状态卡）的机器可读锚，解析需容忍无锚 note 行。违反后果：B4 无可解析锚，重新约定。
 
 ## 修订记录
 
+- 2026-10-29 r4（T2 盲审折入，主循环）：§7 I5 补 note-only 轮次无 seq 锚（与 §5 E3 对齐，B4 解析容忍）；实现侧：`_history_digest` 前移至首个 HTTP 之前（读失败不留半建会话）、docstring 与 SKILL 派发稿结构枚举补历轮交付物节；用例侧：种子插入序与 seq 序相反（升序断言可证伪）+ 非 review_request 事件反例 + 建链（create 分支）有历史覆盖 + 锚点先验存在。
 - 2026-10-29 r3（T1 盲审折入，主循环）：§4 S1 条目格式对齐 §5 E1/§7 I5（`- 第 N 轮（seq X）: 交付物 <path>`）；§4 S5 蒸馏判据钉死为三形态（环境卡 + 板 note / 板 note 全文 / 板 note「无持久教训」），板 note 恒有。
 - 2026-10-28 r2（plan 盲审 r1 折入，主循环）：§1 补原话 c（设计门委托裁决原话，兼 dogfood release 受托 basis 引用锚）。
 - 2026-10-28 r1（主循环）：Q2 裁决变更——A2 装配点从「只加 _build_prompt」修正为「派发稿 + 续接稿双点装配（共享 _history_digest）」；实核依据＝REOPEN 复派走 _build_continuation（dispatch.py 主链 reused 分支），只改 _build_prompt 则返工轮永不命中历史节。传播面：§3 P-imp1、§4 S1、§5 E1/E5。

@@ -92,7 +92,7 @@ description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工�
 - **何时派**：复杂任务 / 长任务 / 跨目录。主循环只做单文件微调。一个需求 = 一个 worker，同需求不并行 worker。
 - **预检**：工作目录状态（脏/有并发会话 -> worktree 或等待）；环境卡存在（缺则按模板先建，或问人）；目标目录 kanban MCP 可达（全局注册为正典，见 mcp-config.md）。同需求历轮交付物由 dispatch 入口自动装配（「历轮交付物」节），env card 基线指针只用于跨需求（supersede）场景，不手抄同需求历史进 env card（双源漂移，BCD b3 D2）。
 - **模型继承**：传派发方当前模型（`opencode run -m <provider/model>`），不落回默认模型（默认套餐额度可能见底）。
-- **派发稿**：prompt = 任务指针（需求 id + 标题 + 指针行）+ 协议入口（本 SKILL 路径）+ 环境卡路径 + 交付规格 + 红线提醒 + 墙钟预算。不把任务全文塞进 prompt，也不让 worker 自由发挥。交付规格禁向 worker 承诺 release（release 是人面 op，agent 面不可达——dogfood 真机实锤）：完成收尾＝worker note 报完成 + 派发方人面代执行 release。
+- **派发稿**：prompt = 任务指针（需求 id + 标题 + 指针行）+ 协议入口（本 SKILL 路径）+ 环境卡路径 + 交付规格 + 历轮交付物（同需求有历史时；dispatch 入口自动装配）+ 红线提醒 + 墙钟预算。不把任务全文塞进 prompt，也不让 worker 自由发挥。交付规格禁向 worker 承诺 release（release 是人面 op，agent 面不可达——dogfood 真机实锤）：完成收尾＝worker note 报完成 + 派发方人面代执行 release。
 - **留痕**：dispatch 入口自动经人面 note 留痕（恢复锚：dispatch note 首行 = 分发 + 会话 id + 模型，结局在 body；resume note 首行 = 续跑 + 指令摘要 + 需求状态）；手工派发时仍 `add_record(kind=note)`：session id + 模型 + transcript 路径 + 预算——这条 note 即恢复锚（见「Session 与恢复」）。transcript 落批次产物目录（tee，禁 /tmp）。
 - **验收**：worker 的 `request_review` 是回执；派发方按板面三问（对照预期/偏离/更好方案）自答核交付，不代 worker 交接。
 - **循环**：REOPEN -> `agent-kanban resume --requirement-id <需求 id 或 ses_req_<8hex>> "返工意见..." [--model <provider/model>]`（同会话带上下文）；手工 `opencode run -s <ses>` 仍可用（换模型 = `-s` + `-m`）。
