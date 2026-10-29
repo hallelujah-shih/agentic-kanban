@@ -7,7 +7,7 @@ status` 末行（subprocess，10s）；鉴权＝env AGENT_KANBAN_OPENCODE_AUTH=n
 stdout/错误消息（URL 可回显）。
 --bg（T4，D1 Popen re-entry）：prompt 投递 + 分发 note 后 spawn 独立 bg 子进程
 跑心跳续租（run_bg_loop 单一实现），父进程立即返回；终态判据＝GET 404 或
-outcome ∈ {succeeded, failed}，终态 note 后退出。
+outcome ∈ {succeeded, failed} 或 S9 认领绑定判据（认领变更/需求释放），终态 note 后退出。
 """
 
 from __future__ import annotations
@@ -517,22 +517,24 @@ def _spawn_bg(rid: str) -> subprocess.Popen:
 
 
 def _bg_note_seq(rid: str) -> int | None:
-    """分发 note seq（DB 读最新 note 事件）：renew delegated basis 的锚。"""
+    """分发 note seq（renew delegated basis 的锚，I8）：只锚 content 前缀「分发：」的
+    最新 note——worker 认领后写的接单确认等 note 不夺锚；无分发 note -> None（basis 记缺失）。"""
 
     async def _read(session):
         return await session.scalar(
             select(Event.seq).where(Event.requirement_id == rid, Event.kind == "note")
+            .where(Event.content.like("分发：%"))
             .order_by(Event.seq.desc()).limit(1))
 
     return asyncio.run(run_op(get_read_session_factory(), _read, is_write=False))
 
 
-def _bg_has_active_claim(rid: str) -> bool:
-    """pre-claim 窗口判定：session 活但无 active claim -> 跳过 renew。"""
+def _bg_active_claim_id(rid: str) -> str | None:
+    """当前 active claim id（S9 认领绑定 + pre-claim 窗口判定；无 active claim -> None）。"""
 
     async def _read(session):
-        return (await session.scalar(
-            select(Claim.id).where(Claim.requirement_id == rid, Claim.ended_at.is_(None)))) is not None
+        return await session.scalar(
+            select(Claim.id).where(Claim.requirement_id == rid, Claim.ended_at.is_(None)))
 
     return asyncio.run(run_op(get_read_session_factory(), _read, is_write=False))
 
@@ -568,10 +570,12 @@ def _bg_final_note(*, title: str, sid: str, elapsed: float, renews: int,
 def run_bg_loop(requirement_id: str) -> dict:
     """bg 心跳循环（T4；子进程经 cli.py dispatch --_bg-loop 进入，父/子共用本单一实现）：
     每周期探测 GET /api/session/{sid}（周期＝_heartbeat_sec，测试注入 1s）；
-    存活且 claim active -> renew（delegated 受托痕）；pre-claim 窗口 -> 跳过，不报错、
-    不写板事件（计跳过次数）；终态判据（钉死）：GET 404（session 消失）或 GET 200 且
-    outcome ∈ {succeeded, failed} -> 终态 note 后退出；探测失败（服务不可达）-> 终态
-    note（原因=服务不可达）后退出（S8：不无限循环、不静默）。
+    存活且 claim active -> renew（delegated 受托痕）；pre-claim 窗口（尚未绑定 claim）->
+    跳过，不报错、不写板事件（计跳过次数）；终态判据（钉死）：GET 404（session 消失）或
+    GET 200 且 outcome ∈ {succeeded, failed} 或 S9 认领绑定判据 -> 终态 note 后退出；
+    探测失败（服务不可达）-> 终态 note（原因=服务不可达）后退出（S8：不无限循环、不静默）。
+    S9 认领绑定（G28/I8）：启动后首次观测到的 active claim 即绑定；绑定后 active claim
+    变更（认领变更）或消失（需求释放）-> 终态 note 记原因后退出，不改绑、不续租新认领。
     已知局限（BCD Q1 裁决接受）：bg 进程随派发方终端死则心跳停。"""
     svc = discover_service()
     req = _load_requirement(requirement_id)
@@ -583,6 +587,7 @@ def run_bg_loop(requirement_id: str) -> dict:
     renews = 0
     pre_claim_skips = 0
     reason = ""
+    bound_claim: str | None = None
     while True:
         try:
             code, body = _api(svc, "GET", f"/api/session/{sid}", timeout=10)
@@ -602,15 +607,24 @@ def run_bg_loop(requirement_id: str) -> dict:
                 reason = f"session 探测返回非预期状态 {code}"
         if reason:
             break
-        if _bg_has_active_claim(rid):
+        claim_id = _bg_active_claim_id(rid)
+        if claim_id is None:
+            if bound_claim is not None:
+                reason = "需求释放（绑定认领已结束）"
+                break
+            pre_claim_skips += 1
+        elif bound_claim is not None and claim_id != bound_claim:
+            # S9：认领变更——旧 watcher 不改绑、不续租新 claim，记原因退场
+            reason = "认领变更（active claim 已换，旧 watcher 不改绑）"
+            break
+        else:
+            bound_claim = bound_claim or claim_id  # 首次观测到 active claim 即绑定
             try:
                 _bg_renew(rid, sid, note_seq)
                 renews += 1
             except BusinessError:
                 # claim 刚结束/租约过期（周期间隙）：不报错，下周期再判
                 pass
-        else:
-            pre_claim_skips += 1
         time.sleep(period)
     note = _bg_final_note(title=req.title, sid=sid, elapsed=time.monotonic() - start,
                           renews=renews, pre_claim_skips=pre_claim_skips, reason=reason)
