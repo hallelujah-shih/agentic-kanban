@@ -70,7 +70,7 @@ S1/S2 为 ac 用例（mock opencode HTTP + 真 sqlite）；S3/S4/S5 为 T3 dogfo
 - E2（代码）：新需求 dispatch -> 派发稿无「历轮交付物」字样；五要素行逐字回归 B2 断言。
 - E3（代码）：evidence 无 document 只有 note -> 该轮条目只有 note 行；evidence 全缺（invalid 数据）-> 该轮跳过，不报错。
 - E4（dogfood）：模糊需求（故意缺 1 个阻塞约束 + 1 个可假设约束）-> worker 接单后 1 分钟内板上出现接单确认（含对两个缺口的分类处置：阻塞->mark_blocked 或可假设->记假设继续）；若阻塞缺口成立则任务 BLOCKED，不执行子任务。
-- E5（dogfood）：对 E4 需求 resume 返工一轮 -> 续接稿历史节出现第 1 轮交付物路径 -> worker 续接而非重跑（交付物为增量修订，非全新文档）。
+- E5（dogfood）：对 E4 需求人面 `release`（CLAIMED -> OPEN，携返工 reason）后 `dispatch` 复派 -> session 已存在走续接稿 -> 续接稿历史节出现第 1 轮交付物路径 -> worker 续接而非重跑（交付物为增量修订，非全新文档）。注：`resume` 是另一入口（投指令原文，不装配历史节，不进本场景）。
 
 **客户期望 vs 系统行为差异表**：
 
