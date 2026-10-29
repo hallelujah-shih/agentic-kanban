@@ -80,6 +80,8 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   - 测试种子插 events 表：id 是全局主键（跨需求也须唯一，用 uuid），seq 才是每需求维度；_seed_review 的 f"{seq:032x}" 形态只在 seq 全局唯一时安全
   - request_review 逐项自评 assessments 正典形态＝[{subtask_id, items:[{item 逐字（按子任务验收文本精确匹配）, state, deviation_reason（not_met/deviated 必填）}]}]；形态错/漏项/重复/引用已 abandon 子任务/超 8KB -> invalid_record（B3.2 起服务端门，消息含可用清单）；**不传 assessments 不构成豁免**；交接前 get_task_detail 核子任务 acceptance 落 state
   - 宿主里跑着的 kanban MCP server 在进程启动时快照代码（`opencode.json` 指向主仓 src）：合并后需重启 MCP server 新逻辑才生效；worker 在 worktree 里交接走的是主仓代码（旧），因此新契约不会在它自己那次交接上生效（B3.2 实测：payload 无 assessment 键）
+  - 落点纪律：跨项目/跨仓产物禁落本仓（含 `docs/`）。调研类先按宿主分区找既有项目（`~/test` 自研与试验、`~/projects` 线上工程与 bundle、`~/src` 开源镜像），同类产物押在哪就押在哪；无归属先问人，禁自决新建目录（2026-10-29 实锤：gmail 调研落仓根 `research/`、browser-login 调研落本仓 `docs/research/`，两处均已迁出）
+  - 交付物必须落永久位置：批次 tmp（`/home/shih/.tmp-ak-m16/`）会被清理，禁作唯一副本；`request_review` 前 `ls` 核路径存在（B2 v2 交付物随 tmp 工作区丢失实锤）
   - models 的 UUIDHex＝sa.Uuid(as_uuid=False)：ORM 读回 36-char 带连字符，写路径/MCP 返回/事件 claim_id 均 32-hex——跨面比对先 services.ids.norm_id 归一
   - worktree 内 docker smoke 禁裸 `docker compose up`（compose 挂生产 ~/.agent-kanban:/data 且撞生产 8765 端口，restart 策略会crash-loop）：用 `docker run --rm --network host -e AGENT_KANBAN_PORT=<空闲端口> -v <scratch>:/data <image>` + curl healthz 后即 rm
 
