@@ -8,7 +8,7 @@
 
 ## tier / 入口
 
-- 最高 tier（本地，合并门槛）: 全量 run_ac **835/835**（断言数；B3.1 合入后，历史批次的 816/696/521 等数字为当时基线，勿再引用）+ e2e **15/15** + docker 双轨 build + healthz 200（tier 组成的活口径以 AGENTS.md tier 2/5 为准）
+- 最高 tier（本地，合并门槛）: 全量 run_ac **859/859**（断言数；B3.2 合入后，历史批次的 835/816/696/521 等数字为当时基线，勿再引用）+ e2e **15/15** + docker 双轨 build + healthz 200（tier 组成的活口径以 AGENTS.md tier 2/5 为准）
   - 默认轨（aliyun frozen）本地绿（t1/g4.log + t1/smoke-probes.log）；pypi 轨容器段办公网环境面阻塞，闭合点 = GH 首跑 docker job（见已知局限）
   - G12 批次红绿索引（2026-10-26，套件基线 514->521，k_g12 增例 N=7）: 红 = R1 泄漏复现 2 断言皆红（r1-red.log 0/2）/ 绿 = 521/521（g2-full.log）；产物目录 /home/shih/.tmp-ak-m16/g12/t1/；生产生效窗 = merge 回 main + 生产容器下次重启后启动自愈自动回填，此前生产行为不变（存量行数未知，自愈幂等 0 行也安全）
 - CI 门槛: PR 三 job（test/e2e/docker）真实 GH run 全绿 + 分支保护必需 check
@@ -58,7 +58,7 @@ PY
 for f in "$L"/ak-board-*.js "$L"/ak-detail-*.js; do node --check "$f"; done   # 每壳 1 块，双 PASS
 
 # 6) 全量套件（ci.yml:53 同源；S1 加 TMPDIR = /tmp usrquota 绕行）
-TMPDIR=$L $L/venv-pypi/bin/python -u tests/run_ac.py   # 预期 "== 结果: <当前基线>/<当前基线> PASS"（~6 min；当前基线看 AGENTS.md tier 2，B3.1 后＝835；816/696 为历史值）
+TMPDIR=$L $L/venv-pypi/bin/python -u tests/run_ac.py   # 预期 "== 结果: <当前基线>/<当前基线> PASS"（~6 min；当前基线看 AGENTS.md tier 2，B3.2 后＝859；835/816/696 为历史值）
 ```
 
 ### b) e2e（证据 t3/）

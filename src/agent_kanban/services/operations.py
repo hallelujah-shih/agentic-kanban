@@ -33,6 +33,11 @@ SEVERITIES = {"info", "attention", "critical"}
 SUBTASK_STATES = {"todo", "in_progress", "done", "blocked", "abandoned"}
 MILESTONE_STATES = {"planned", "in_progress", "achieved"}
 EVIDENCE_FIELDS = ("pr_url", "commit_range", "test_summary")
+ASSESSMENT_STATES = {"met", "not_met", "deviated"}
+ASSESSMENT_FORM_EXAMPLE = (
+    '[{"subtask_id": "<子任务 id>", "items": [{"item": "<该子任务验收文本逐字>", '
+    '"state": "met"|"not_met"|"deviated", "deviation_reason": "<仅 not_met/deviated 需要>"}]}]'
+)
 MAX_PAYLOAD_BYTES = 8192  # PRD §6：单事件 payload < 8 KB（写时强制）
 
 
@@ -806,7 +811,11 @@ async def request_review(
             'e.g. summary_line="重做了记录管线，先看事件流"',
             requirement_id,
         )
-    await _persist_self_assessment(session, requirement_id, assessments or [], now)
+    subtasks = (await session.scalars(
+        select(Subtask).where(Subtask.requirement_id == requirement_id).order_by(Subtask.ordinal)
+    )).all()
+    validated = _validate_assessments(requirement_id, assessments, subtasks)
+    assessment = _persist_self_assessment(validated, subtasks, now)
     req.awaiting_human = {
         "reason": "review requested",
         "evidence": evidence,
@@ -817,47 +826,146 @@ async def request_review(
     await add_event(
         session, requirement_id=requirement_id, kind="review_request", severity="attention",
         title="review requested",
-        payload={"evidence": evidence, "summary_line": str(summary_line).strip()},
+        payload={"evidence": evidence, "summary_line": str(summary_line).strip(),
+                 "assessment": assessment},
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
     await lease_svc.touch_activity(session, requirement_id, now)
     return {"requirement_id": requirement_id, "awaiting_human": req.awaiting_human}
 
 
-async def _persist_self_assessment(session: AsyncSession, requirement_id: str, assessments: list, now: datetime) -> None:
-    """验收自评持久化到 subtasks.acceptance[].state（按 item 文本精确匹配）。"""
-    for asm in assessments:
-        if not isinstance(asm, dict):
-            continue
-        sid = asm.get("subtask_id")
-        if not sid:
-            continue
-        st = await session.scalar(
-            select(Subtask).where(Subtask.id == sid, Subtask.requirement_id == requirement_id)
+def _assessment_available(subtasks: list) -> str:
+    """本需求可用 subtask_id 与验收条目清单（错误消息自纠用，BCD b3.2 S11）。"""
+    lines = []
+    for st in subtasks:
+        items = [str(a.get("item")) for a in (st.acceptance or []) if isinstance(a, dict)]
+        lines.append(f"subtask_id={norm_id(st.id)} (state={st.state}): acceptance={items}")
+    return "\n".join(lines) if lines else "（本需求无子任务）"
+
+
+def _validate_assessments(requirement_id: str, assessments: Any, subtasks: list) -> list[dict]:
+    """形态+归属+覆盖全量校验（BCD b3.2 I6/I7/I8）：任何一项不合法整单拒写、零写入。"""
+    if assessments is None:
+        return []
+    if not isinstance(assessments, list):
+        raise BusinessError(
+            "invalid_record",
+            f"assessments 必须是列表；正典形态：{ASSESSMENT_FORM_EXAMPLE}\n"
+            f"本需求可用：\n{_assessment_available(subtasks)}",
+            requirement_id,
         )
-        if st is None:
+    by_id = {norm_id(st.id): st for st in subtasks}
+    out: list[dict] = []
+    for i, asm in enumerate(assessments):
+        loc = f"assessments[{i}]"
+        if not isinstance(asm, dict) or not asm.get("subtask_id"):
+            raise BusinessError(
+                "invalid_record",
+                f"{loc} 缺 subtask_id 或形态不是对象；正典形态：{ASSESSMENT_FORM_EXAMPLE}\n"
+                f"本需求可用：\n{_assessment_available(subtasks)}",
+                requirement_id,
+            )
+        sid = norm_id(asm["subtask_id"])
+        if sid not in by_id:
+            raise BusinessError(
+                "invalid_record",
+                f"{loc} subtask_id={asm['subtask_id']} 不属于本需求；"
+                f"本需求可用：\n{_assessment_available(subtasks)}",
+                requirement_id,
+            )
+        items = asm.get("items")
+        if not isinstance(items, list):
+            raise BusinessError(
+                "invalid_record",
+                f"{loc} 缺 items 列表；正典形态：{ASSESSMENT_FORM_EXAMPLE}\n"
+                f"本需求可用：\n{_assessment_available(subtasks)}",
+                requirement_id,
+            )
+        norm_items = []
+        for j, it in enumerate(items):
+            iloc = f"{loc}.items[{j}]"
+            if not isinstance(it, dict) or not str(it.get("item") or "").strip():
+                raise BusinessError(
+                    "invalid_record",
+                    f"{iloc} 缺 item（验收文本逐字）；正典形态：{ASSESSMENT_FORM_EXAMPLE}\n"
+                    f"本需求可用：\n{_assessment_available(subtasks)}",
+                    requirement_id,
+                )
+            state = it.get("state")
+            if state not in ASSESSMENT_STATES:
+                raise BusinessError(
+                    "invalid_record",
+                    f"{iloc} state={state!r} 非法，合法枚举：met/not_met/deviated；"
+                    f"正典形态：{ASSESSMENT_FORM_EXAMPLE}",
+                    requirement_id,
+                )
+            entry = {"item": str(it["item"]), "state": state}
+            if it.get("deviation_reason"):
+                entry["deviation_reason"] = str(it["deviation_reason"])
+            norm_items.append(entry)
+        out.append({"subtask": by_id[sid], "items": norm_items})
+    assessed = {(norm_id(v["subtask"].id), it["item"]) for v in out for it in v["items"]}
+    missing = []
+    for st in subtasks:
+        if st.state == "abandoned":
             continue
+        for a in (st.acceptance or []):
+            if isinstance(a, dict) and (norm_id(st.id), str(a.get("item"))) not in assessed:
+                missing.append(f"subtask_id={norm_id(st.id)} 条目「{a.get('item')}」")
+    if missing:
+        raise BusinessError(
+            "invalid_record",
+            "assessments 漏评：" + "；".join(missing) +
+            "。出路：① 补评漏项后重交；② 若该子任务不再需要，"
+            "先 update_subtask(state=abandoned) 将其移出覆盖分母。",
+            requirement_id,
+        )
+    return out
+
+
+def _persist_self_assessment(validated: list[dict], subtasks: list, now: datetime) -> dict:
+    """验收自评持久化到 subtasks.acceptance[].state（按 item 文本精确匹配）。
+
+    只在全量校验通过后调用（BCD b3.2 I8）；返回 payload.assessment 计数
+    {required, covered, added, received_subtasks, received_items}（§3）。
+    """
+    required = sum(
+        1 for st in subtasks if st.state != "abandoned"
+        for a in (st.acceptance or []) if isinstance(a, dict)
+    )
+    covered = 0
+    added = 0
+    for v in validated:
+        st = v["subtask"]
         current = list(st.acceptance or [])
         by_item = {str(a.get("item")): a for a in current if isinstance(a, dict)}
+        seen: set[str] = set()
         new_acc = []
-        for item in asm.get("items", []):
-            if not isinstance(item, dict):
-                continue
-            key = str(item.get("item"))
+        for item in v["items"]:
+            key = item["item"]
+            seen.add(key)
             if key in by_item:
                 entry = dict(by_item[key])
-                entry["state"] = item.get("state", "met")
+                entry["state"] = item["state"]
                 if item.get("deviation_reason"):
                     entry["deviation_reason"] = item["deviation_reason"]
-                new_acc.append(entry)
+                covered += 1
             else:
-                new_acc.append(dict(item))
-        covered = {str(i.get("item")) for i in asm.get("items", []) if isinstance(i, dict)}
+                entry = dict(item)
+                added += 1
+            new_acc.append(entry)
         for a in current:
-            if str(a.get("item")) not in covered:
+            if not (isinstance(a, dict) and str(a.get("item")) in seen):
                 new_acc.append(a)
         st.acceptance = new_acc
         st.updated_at = now
+    return {
+        "required": required,
+        "covered": covered,
+        "added": added,
+        "received_subtasks": len(validated),
+        "received_items": sum(len(v["items"]) for v in validated),
+    }
 
 
 async def mark_blocked(
