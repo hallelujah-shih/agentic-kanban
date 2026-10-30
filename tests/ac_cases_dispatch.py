@@ -90,7 +90,10 @@ class _MockOpencode(BaseHTTPRequestHandler):
             code = int(self.server._cfg.get("prompt_code", 200))
             self._send(code, b"{}")
         elif re.fullmatch(r"/api/session/[^/]+/model", path):
-            self._send(200, b"{}")
+            # 真服务 switchModel 返回 204 No Content（非 200）；对齐真实行为，禁镜像实现假设
+            code = int(self.server._cfg.get("model_code", 204))
+            self.server._model_codes.append(code)
+            self._send(code, b"" if code == 204 else b"{}")
         elif re.fullmatch(r"/api/experimental/session/[^/]+/wait", path):
             delay = float(self.server._cfg.get("wait_delay", 0))
             if delay:
@@ -122,6 +125,7 @@ def _mock_start(cfg: dict):
     srv._log = []
     srv._wait_completed = False
     srv._exists = {}  # T2 状态化：已收到 create POST 的 session id 集合
+    srv._model_codes = []  # switchModel 端点实际回码记录（断言 mock 对齐真实 204）
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, lambda: srv.shutdown()
 
@@ -917,5 +921,73 @@ def k_dispatch_placement():
             ok("无落点 -> 指路跨项目归属与问人（不静默省略）",
                "- 产物落点: 环境卡未声明" in t2 and "问人" in t2
                and "禁在本仓新建目录" in t2, t2)
+    finally:
+        stop()
+
+
+def k_resume_model_204():
+    print("== B2-T2: resume --model 换模（switchModel 返回 204 亦成功：先 switchModel 后 prompt 后 wait）")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-resume-model-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    rid = cli_ok(db, "new", "--title", "resume 换模需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    _set_state(db, rid, "REOPEN")
+    sid = f"ses_req_{rid[:8]}"
+    srv, stop = _mock_start({"get_code": 404})  # model 端点缺省 204（对齐真服务）
+    srv._exists[sid] = True
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    try:
+        res = cli(db, "resume", "--requirement-id", rid, "继续", "--model", "other/model", extra=extra)
+        ok("rc=0（switchModel 204 被接受）", res.returncode == 0,
+           f"rc={res.returncode} stderr={res.stderr}")
+        ok("mock switchModel 实际回码 204", srv._model_codes == [204],
+           f"codes={srv._model_codes}")
+        log = list(srv._log)
+        model_idx = [i for i, r in enumerate(log)
+                     if r["method"] == "POST" and r["path"] == f"/api/session/{sid}/model"]
+        prompt_idx = [i for i, r in enumerate(log)
+                      if r["method"] == "POST" and r["path"] == f"/api/session/{sid}/prompt"]
+        wait_idx = [i for i, r in enumerate(log)
+                    if r["method"] == "POST" and r["path"] == f"/api/experimental/session/{sid}/wait"]
+        ok("switchModel 后仍投递 prompt 并进入 wait",
+           model_idx and prompt_idx and wait_idx and model_idx[0] < prompt_idx[0] < wait_idx[0],
+           f"model={model_idx} prompt={prompt_idx} wait={wait_idx}")
+        ok("prompt 文本逐字＝继续", prompt_idx and json.loads(log[prompt_idx[0]]["body"])["text"] == "继续",
+           log[prompt_idx[0]]["body"] if prompt_idx else "")
+    finally:
+        stop()
+
+
+def k_resume_model_err():
+    print("== B2-T2: resume --model 换模失败（switchModel 4xx/5xx -> 非零退出 + 可操作错误，无 prompt/wait）")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-resume-modelerr-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    rid = cli_ok(db, "new", "--title", "resume 换模失败需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    _set_state(db, rid, "REOPEN")
+    sid = f"ses_req_{rid[:8]}"
+    srv, stop = _mock_start({"get_code": 404, "model_code": 500})
+    srv._exists[sid] = True
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    try:
+        for code in (400, 500):
+            srv._cfg["model_code"] = code
+            res = cli(db, "resume", "--requirement-id", rid, "继续", "--model", "other/model", extra=extra)
+            ok(f"switchModel {code} 非零退出", res.returncode != 0,
+               f"rc={res.returncode} stderr={res.stderr}")
+            ok(f"switchModel {code} 报可操作错误（失败语义 + 重试/服务版本指引）",
+               "switchModel 失败" in res.stderr and "--model" in res.stderr
+               and ("重试" in res.stderr or "服务版本" in res.stderr), res.stderr)
+        log = list(srv._log)
+        ok("换模失败不投 prompt",
+           not any(r["method"] == "POST" and "prompt" in r["path"] for r in log),
+           f"log={[r['path'] for r in log]}")
+        ok("换模失败不进 wait",
+           not any("wait" in r["path"] for r in log),
+           f"log={[r['path'] for r in log]}")
     finally:
         stop()

@@ -84,6 +84,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   - 交付物必须落永久位置：批次 tmp（`/home/shih/.tmp-ak-m16/`）会被清理，禁作唯一副本；`request_review` 前 `ls` 核路径存在（B2 v2 交付物随 tmp 工作区丢失实锤）
   - models 的 UUIDHex＝sa.Uuid(as_uuid=False)：ORM 读回 36-char 带连字符，写路径/MCP 返回/事件 claim_id 均 32-hex——跨面比对先 services.ids.norm_id 归一
   - worktree 内 docker smoke 禁裸 `docker compose up`（compose 挂生产 ~/.agent-kanban:/data 且撞生产 8765 端口，restart 策略会crash-loop）：用 `docker run --rm --network host -e AGENT_KANBAN_PORT=<空闲端口> -v <scratch>:/data <image>` + curl healthz 后即 rm
+  - opencode 服务 switchModel（POST /api/session/{id}/model）成功返回 204 No Content（非 200），wait 端点同为 204；mock 与状态判定须对齐真实回码，禁镜像实现假设（2026-10-30 实锤：resume --model 必失败，mock 回 200 掩盖此差异）
 
 ## 主循环纪律
 
