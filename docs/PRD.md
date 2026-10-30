@@ -146,10 +146,12 @@ OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN；终�
 
 ### 4.1 MCP 工具面
 
-transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **streamable-http**（挂载 FastAPI /mcp，ADR 0005；与 stdio 共用同一工具注册表；localhost 默认 + token 一致）。agent 面无 release 工具，写保护语义两 transport 相同。
+transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **streamable-http**（挂载 FastAPI /mcp，ADR 0005；与 stdio 共用同一工具注册表；localhost 默认 + token 一致）。agent 面无 release/approve/delete 工具，写保护语义两 transport 相同。
 
 | 工具 | 语义 | 前置 |
 |---|---|---|
+| new_requirement | 建需求（规划入口，与人面 `new` 同 service 层、参数对齐）：title + description（长文本免 argv 转义）+ source/source_ref + acceptance[]（字符串或 {item,id} 形态，id 缺省自动分配 a1..）；不写事件（规划通道，非执行证据） | 无（规划通道） |
+| set_expectations | 设置/修改验收锚（与人面 `set_expectations` 同 service 层、唯一入口语义两面一致）；删除被 subtask links_to 引用的锚项被拒（invalid_record） | 无（规划通道，无需未结束认领） |
 | list_tasks | status 过滤，获取未完成任务 | 读 |
 | get_task_detail | 需求 + 子任务树（含验收自评与覆盖对照）+ 里程碑 + 关键事件（最新优先，有界 200，输出 seq 升序；事件自带提纲——生成点写，无读侧语义挑选）+ 认领 + awaiting_human | 读 |
 | claim_task | 独占认领（单事务） | 无未结束认领 |
@@ -169,9 +171,9 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 
 ### 4.2 人面（CLI/REST，非 MCP）
 
-- `new`：创建需求（手工导入），可写入 acceptance 预期锚。
+- `new`：创建需求（手工导入），可写入 acceptance 预期锚。agent 面等价入口＝MCP `new_requirement`（4.1，同 service 层，长文本免 argv 转义）。
 - `new --source jira --source-ref <链接>`：以链接引用登记 Jira 需求（description 贴摘要，完整详情留在 Jira——单一事件源，由 agent 自行获取）；不做自动导入（AI 已能做好的事不重复造，ADR 0004）。
-- `set_expectations`：设置/修改 requirement.acceptance（唯一入口，agent 面无此工具）。锚项可修改文本；删除被 links_to 引用的锚项被拒绝（需 agent 先解除链接）。
+- `set_expectations`：设置/修改 requirement.acceptance（唯一入口；agent 面经 MCP `set_expectations` 同名可达（4.1），两面同 service 层语义一致）。锚项可修改文本；删除被 links_to 引用的锚项被拒绝（需 agent 先解除链接）。
 - `approve`：按**当前状态**确认（决策表见 3.4）——CLAIMED 上确认 DONE、BLOCKED 上解除阻塞；按 awaiting_human.kind 清除标记，写 approval/state_change 事件（同事务）。 `--on-behalf "<kind>:<basis>"` 受托代执行（kind ∈ statement|action，basis 一行指向依据；surface 服务端派生为 delegated，派生规则见 5.1）。`--requirement-id` 可省（零输入）：awaiting_human 恰 1 条直接执行 / 0 条提示「无待决项」零写 / 多条非交互通道拒绝（列候选含状态 + 提示携 --requirement-id；tty 编号列选，无效选择零写）；`--on-behalf` 结构非法 -> invalid_record（先于候选读取拒绝）。
 - `release`：释放认领（唯一释放路径，人面）；要求存在未结束认领，无则 `not_found`；写 release 事件 + 清除 awaiting_human。`release --all-stale`：批量释放全部 STALE 认领（仅覆盖 CLAIMED 需求；逐项执行单释放语义，部分失败逐项返回，非全有全无）。 `--on-behalf` 与 `--requirement-id` 可省语义同 approve；零输入仍须 `--reason`（语义字段不免输，先于候选读取拒绝）。
 - `renew`：续租（对已过期租约返回 `lease_expired`）。

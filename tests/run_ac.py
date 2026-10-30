@@ -25,6 +25,7 @@ from ac_cases_dispatch import (k_bg_claim_binding, k_bg_heartbeat, k_bg_note_bas
                                k_bg_renew_binding, k_dispatch_authfail, k_dispatch_badstate,
                                k_dispatch_failnote, k_dispatch_main, k_dispatch_reuse,
                                k_dispatch_placement, k_dispatch_timeout, k_history_assembly,
+                               k_mcp_precheck_flake_recovers, k_mcp_precheck_unreachable_rejects,
                                k_resume, k_resume_errcase, k_resume_model_204,
                                k_resume_model_err)
 from ac_cases_k import k_state, k_archive, k_delete, k_web, k_g12
@@ -41,6 +42,7 @@ from ac_cases_o import (sa_added, sa_blankacc, sa_coverage, sa_dup, sa_empty,
                         sa_foreign, sa_form, sa_happy, sa_omit, sa_reason,
                         sa_size, sa_stracc)
 from ac_cases_p import p3_skill, p3_skill_links, p3_skill_text
+from ac_cases_q import q_jira_source, q_no_argv_escape, q_planning_entry, q_set_expectations_error
 
 TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
@@ -81,6 +83,8 @@ TESTS: dict[str, object] = {
     "k_history_assembly": k_history_assembly,
     "k_dispatch_placement": k_dispatch_placement,
     "k_dispatch_failnote": k_dispatch_failnote,
+    "k_mcp_precheck_flake_recovers": k_mcp_precheck_flake_recovers,
+    "k_mcp_precheck_unreachable_rejects": k_mcp_precheck_unreachable_rejects,
     "k_resume": k_resume,
     "k_resume_errcase": k_resume_errcase,
     "k_resume_model_204": k_resume_model_204,
@@ -107,6 +111,8 @@ TESTS: dict[str, object] = {
     "sa_stracc": sa_stracc, "sa_size": sa_size, "sa_blankacc": sa_blankacc,
     "p3_skill": p3_skill, "p3_skill_text": p3_skill_text,
     "p3_skill_links": p3_skill_links,
+    "q_planning_entry": q_planning_entry, "q_jira_source": q_jira_source,
+    "q_no_argv_escape": q_no_argv_escape, "q_set_expectations_error": q_set_expectations_error,
 }
 
 

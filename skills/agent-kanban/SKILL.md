@@ -1,6 +1,6 @@
 ---
 name: agent-kanban
-description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工作的协议。当环境中出现看板工具（list_tasks / get_task_detail / claim_task / add_subtask / update_subtask / add_milestone / update_milestone / add_record / update_progress / request_review / mark_blocked / list_awaiting）且要开始或继续看板任务时加载。各客户端工具前缀不同：opencode 显示为 kanban_<tool>（如 kanban_list_tasks），Claude Code 显示为 mcp__<server>__<tool>（server 名示例 kanban）。说明如何认领、拆解、记录决策/风险/偏离、交接评审，以及哪些是人的职责（DONE 确认、释放、解除阻塞）。契约版本 3.2。
+description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工作的协议。当环境中出现看板工具（new_requirement / set_expectations / list_tasks / get_task_detail / claim_task / add_subtask / update_subtask / add_milestone / update_milestone / add_record / update_progress / request_review / mark_blocked / list_awaiting）且要开始或继续看板任务时加载。各客户端工具前缀不同：opencode 显示为 kanban_<tool>（如 kanban_list_tasks），Claude Code 显示为 mcp__<server>__<tool>（server 名示例 kanban）。说明如何认领、拆解、记录决策/风险/偏离、交接评审，以及哪些是人的职责（DONE 确认、释放、解除阻塞）。契约版本 3.2。
 contract-version: 3.2
 ---
 
@@ -23,7 +23,7 @@ contract-version: 3.2
 
 ## 工具命名
 
-MCP server 名由客户端配置决定（本文示例 `kanban`）。12 个工具的原名固定：list_tasks / get_task_detail / claim_task / add_subtask / update_subtask / add_milestone / update_milestone / add_record / update_progress / request_review / mark_blocked / list_awaiting。客户端显示名通常带前缀：opencode 为 `kanban_<tool>`（如 `kanban_list_tasks`），Claude Code 为 `mcp__<server>__<tool>`（如 `mcp__kanban__list_tasks`）。下文一律写原名。
+MCP server 名由客户端配置决定（本文示例 `kanban`）。14 个工具的原名固定：new_requirement / set_expectations / list_tasks / get_task_detail / claim_task / add_subtask / update_subtask / add_milestone / update_milestone / add_record / update_progress / request_review / mark_blocked / list_awaiting。客户端显示名通常带前缀：opencode 为 `kanban_<tool>`（如 `kanban_list_tasks`），Claude Code 为 `mcp__<server>__<tool>`（如 `mcp__kanban__list_tasks`）。下文一律写原名。
 
 ## 分层与何时读哪个
 
@@ -113,7 +113,7 @@ MCP server 名由客户端配置决定（本文示例 `kanban`）。12 个工具
 
 ## 派发（把任务交给独立会话）
 
-复杂任务 / 长任务 / 跨目录才派；一个需求 = 一个 worker，同需求不并行 worker。协议内核（预检、派发稿五要素、留痕、验收、循环、长段心跳）见 <skill_dir>/references/dispatch.md；派发稿模板见 <skill_dir>/templates/dispatch-brief.md；具体客户端命令见 <skill_dir>/references/client-opencode.md。入口不可用时手工条款仍适用。
+按变更面判据派发：「跨文件 / 新增模块 / 新增依赖 / 新增测试文件 / 真实外部系统写入」任一即派，仅「不改变行为且单一口径」的改动（文档/文案/常量，含同一事实多处镜像同步）可自做；动手前一句归属声明（派给 worker / 自己做的判据），开工前先 `list_tasks` 查有无对应需求；一个需求 = 一个 worker，同需求不并行 worker。协议内核（预检、派发稿五要素、留痕、验收、循环、长段心跳）见 <skill_dir>/references/dispatch.md；派发稿模板见 <skill_dir>/templates/dispatch-brief.md；具体客户端命令见 <skill_dir>/references/client-opencode.md。入口不可用时手工条款仍适用。
 
 ## 收尾协议（代执行）
 

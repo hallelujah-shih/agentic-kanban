@@ -121,13 +121,16 @@ def ac3():
     m = MCP(db).start()
     tools = m.list_tools()
     expected = {
+        "new_requirement", "set_expectations",
         "list_tasks", "get_task_detail", "claim_task", "add_subtask", "update_subtask",
         "add_milestone", "update_milestone", "add_record", "update_progress",
         "request_review", "mark_blocked", "list_awaiting",
     }
-    ok("ac3: 12 工具清单精确", set(tools) == expected, str(sorted(tools)))
-    ok("ac3: 工具面无 release/approve/new/set_expectations",
-       not ({"release", "approve", "new", "set_expectations"} & set(tools)))
+    ok("ac3: 14 工具清单精确", set(tools) == expected, str(sorted(tools)))
+    ok("ac3: 工具面无 release/approve/delete（终态确认/删除仍是人面）",
+       not ({"release", "approve", "delete"} & set(tools)))
+    ok("ac3: 规划入口 new_requirement/set_expectations 在 agent 面",
+       {"new_requirement", "set_expectations"} <= set(tools))
 
     r1 = seed_req(db, "ac3-claimed")
     m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})

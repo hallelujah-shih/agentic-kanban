@@ -38,6 +38,7 @@ from pathlib import Path
 from ac_lib import MCP, REPO_ROOT, cli, cli_ok, new_db, ok, query, seed_req
 
 EXPECTED_TOOLS = {
+    "new_requirement", "set_expectations",
     "list_tasks", "get_task_detail", "claim_task", "add_subtask", "update_subtask",
     "add_milestone", "update_milestone", "add_record", "update_progress",
     "request_review", "mark_blocked", "list_awaiting",
@@ -237,7 +238,7 @@ def l_blocked_reason_empty():
 
 
 def l_tool_self_desc():
-    print("== R1.5: 工具自描述——12 工具 description + server instructions（带内兜底）")
+    print("== R1.5: 工具自描述——14 工具 description + server instructions（带内兜底）")
     # in-process import：worktree src 优先（.venv editable 指向主仓 src，显式置顶防漂移）
     import asyncio
     import sys
@@ -255,9 +256,9 @@ def l_tool_self_desc():
        repr((server.instructions or "")[:80]))
     tools = asyncio.run(server.list_tools())
     names = {t.name for t in tools}
-    ok("l_tool_self_desc: 12 工具名集合 == 预期", names == EXPECTED_TOOLS, str(sorted(names)))
+    ok("l_tool_self_desc: 14 工具名集合 == 预期", names == EXPECTED_TOOLS, str(sorted(names)))
     missing = [t.name for t in tools if not (t.description and t.description.strip())]
-    ok("l_tool_self_desc: 12 工具 description 全部非空", not missing, str(missing))
+    ok("l_tool_self_desc: 14 工具 description 全部非空", not missing, str(missing))
 
 
 # ==================================================================== R3 读侧（T2）

@@ -32,7 +32,7 @@ from pathlib import Path
 
 from ac_cases_k import _set_state, _update
 from ac_cases_l import _ak_dispose, _ak_import, _ak_restore
-from ac_lib import MCP, REPO_ROOT, cli, cli_ok, env_for, new_db, ok, query
+from ac_lib import MCP, REPO_ROOT, cli, cli_err, cli_ok, env_for, new_db, ok, query
 
 from agent_kanban import skillpack
 
@@ -156,8 +156,16 @@ def _note_contents(db, rid: str) -> list[str]:
 
 
 def _dispatch_env(db, port: int) -> dict:
+    # a4 预检注入：假 `opencode mcp list`（kanban connected）。tmp 工作区无项目级
+    # opencode.json，真命令只列全局服务器（无 kanban）会误拒所有用例；既有用例经
+    # 预检通过路径，预检行为本身由 k_mcp_precheck_* 用例各自构造状态化 fake 覆盖。
+    fd, fake = tempfile.mkstemp(prefix="ak-mcp-pass-", suffix=".sh")
+    with os.fdopen(fd, "w") as f:
+        f.write("#!/bin/sh\nprintf '\u2713 kanban  connected\\n'\n")
+    os.chmod(fake, 0o755)
     return env_for(db, {"AGENT_KANBAN_OPENCODE_URL": f"http://127.0.0.1:{port}",
-                        "AGENT_KANBAN_OPENCODE_AUTH": "none"})
+                        "AGENT_KANBAN_OPENCODE_AUTH": "none",
+                        "AGENT_KANBAN_DISPATCH_MCP_LIST_CMD": fake})
 
 
 def k_dispatch_main():
@@ -991,5 +999,89 @@ def k_resume_model_err():
         ok("换模失败不进 wait",
            not any("wait" in r["path"] for r in log),
            f"log={[r['path'] for r in log]}")
+    finally:
+        stop()
+
+
+def _fake_mcp_list(tmp: Path, name: str, body: str) -> str:
+    """写可执行 fake `opencode mcp list` 脚本（状态经 $AK_FAKE_MCP_CALLS 调用计数文件）。"""
+    p = tmp / name
+    p.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+    os.chmod(p, 0o755)
+    return str(p)
+
+
+def k_mcp_precheck_flake_recovers():
+    print("== b4-a4: 预检首跑 flake（No MCP servers configured）复跑一次即恢复，派发继续")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-mcp-flake-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    rid = cli_ok(db, "new", "--title", "预检 flake 需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    calls = tmp / "mcp-calls"
+    # 首次调用回 flake 文本，复跑（第 2 次起）回 kanban connected——钉死 2026-10-30
+    # Gmail 批实测的首跑 flake 形态（5defed11 note：配置齐全时首跑仍偶报）
+    fake = _fake_mcp_list(tmp, "mcp-list-flake.sh",
+                          "if [ -f \"$AK_FAKE_MCP_CALLS\" ]; then\n"
+                          "  n=$(wc -l < \"$AK_FAKE_MCP_CALLS\" | tr -d ' ')\n"
+                          "else\n  n=0\nfi\n"
+                          "echo x >> \"$AK_FAKE_MCP_CALLS\"\n"
+                          "if [ \"$n\" -eq 0 ]; then\n"
+                          "  echo 'No MCP servers configured'\n"
+                          "else\n"
+                          "  printf '\u2713 kanban  connected\\n'\n"
+                          "fi\n")
+    srv, stop = _mock_start({"get_code": 404})
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    extra["AGENT_KANBAN_DISPATCH_MCP_LIST_CMD"] = fake
+    extra["AK_FAKE_MCP_CALLS"] = str(calls)
+    try:
+        res = cli(db, "dispatch", "--requirement-id", rid, extra=extra)
+        ok("flake 复跑恢复后派发 rc=0", res.returncode == 0,
+           f"rc={res.returncode} stderr={res.stderr}")
+        ok("fake 恰被调用 2 次（首跑 flake + 复跑）",
+           calls.exists() and len(calls.read_text(encoding="utf-8").splitlines()) == 2,
+           calls.read_text(encoding="utf-8") if calls.exists() else "未调用")
+        log = list(srv._log)
+        creates = [r for r in log if r["method"] == "POST" and r["path"] == "/api/session"]
+        ok("预检恢复 -> session 正常创建（主链未中断）", len(creates) == 1, f"n={len(creates)}")
+        ok("板 note 恰 1 条（正常分发 note，无失败 note）",
+           len(_note_contents(db, rid)) == 1, f"n={len(_note_contents(db, rid))}")
+    finally:
+        stop()
+
+
+def k_mcp_precheck_unreachable_rejects():
+    print("== b4-a4: 预检复跑仍不可达 -> mcp_unreachable 拒派（不建会话、不写板 note、不复跑第三次）")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-mcp-unreach-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    rid = cli_ok(db, "new", "--title", "预检不可达需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    calls = tmp / "mcp-calls"
+    # 持久不可达（非 flake）：kanban 条目存在但启动失败——真实形态如 opencode.json
+    # 注册命令不存在（本批 probe 实测输出形态）
+    fake = _fake_mcp_list(tmp, "mcp-list-broken.sh",
+                          "echo x >> \"$AK_FAKE_MCP_CALLS\"\n"
+                          "printf '\u2717 kanban  failed: NotFound: ChildProcess.spawn (no-such-cmd mcp)\\n'\n")
+    srv, stop = _mock_start({"get_code": 404})
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    extra["AGENT_KANBAN_DISPATCH_MCP_LIST_CMD"] = fake
+    extra["AK_FAKE_MCP_CALLS"] = str(calls)
+    try:
+        code, msg = cli_err(db, "dispatch", "--requirement-id", rid, extra=extra)
+        ok("复跑仍不可达 -> 错误码 mcp_unreachable", code == "mcp_unreachable", code)
+        ok("错误消息含目标目录（可操作：去该目录修 opencode.json）", str(ws) in msg, msg)
+        log = list(srv._log)
+        ok("fail-closed：预检先于服务交互，session 未创建",
+           not any(r["method"] == "POST" and r["path"] == "/api/session" for r in log),
+           f"log={[r['path'] for r in log]}")
+        ok("投递前中止不写板 note（与状态门/服务不可达同契约）",
+           len(_note_contents(db, rid)) == 0, f"n={len(_note_contents(db, rid))}")
+        ok("fake 恰被调用 2 次（复跑一次，不第三次）",
+           calls.exists() and len(calls.read_text(encoding="utf-8").splitlines()) == 2,
+           calls.read_text(encoding="utf-8") if calls.exists() else "未调用")
     finally:
         stop()
