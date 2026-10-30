@@ -460,7 +460,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version",
                         version=f"%(prog)s {__version__} (contract {CONTRACT_VERSION})")
 
-    p = sub.add_parser("mcp", help="运行 MCP stdio server（agent 面，12 工具）")
+    p = sub.add_parser("mcp", help="运行 MCP stdio server（agent 面，14 工具）")
     p.set_defaults(handler=_cmd_mcp)
 
     p = sub.add_parser("skill", help="取出协同协议 skill 树（--print | --dest <目录> | --check [目录]）")

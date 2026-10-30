@@ -316,7 +316,7 @@ async def _run_equiv(name: str, fn) -> tuple:
 # ---------------------------------------------------------------- 用例
 
 def http_mcp():
-    print("== M1-1.3: HTTP MCP 全 12 工具 + is_error 机制 + 归因（P1-1）")
+    print("== M1-1.3: HTTP MCP 全 14 工具 + is_error 机制 + 归因（P1-1）")
 
     async def run():
         db = new_db()
@@ -324,7 +324,7 @@ def http_mcp():
             ok("http: 服务端铸币 session id 已捕获", bool(h.sid), f"sid={h.sid!r}")
 
             names = await h.list_tools()
-            ok("http: 12 工具注册", len(names) == 12, str(names))
+            ok("http: 14 工具注册", len(names) == 14, str(names))
             ok("http: 工具面无 release/renew（lease_expired 仅人面可达，缺得对）",
                "release" not in names and "renew" not in names, str(names))
 
@@ -365,6 +365,20 @@ def http_mcp():
             ok("http: mark_blocked -> BLOCKED", mb.get("state") == "BLOCKED", str(mb)[:100])
             await h.call_ok("list_awaiting", {})
             ok("http: list_awaiting", True, "")
+
+            # 规划入口（14 工具新增）：new_requirement + set_expectations 经 HTTP 可达
+            nr = await h.call_ok("new_requirement", {
+                "title": "http-plan",
+                "description": "多行\n长文本\n含反引号 `_default_transport` 与引号 \"q\"",
+                "acceptance": [{"item": "P1"}],
+            })
+            ok("http: new_requirement 返回 requirement_id", bool(nr.get("requirement_id")), str(nr)[:100])
+            se = await h.call_ok("set_expectations", {
+                "requirement_id": nr["requirement_id"],
+                "acceptance": [{"item": "P1"}, {"item": "P2"}],
+            })
+            ok("http: set_expectations 返回 requirement_id",
+               se.get("requirement_id") == nr["requirement_id"], str(se)[:100])
 
             # 归因（P1-1）：写事件 conn == 服务端铸币 http:<sid> 且 != 客户端注入头值
             conns = query(db, "SELECT DISTINCT actor_conn c FROM events "

@@ -229,11 +229,11 @@ def n9():
 
 
 def n10():
-    """MCP 结构性门禁：12 工具 schema 无受托字段 + mcp 写恒 surface=mcp。"""
+    """MCP 结构性门禁：14 工具 schema 无受托字段 + mcp 写恒 surface=mcp。"""
     db = new_db()
     m = MCP(db).start()
     tools = m.rpc("tools/list", {}).get("tools", [])
-    ok("n10: 12 工具", len(tools) == 12, str(len(tools)))
+    ok("n10: 14 工具", len(tools) == 14, str(len(tools)))
     bad = [t["name"] for t in tools if "delegated" in json.dumps(t.get("inputSchema", {}))
            or "on_behalf" in json.dumps(t.get("inputSchema", {}))]
     ok("n10: inputSchema 无 on_behalf/delegated 字段", not bad, str(bad))

@@ -1,6 +1,6 @@
-"""MCP server（PRD 4.1）：12 工具；错误返回 is_error + {code,message,task_id}（PRD 4.3）。
+"""MCP server（PRD 4.1）：14 工具；错误返回 is_error + {code,message,task_id}（PRD 4.3）。
 actor 经 Context 派生（identity.mcp_actor），不接受调用方传入（ADR 0002/P1-1）。
-build_server() 为 12 工具注册单点，stdio（cli.py mcp）与 HTTP（api /mcp）共用（审#P2-4）。"""
+build_server() 为 14 工具注册单点，stdio（cli.py mcp）与 HTTP（api /mcp）共用（审#P2-4）。"""
 
 from __future__ import annotations
 
@@ -63,6 +63,35 @@ async def get_task_detail(requirement_id: str, ctx: Context | None = None) -> Ca
     错误: not_found（需求不存在）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     """
     return await _call(ctx, "get_task_detail", is_write=False, requirement_id=requirement_id)
+
+
+async def new_requirement(
+    title: str, description: str | None = None, source: str = "manual",
+    source_ref: str | None = None, acceptance: Any = None, ctx: Context | None = None,
+) -> CallToolResult:
+    """创建需求（记录面规划入口，主循环在会话内建需求后派发，长文本免 argv 转义）。
+    参数: title（必填）, description（可选，可含多行长文本）, source（manual|jira，默认 manual）,
+          source_ref（可选，jira 链接）, acceptance（可选，验收锚，形态 [{"item": "...", "id": "..."}] 或 ["..."]）。
+    返回: {"requirement_id": <32 位全 id>, "state": "OPEN"}。
+    错误: invalid_record（acceptance 结构非法）。
+    """
+    return await _call(
+        ctx, "new_requirement", title=title, description=description,
+        source=source, source_ref=source_ref, acceptance=acceptance,
+    )
+
+
+async def set_expectations(
+    requirement_id: str, acceptance: Any, ctx: Context | None = None,
+) -> CallToolResult:
+    """设置/修改需求验收锚（规划入口；删除被 subtask links_to 引用的锚项会被拒绝）。
+    参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, acceptance（验收锚列表）。
+    返回: {"requirement_id": <32 位全 id>, "acceptance": <归一后的锚>}。
+    错误: not_found / ambiguous_id / invalid_record（锚形态非法或删除被引用锚项）。
+    """
+    return await _call(
+        ctx, "set_expectations", requirement_id=requirement_id, acceptance=acceptance
+    )
 
 
 async def claim_task(requirement_id: str, agent_name: str, ctx: Context | None = None) -> CallToolResult:
@@ -203,9 +232,11 @@ SERVER_INSTRUCTIONS = (
 
 
 def build_server() -> MCPServer:
-    """12 工具注册单点（审#P2-4）：stdio 与 HTTP transport 共用，防注册表手工复制漂移。"""
+    """14 工具注册单点（审#P2-4）：stdio 与 HTTP transport 共用，防注册表手工复制漂移。"""
     server = MCPServer(name="agent-kanban", version=__version__, instructions=SERVER_INSTRUCTIONS)
     for tool in (
+        new_requirement,
+        set_expectations,
         list_tasks,
         get_task_detail,
         claim_task,

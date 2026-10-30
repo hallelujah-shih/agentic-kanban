@@ -8,6 +8,11 @@ stdout/错误消息（URL 可回显）。
 --bg（T4，D1 Popen re-entry）：prompt 投递 + 分发 note 后 spawn 独立 bg 子进程
 跑心跳续租（run_bg_loop 单一实现），父进程立即返回；终态判据＝GET 404 或
 outcome ∈ {succeeded, failed} 或 S9 认领绑定判据（认领变更/需求释放），终态 note 后退出。
+MCP 预检（a4，2026-10-30 b4）：状态门后于目标目录跑 `opencode mcp list`（env
+AGENT_KANBAN_DISPATCH_MCP_LIST_CMD 可覆盖命令），判 kanban 服务器可达；首跑不可达
+复跑一次再判（首跑「No MCP servers configured」为已实测 flake，见 5defed11 note），
+复跑仍不可达 -> mcp_unreachable 拒派（fail-closed，先于服务发现，不建会话不写板
+note）；workspace 指针缺失跳过本项（worker 就绪门自核）。
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -153,6 +159,67 @@ def discover_service() -> Service:
         raise DispatchError("auth_missing", f"鉴权配置缺失: {SERVICE_JSON} 无 password 字段")
     token = base64.b64encode(f"opencode:{pw}".encode()).decode()
     return Service(url=url, auth_header=f"Basic {token}")
+
+
+# ---------------------------------------------------------------- MCP 预检（a4）
+MCP_LIST_CMD_ENV = "AGENT_KANBAN_DISPATCH_MCP_LIST_CMD"
+MCP_SERVER_NAME = "kanban"
+_MCP_LIST_TIMEOUT = 15  # 单次 `opencode mcp list` 墙钟上限（秒）
+# 输出行形态（opencode v2.2.0 实测）：「✓ kanban  connected」/「✗ kanban  failed: …」；
+# 名字列定宽 2+ 空格分隔。无标记行（格式漂移）匹配不上 -> 按不可达处置（fail-closed）。
+_MCP_LINE_RE = re.compile(r"^\s*(?:[✓✗]\s+)?(\S+)\s{2,}(\S.*)$")
+
+
+def _mcp_list_cmd() -> list[str]:
+    """预检命令（可注入）：env AGENT_KANBAN_DISPATCH_MCP_LIST_CMD 覆盖（shlex 切分），
+    缺省 `opencode mcp list`。测试以状态化假脚本构造 flake/持久不可达形态。"""
+    raw = (os.environ.get(MCP_LIST_CMD_ENV) or "").strip()
+    if not raw:
+        return ["opencode", "mcp", "list"]
+    return shlex.split(raw)
+
+
+def _run_mcp_list(cwd: str | None) -> tuple[int, str]:
+    try:
+        out = subprocess.run(_mcp_list_cmd(), capture_output=True, text=True,
+                             timeout=_MCP_LIST_TIMEOUT, cwd=cwd)
+    except (OSError, subprocess.TimeoutExpired):
+        return 1, ""
+    return out.returncode, out.stdout or ""
+
+
+def _mcp_server_ok(out: str, server: str) -> bool:
+    for line in out.splitlines():
+        m = _MCP_LINE_RE.match(line)
+        if m and m.group(1) == server and m.group(2).split()[0] == "connected":
+            return True
+    return False
+
+
+def _mcp_summary(out: str, rc: int) -> str:
+    s = " | ".join(l.strip() for l in out.strip().splitlines() if l.strip())
+    if not s:
+        return f"无输出（rc={rc}）"
+    return s[:200]
+
+
+def mcp_precheck(cwd: str | None, server: str = MCP_SERVER_NAME) -> None:
+    """派发前预检（a4）：判 <server> MCP 服务器自目标目录可达。
+
+    首跑不可达（含「No MCP servers configured」已知 flake，2026-10-30 Gmail 批实测）
+    复跑一次再判；复跑仍不可达 -> DispatchError mcp_unreachable 拒派。调用方在
+    服务发现前调用：fail-closed 先于一切 HTTP，不建半建会话、不写板 note。
+    """
+    rc1, out1 = _run_mcp_list(cwd)
+    if _mcp_server_ok(out1, server):
+        return
+    rc2, out2 = _run_mcp_list(cwd)
+    if _mcp_server_ok(out2, server):
+        return
+    raise DispatchError("mcp_unreachable",
+                        f"MCP 预检失败: 目标目录 {cwd} 不可达 `{server}` 服务器"
+                        f"（首跑: {_mcp_summary(out1, rc1)}；复跑: {_mcp_summary(out2, rc2)}）；"
+                        f"检查该目录项目级 opencode.json 的 kanban 注册条目后重试派发")
 
 
 # ---------------------------------------------------------------- HTTP（stdlib urllib，不重试）
@@ -404,8 +471,9 @@ def _delivery_fail_note(*, title: str, sid: str, model_desc: str, directory: str
 def run_dispatch(requirement_id: str, *, model: str | None = None,
                  directory: str | None = None, budget: str | None = None,
                  bg: bool = False) -> dict:
-    """dispatch 主链：状态门 -> 指针解析 -> 服务发现 -> 存在检查 -> 创建（404）->
-    派发稿 prompt -> 同步 wait（budget 封顶）或 --bg 心跳子进程 -> 板 note。
+    """dispatch 主链：状态门 -> 指针解析 -> MCP 预检（a4，ws 缺失跳过）-> 服务发现
+    -> 存在检查 -> 创建（404）-> 派发稿 prompt -> 同步 wait（budget 封顶）或
+    --bg 心跳子进程 -> 板 note。
     --bg（D1）：不 wait，prompt 投递 + 分发 note 后 spawn 独立 bg 子进程
     （Popen re-entry，run_bg_loop 单一实现），父进程立即返回。"""
     budget_secs = parse_budget(budget)
@@ -425,6 +493,10 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
         warnings.append("环境卡红线节缺失（worker 就绪门自核红线）")
     elif env_card is None:
         warnings.append("无环境卡路径，无红线提醒可给")
+    if ws:
+        # a4 预检（subprocess，非 HTTP；先于服务发现 fail-closed，拒派不建会话不写 note；
+        # ws 缺失跳过——worker 就绪门自核看板可达）
+        mcp_precheck(cwd=ws)
     history = _history_digest(rid)  # 板面只读，先于一切 HTTP（读失败不留半建会话）
     svc = discover_service()
     sid = f"ses_req_{rid[:8]}"
