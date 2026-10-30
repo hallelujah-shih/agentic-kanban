@@ -28,6 +28,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from . import skillpack
 from .db import get_read_session_factory, get_session_factory, run_op
 from .errors import BusinessError
 from .models import Claim, Event, Subtask
@@ -223,9 +224,16 @@ def _write_note(rid: str, content: str) -> None:
 
 # ---------------------------------------------------------------- 派发稿
 def _skill_path() -> str:
-    """协议入口＝CLI 所在仓 skills/agent-kanban/SKILL.md（按本文件位置解析，worktree 无关）。"""
-    root = Path(__file__).resolve().parent.parent.parent
-    return (root / "skills" / "agent-kanban" / "SKILL.md").as_posix()
+    """协议入口＝skill 树的 SKILL.md（包内资源优先，源码树回退；与 CLI `skill` 子命令同源）。"""
+    return skillpack.skill_file().as_posix()
+
+
+def _skill_entry() -> str:
+    """派发稿里的协议入口行：树不可用时降级为一句人话，不让派发整体失败。"""
+    try:
+        return _skill_path()
+    except FileNotFoundError as exc:
+        return f"（不可用：{exc}）"
 
 
 def _redline_text(env_card: str) -> str | None:
@@ -272,7 +280,7 @@ def _build_prompt(*, req, rid: str, ws: str | None, env_card: str | None,
                  if "workspace=" in l or "env-card=" in l]
     lines.append("- 指针行（原文）: " + " / ".join(ptr_lines[:2]) if ptr_lines
                  else "- 指针行: 缺失")
-    lines += ["", "## 协议入口", f"看板协议正典路径: {_skill_path()}（认领后先读，按协议执行）",
+    lines += ["", "## 协议入口", f"看板协议正典路径: {_skill_entry()}（认领后先读，按协议执行）",
               "", "## 环境卡路径"]
     if env_card:
         lines.append(env_card)

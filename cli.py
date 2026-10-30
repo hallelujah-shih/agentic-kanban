@@ -1,4 +1,4 @@
-"""agent-kanban CLI（人面，PRD 4.2）。子命令：mcp / new / set_expectations / approve /
+"""agent-kanban CLI（人面，PRD 4.2）。子命令：mcp / skill / new / set_expectations / approve /
 release / renew / note / abandon / reopen / export / view。agent 面工具仅经 MCP 暴露，
 CLI 不提供（PRD 4.1）。"""
 
@@ -8,10 +8,12 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from agent_kanban import skillpack
 from agent_kanban.db import get_session_factory, now_utc, run_op
 from agent_kanban.dispatch import DispatchError, run_bg_loop, run_dispatch, run_resume
 from agent_kanban.errors import BusinessError
@@ -135,6 +137,48 @@ def _cmd_note(args: argparse.Namespace) -> int:
         return 1
     return _invoke("note", requirement_id=args.requirement_id, content=args.content,
                    delegated=delegated)
+
+
+def _cmd_skill(args: argparse.Namespace) -> int:
+    picks = [bool(args.print_), args.dest is not None, args.check is not None]
+    if sum(picks) != 1:
+        print("用法：agent-kanban skill --print | --dest <目录> | --check [目录]", file=sys.stderr)
+        return 1
+    try:
+        if args.print_:
+            sys.stdout.buffer.write(skillpack.skill_file().read_bytes())
+            sys.stdout.buffer.flush()
+            return 0
+        if args.dest is not None:
+            base = Path(args.dest)
+            if base.exists() and not base.is_dir():
+                print(f"--dest 要一个目录，但 {base} 是文件", file=sys.stderr)
+                return 1
+            target = base / "agent-kanban"
+            shutil.copytree(skillpack.skill_dir(), target, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            print(str(target))
+            return 0
+        root = skillpack.resolve_check_root(Path(args.check)) if args.check \
+            else skillpack.skill_dir()
+    except FileNotFoundError as exc:
+        print(f"skill 树不可用：{exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"skill 树读写失败：{exc}", file=sys.stderr)
+        return 1
+    if not root.is_dir():
+        print(f"找不到 skill 树：{root}（先 `agent-kanban skill --dest <目录>` 取出一份）",
+              file=sys.stderr)
+        return 1
+    total, problems = skillpack.check_links(root)
+    if problems:
+        print("--check 未通过（引用目标不存在 / 文件不可解析）：", file=sys.stderr)
+        for line in problems:
+            print(f"  {line}", file=sys.stderr)
+        return 1
+    print(f"{total} 个 skill 自引用全部存在")
+    return 0
 
 
 def _cmd_dispatch(args: argparse.Namespace) -> int:
@@ -411,8 +455,20 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
 
+    from agent_kanban import CONTRACT_VERSION, __version__
+
+    parser.add_argument("--version", action="version",
+                        version=f"%(prog)s {__version__} (contract {CONTRACT_VERSION})")
+
     p = sub.add_parser("mcp", help="运行 MCP stdio server（agent 面，12 工具）")
     p.set_defaults(handler=_cmd_mcp)
+
+    p = sub.add_parser("skill", help="取出协同协议 skill 树（--print | --dest <目录> | --check [目录]）")
+    p.add_argument("--print", dest="print_", action="store_true", help="把 SKILL.md 原样打到 stdout")
+    p.add_argument("--dest", help="整棵树写到 <目录>/agent-kanban/（覆盖）")
+    p.add_argument("--check", nargs="?", const="", default=None, metavar="目录",
+                   help="检查 <目录>/agent-kanban/ 的 skill 自引用（省略目录＝检查包内树）")
+    p.set_defaults(handler=_cmd_skill)
 
     p = sub.add_parser("new", help="创建需求（手工登记；jira 以链接引用）")
     p.add_argument("--title", required=True)

@@ -18,7 +18,13 @@ dependencies = [
 agent-kanban = "cli:main"
 
 [dependency-groups]
-test = ["httpx2>=2.16,<3"]
+# hatchling：AC 用例用 `python -m hatchling build` 离线构建 wheel 断言产物
+# （uv build 走隔离环境会拉索引源，CI 不可用）
+test = ["httpx2>=2.16,<3", "hatchling>=1.27"]
+
+[tool.uv]
+# 默认装 test 组：否则裸 `uv sync` 后跑 AC 会在构建 wheel 处缺 hatchling
+default-groups = ["test"]
 
 [build-system]
 requires = ["hatchling"]
@@ -29,3 +35,5 @@ packages = ["src/agent_kanban"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "cli.py" = "cli.py"
+# 协议树随包分发（入口 + references + templates）：唯一来源＝skills/agent-kanban/（不写第二份副本）
+"skills/agent-kanban" = "agent_kanban/data/skill"
