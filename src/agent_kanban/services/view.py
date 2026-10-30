@@ -7,6 +7,9 @@
 - 进度派生值：done/total；blocked=进行中（计分母不计 done）；abandoned 不计分母。
 - 拆解新增：进入 CLAIMED 后有 add_subtask（decomposition）且该 CLAIMED 期间无 decision/deviation 解释。
 - 未解释放弃：abandoned 子任务无同 subtask_id 的 deviation/note 事件（payload.subtask_id 关联）。
+- 直接完成：子任务 done 且事件链中无该子任务的 in_progress 迁移（todo->done 直接完成）。
+  观测信号不是违规标记：todo->done 仍是合法路径（写侧不硬拒）；有 in_progress 历史不报；
+  abandoned 不适用（state!=done）。
 - retry_limit：G9-b 系统 marker（kind=risk + severity>=attention + payload.retry_limit + actor_surface=system，
   幂等/信号谓词同一，BCD g9b-retry-limit）-> {"type": "retry_limit", "count": N} 入需要关注区。
 - 深潜状态重建：按 seq 回放 state_change 链到目标 ts。
@@ -326,11 +329,16 @@ def _derived_signals(
     out: list[dict] = []
     subtask_ids = {_nid(s.id) for s in subtasks}
     explained: set[str] = set()
+    ever_in_progress: set[str] = set()
     for e in events:
         if e.kind in ("deviation", "note"):
             pid = (e.payload or {}).get("subtask_id")
             if pid and _nid(pid) in subtask_ids:
                 explained.add(_nid(pid))
+        elif e.kind == "state_change":
+            p = e.payload or {}
+            if p.get("subtask_id") and not p.get("milestone_id") and p.get("to") == "in_progress":
+                ever_in_progress.add(_nid(p["subtask_id"]))
     for s in subtasks:
         sid = _nid(s.id)
         if s.state == "blocked":
@@ -339,6 +347,8 @@ def _derived_signals(
             out.append({"type": "abandoned_subtask", "subtask_id": sid, "title": s.title})
             if sid not in explained:
                 out.append({"type": "unexplained_abandonment", "subtask_id": sid, "title": s.title})
+        elif s.state == "done" and sid not in ever_in_progress:
+            out.append({"type": "done_without_progress", "subtask_id": sid, "title": s.title})
     for m, row in zip(milestones, milestone_rows):
         if row["delay"]:
             out.append({
