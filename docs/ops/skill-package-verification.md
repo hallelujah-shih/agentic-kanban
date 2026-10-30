@@ -39,6 +39,7 @@ skills/agent-kanban/
 | 镜像内断链检查 | `agent-kanban skill --check` => `14 个 skill 自引用全部存在` |
 | 镜像内取出 | `skill --dest /tmp/sk` => 9 文件；再 `--check /tmp/sk` 全通过 |
 | smoke | `--network host` + `AGENT_KANBAN_PORT=18831`，healthz 200 @t=8s，DB 0600 |
+| CI（PR #21） | `test` / `e2e` / `docker` 三 job 全绿；docker job 走 pypi 轨（`UV_DEPS_MODE=pip`）验证同一 `COPY skills` 在无 MITM 环境成立 |
 
 ## 2. 自动化判据（进 AC 套件）
 
@@ -47,6 +48,9 @@ skills/agent-kanban/
 | `p3_skill` | wheel 内 `agent_kanban/data/skill/` 文件集合与源一致且逐字节相同（单一来源）；解压后被测 `cli` 确实来自 wheel 树；`--print` 字节一致；`--dest` 复制出整棵树且与源一致；三种错误用法（缺省选项 / `--print` 与 `--dest` 同给 / `--dest` 指向普通文件）均 rc 1 + stderr 人话，不裸 traceback，不落残留；`dispatch` 派发稿的协议入口在 wheel 安装下 `is_file()` | 9/9 PASS |
 | `p3_skill_text` | 树内全部 `.md` 无仓内相对路径引用（token 判据：含 `://` 的永久 URL、`<skill_dir>/`、四类装机落点放行）；AGENTS.md/docs 带仓内限定词（本仓/仓内/仓库根…）即红；判据正反对照自检（回潮必红、adopter 约定必绿）；自引用只允许 `<skill_dir>/` 或行内裸 `references/`；SKILL.md 覆盖 `build_server()` 真实注册表全部工具名；description 与「工具命名」节说明两种客户端前缀；`agent_kanban_` 全文不出现；description ≤1024；安装事实与代码反读一致（Python 下界 / 入口 / 默认 DB / 四类落点）；版本链一致（代码常量 = frontmatter = PRD 首行 = MCP server）；`--version` 同给两版本；SKILL.md 无客户端/本机特有内容且这些内容确实下沉到 references（不是被删）；分层到位（≤500 行、references≥4、templates≥2、每个 reference 在正文有时机说明、无 `scripts/`、无 `.sh`/`.py`、四个必执行节非空、正文错误码 1-4 行）；环境卡模板已下沉；errors.md 覆盖服务端错误码全表 | 16/16 PASS |
 | `p3_skill_links` | 树内 `<skill_dir>/…` 与裸 `references\|templates/…` 引用（含嵌套/大小写/通配）逐个存在（独立于 CLI 的第二判据）；`<skill_dir>` 语义（＝加载目录绝对路径）在 SKILL.md 与 dispatch.md 各写明；`skill --check` rc 0 并报引用数；`--dest` 副本注入一条断链后 `--check <父目录>` rc 1 且点名该文件；`--check <skill 目录本身>` 等价可用；非 UTF-8 的 `.md` 报为问题而非裸 traceback；`--check` 指向不存在目录 rc 1 + 人话 | 7/7 PASS |
+
+本地最高 tier 结论（PR #21，commit 2632c2f 起）：全量 **950/950 PASS**（`full-5.log`）+ e2e **15/15**
+（`e2e.log`）+ docker 默认轨 build/healthz 200 + CI 三 job 全绿。
 
 红基线：`red-p3-v8.log`（结构未落地时跑同一组用例）**14/24 PASS**，10 条红全部指向本批目标面：
 wheel 内无 skill 树、`--dest` 裸 traceback、`dispatch` 协议入口指向不存在路径、SKILL.md 含
