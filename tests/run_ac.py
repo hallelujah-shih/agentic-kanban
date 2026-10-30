@@ -25,7 +25,8 @@ from ac_cases_dispatch import (k_bg_claim_binding, k_bg_heartbeat, k_bg_note_bas
                                k_bg_renew_binding, k_dispatch_authfail, k_dispatch_badstate,
                                k_dispatch_failnote, k_dispatch_main, k_dispatch_reuse,
                                k_dispatch_placement, k_dispatch_timeout, k_history_assembly,
-                               k_resume, k_resume_errcase)
+                               k_resume, k_resume_errcase, k_resume_model_204,
+                               k_resume_model_err)
 from ac_cases_k import k_state, k_archive, k_delete, k_web, k_g12
 from ac_cases_l import (l_audience, l_blocked_reason_chain, l_blocked_reason_empty,
                         l_export_stable, l_headline, l_latest_first, l_record_title,
@@ -81,6 +82,8 @@ TESTS: dict[str, object] = {
     "k_dispatch_failnote": k_dispatch_failnote,
     "k_resume": k_resume,
     "k_resume_errcase": k_resume_errcase,
+    "k_resume_model_204": k_resume_model_204,
+    "k_resume_model_err": k_resume_model_err,
     "l_headline": l_headline, "l_summary_line": l_summary_line, "l_record_title": l_record_title,
     "l_blocked_reason_chain": l_blocked_reason_chain, "l_blocked_reason_empty": l_blocked_reason_empty,
     "l_tool_self_desc": l_tool_self_desc,

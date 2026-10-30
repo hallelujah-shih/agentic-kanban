@@ -733,8 +733,15 @@ def run_resume(target: str, instruction: str | None = None, *, model: str | None
     wait_path = f"/api/experimental/session/{sid}/wait"
     if model_ref is not None:
         code, _ = _api(svc, "POST", model_path, {"model": model_ref})
-        _check_http_error("POST", model_path, code)
-        if code != 200:
+        if code == 401:
+            # 401 走 auth_failed（检查凭据），比通用换模提示更可操作
+            _check_http_error("POST", model_path, code)
+        elif code >= 400:
+            raise DispatchError(
+                "http_error",
+                f"switchModel 失败（POST {model_path} 返回 {code}）；"
+                f"可去掉 --model 重试（沿用会话当前模型）或检查 opencode 服务版本")
+        elif not (200 <= code < 300):
             raise DispatchError("http_error", f"switchModel 返回非预期状态 {code}")
     code, _ = _api(svc, "POST", prompt_path, {"text": text})
     _check_http_error("POST", prompt_path, code)
