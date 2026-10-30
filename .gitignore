@@ -19,3 +19,7 @@ playwright-report/
 .venv
 .env
 collab_export/
+
+# 第三方 skill 安装器产物（本地可再生，不入库）
+.agents/
+skills-lock.json

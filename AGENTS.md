@@ -7,6 +7,9 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 
 - 看板（kanban）＝任务唯一事实源。看板协议（认领/拆解/记录/交接/释放/重试成本）
   以 `skills/agent-kanban/SKILL.md` 为正典，本文件不重复。
+- 协议可发现性靠本机软链接 `.agents/skills/agent-kanban -> ../../skills/agent-kanban`
+  （`.agents/` 与 `skills-lock.json` 已 gitignore；新机器/新 worktree 需重建这条
+  链接，否则协议只能按文件路径读，不会出现在 skill 清单里）。
 - **板上收尾动作**：agent 侧工作完成后（PR 流＝PR 发起后，本地合流＝合入后）
   立即调 `request_review`（evidence 含 pr_url/commit_range/test_summary，
   附验收自评；协议细节见协议 skill 门 7）。板 awaiting_human 是唯一等待面，
