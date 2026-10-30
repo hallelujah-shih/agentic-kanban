@@ -35,11 +35,11 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 入口形态：本地开发机＝构建机（仓根 `.venv`）；远端＝GitHub Actions。
 - tier 阶梯（低 -> 高；tier 命名与组成按 ci-verification.md 正典）：
   1. 快速反馈（折入重跑最低 tier，SDD 机器纪律款）：`TMPDIR=<产物目录>/tmp .venv/bin/python tests/run_ac.py --only <用例 id>`
-  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **982/982**（2026-10-30 b5 mcp-reach PR 合入后；worktree 内跑必带 `PYTHONPATH=$PWD/src` 且先 `uv sync`，见下）
+  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **988/988**（2026-10-30 PR #26 合入后新增 6 断言；worktree 内跑必带 `PYTHONPATH=$PWD/src` 且先 `uv sync`，见下）
   3. 本地 e2e：`TMPDIR=<产物目录>/tmp AK_E2E_DB=<产物目录>/ak-e2e.db npx playwright test` —— 基线 **15/15**（撞端口加 `E2E_PORT`；sqlite disk I/O error 先查 /tmp quota＝环境面）
   4. 本地 docker 双轨：默认轨 build + smoke healthz 200；pypi 轨命令与
      办公网 MITM 局限见 ci-verification.md
-  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 982/982 +
+  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 988/988 +
      e2e 15/15 + docker 双轨 build + healthz 200）
   6. **CI 门槛（合并门槛，远端）**：特性分支 push -> GH Actions 三 job
      test/e2e/docker 全绿 + 分支保护必需 check `test`+`docker`（e2e 观察期：
@@ -94,7 +94,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   - opencode 服务 switchModel（POST /api/session/{id}/model）成功返回 204 No Content（非 200），wait 端点同为 204；mock 与状态判定须对齐真实回码，禁镜像实现假设（2026-10-30 实锤：resume --model 必失败，mock 回 200 掩盖此差异）
   - worktree 里跑全量套件前先 `uv sync`：worktree 的 `.venv` 不会随主仓同步，缺 `dependency-groups.test`（如 hatchling）会让 AC 的 wheel 构建用例报 `No module named hatchling`，看起来像代码红（2026-10-30 skill-package 批复验实锤，白白怀疑一轮）
   - worktree 里跑 e2e 前先 `npm ci`：node_modules 同样不随 worktree 同步，裸 `npx playwright test` 命中 npx 缓存缺 `@playwright/test` 报 MODULE_NOT_FOUND（2026-10-30 b5 实锤）
-  - 新 worktree 切出后先 warm-up 再 dispatch：新目录首开 `opencode mcp list` 连空 2 次、甚至第 3 次 pending 是已知首开 flake，dispatch 预检 2 次尝试会误拒（mcp_unreachable）；在目标目录跑 warm-up 到 `kanban` 行出现 connected 为止（实测需 3-7 次，上限 8；2026-10-30 user 裁决：走派发方 warm-up，预检复跑次数不变）
+  - 新 worktree 切出后先 warm-up 再 dispatch：新目录首开 `opencode mcp list` 连空 2 次、甚至第 3 次 pending 是已知首开 flake，dispatch 预检 2 次尝试会误拒（mcp_unreachable）；在目标目录跑 warm-up 到 `kanban` 行出现 connected 为止（实测需 3-9 次，上限 10；2026-10-30 user 裁决：走派发方 warm-up，预检复跑次数不变）
   - skill 树仓内相对路径 token 门（p3_skill_text(1)）：skill 树内任何 .md（含 references/）禁出现仓内路径 token（如 `cli.py`）——CLI 一律以 `agent-kanban`（console script 名）指称。客户端特有 token 在 references/ 是正典要求（p3_skill_text(13)），但仓内路径在树内任何位置都禁（2026-10-30 b4 实锤：dispatch.md 首稿写 `cli.py dispatch`，全量红 1，改 `agent-kanban dispatch` 即绿）
   - `tests/run_ac.py --only` 只收一个参数（逗号分隔列表）；写多个 --only flag 只取**第一个**，「结果 N/M」只对应第一例——多选须 `--only a,b,c`（2026-10-30 b6 实锤：连写三个 --only 只跑了 9/9 的第一例，误读为三例全绿）
 
