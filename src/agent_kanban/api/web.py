@@ -68,7 +68,8 @@ function hdr(){ return TOKEN ? {"x-agent-kanban-token": TOKEN} : {}; }
 function esc(s){ var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
 var STATE_ZH = {OPEN:"待认领", CLAIMED:"进行中", BLOCKED:"阻塞", REOPEN:"返工", DONE:"已完成", REJECTED:"已拒绝", CANCELLED:"已取消", ARCHIVED:"已归档"};
 var SIG_ZH = {blocked_subtask:"子任务阻塞", milestone_delay:"里程碑延误", abandoned_subtask:"子任务放弃",
-              unexplained_abandonment:"未解释放弃", retry_limit:"重试超限", decomposition_added:"拆解变更"};
+              unexplained_abandonment:"未解释放弃", retry_limit:"重试超限", decomposition_added:"拆解变更",
+              done_without_progress:"直接完成（未观测 in_progress）"};
 function sigLabel(t){ return SIG_ZH[t] || t; }
 function stateZh(s){ return STATE_ZH[s] || s; }
 function fmtTs(ts){

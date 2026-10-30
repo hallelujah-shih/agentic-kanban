@@ -140,6 +140,63 @@ def ac12():
         rest4.stop()
 
 
+def dwp_signal():
+    print("== B9: 读侧信号 done_without_progress（todo->done 直接完成触发 / in_progress 历史不触发 / abandoned 不误报）")
+    db = new_db()
+    m = MCP(db).start()
+    # r1: todo->done 直接完成（合法路径，观测信号不是违规标记）
+    r1 = seed_req(db, "dwp-direct")
+    m.call_ok("claim_task", {"requirement_id": r1, "agent_name": "a"})
+    s1 = m.call_ok("add_subtask", {"requirement_id": r1, "title": "direct-done", "ordinal": 1})
+    m.call_ok("update_subtask", {"requirement_id": r1, "subtask_id": s1["subtask_id"], "state": "done"})
+    # r2: todo->in_progress->done（有 in_progress 历史，不触发）
+    r2 = seed_req(db, "dwp-progress")
+    m.call_ok("claim_task", {"requirement_id": r2, "agent_name": "b"})
+    s2 = m.call_ok("add_subtask", {"requirement_id": r2, "title": "with-progress", "ordinal": 1})
+    m.call_ok("update_subtask", {"requirement_id": r2, "subtask_id": s2["subtask_id"], "state": "in_progress"})
+    m.call_ok("update_subtask", {"requirement_id": r2, "subtask_id": s2["subtask_id"], "state": "done"})
+    # r3: abandoned 且无 in_progress（不误报新信号；abandoned_subtask 照常）
+    r3 = seed_req(db, "dwp-abandoned")
+    m.call_ok("claim_task", {"requirement_id": r3, "agent_name": "c"})
+    s3 = m.call_ok("add_subtask", {"requirement_id": r3, "title": "abandoned-no-ip", "ordinal": 1})
+    m.call_ok("update_subtask", {"requirement_id": r3, "subtask_id": s3["subtask_id"], "state": "abandoned"})
+    m.close()
+    rest = REST(db, token="sekret").start()
+    try:
+        code, s1s = rest.req("GET", f"/requirements/{r1}/summary", token="sekret")
+        na1 = [n for n in s1s["needs_attention"] if n["type"] == "done_without_progress"]
+        ok("dwp: todo->done 直接完成触发 done_without_progress", len(na1) == 1, str(s1s["needs_attention"]))
+        ok("dwp: 信号带 subtask_id + title（与 unexplained_abandonment 同形状）",
+           bool(na1) and na1[0]["subtask_id"] == s1["subtask_id"] and na1[0]["title"] == "direct-done", str(na1))
+        code, s2s = rest.req("GET", f"/requirements/{r2}/summary", token="sekret")
+        na2 = [n["type"] for n in s2s["needs_attention"]]
+        ok("dwp: todo->in_progress->done 不触发", "done_without_progress" not in na2, str(na2))
+        code, s3s = rest.req("GET", f"/requirements/{r3}/summary", token="sekret")
+        na3 = s3s["needs_attention"]
+        ok("dwp: abandoned 且无 in_progress 不误报新信号",
+           not any(n["type"] == "done_without_progress" for n in na3), str(na3))
+        ok("dwp: abandoned_subtask 照常上报（新信号不替代既有信号）",
+           any(n["type"] == "abandoned_subtask" for n in na3), str(na3))
+        # board 与 summary 同源（全口径派生，PRD 5.3）
+        code, b = rest.req("GET", "/board", token="sekret")
+        btasks = {t["requirement_id"]: t for t in b["tasks"]}
+        ok("dwp: board==summary needs_attention 同源（r1）",
+           [n["type"] for n in btasks[r1]["needs_attention"]] == [n["type"] for n in s1s["needs_attention"]],
+           str(btasks[r1]["needs_attention"]))
+        ok("dwp: attention_ids 含 r1", r1 in b["attention_ids"], str(b["attention_ids"]))
+        # web 壳标签映射（深潜壳/看板壳共享 _JS_COMMON 的 SIG_ZH，同一渲染路径）
+        code, shell = rest.req("GET", f"/requirements/{r1}", token="sekret", headers={"Accept": "text/html"})
+        ok("dwp: 深潜壳含 done_without_progress 标签映射",
+           code == 200 and isinstance(shell, str) and "done_without_progress:" in shell, str(code))
+        if isinstance(shell, str) and "done_without_progress:" in shell:
+            label = shell.split("done_without_progress:", 1)[1].split('"', 2)[1]
+            ok("dwp: 标签措辞中性（禁「违规/违反」字样）", "违规" not in label and "违反" not in label, label)
+        else:
+            ok("dwp: 标签措辞中性（禁「违规/违反」字样）", False, "标签映射缺失，无法核措辞")
+    finally:
+        rest.stop()
+
+
 def ac13():
     print("== AC13: 反淹没（摘要不含原始输出流；含结构化决策字段）")
     db = new_db()

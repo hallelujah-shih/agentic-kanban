@@ -11,7 +11,7 @@ import traceback
 from ac_lib import RESULTS, ok
 from ac_cases_a import ac1, ac2, ac3, ac4, ac5
 from ac_cases_b import ac6, ac7, ac8, ac9, ac16, extras, matrix
-from ac_cases_c import ac11, ac12, ac13, ac15, ac17, cli_m0, payload, readlock, rest_api, security
+from ac_cases_c import ac11, ac12, ac13, ac15, ac17, cli_m0, dwp_signal, payload, readlock, rest_api, security
 from ac_cases_d import p1_id_normalization, p2_decomposition_signal, p2_payload_8kb
 from ac_cases_e import ac10, reconcile_ac
 from ac_cases_f import http_mcp, http_mcp_equiv, http_mcp_sec
@@ -48,6 +48,7 @@ TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
     "ac6": ac6, "ac7": ac7, "ac8": ac8, "ac9": ac9, "ac16": ac16,
     "ac10": ac10, "ac11": ac11, "ac12": ac12, "ac13": ac13, "ac15": ac15, "ac17": ac17,
+    "dwp_signal": dwp_signal,
     "security": security, "readlock": readlock, "payload": payload,
     "rest_api": rest_api, "cli_m0": cli_m0,
     "matrix": matrix, "extras": extras,
