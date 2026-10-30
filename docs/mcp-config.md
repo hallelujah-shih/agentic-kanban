@@ -94,18 +94,18 @@ curl -i http://127.0.0.1:8000/mcp -H "x-agent-kanban-token: ..." \
 
 ### 3.0 跨目录分发（必需）
 
-worker 会话在 kanban 仓之外目录运行（如域项目目录）时，kanban MCP 必须能从该目录可达，否则 worker 在该目录没有看板，无法记录/交接。两个前置事实（均实测，opencode v2.2.0，2026-10-30）：
+worker 会话在 kanban 仓之外目录运行（如域项目目录）时，kanban MCP 必须能从该目录可达，否则 worker 在该目录没有看板，无法记录/交接。两个前置事实（均实测，opencode v2.2.0，2026-10-30）+ 注册方式：
 
-**目标项目须存在项目级 `opencode.json`（哪怕空对象 `{}`）**——否则全局 `~/.config/opencode/opencode.json` 的 mcp 段整片不加载，`opencode mcp list` 报 "No MCP servers configured"（同一全局配置在 kanban 仓内正常列出 4 个 server）。判据是文件存在，与条目写不写 `enabled` 无关。四组 probe 各跑两次：
+**目标项目须存在项目级 `opencode.json`（哪怕空对象 `{}`）**——否则全局 `~/.config/opencode/opencode.json` 的 mcp 段整片不加载，`opencode mcp list` 报 "No MCP servers configured"（同一全局配置在 kanban 仓内正常列出 4 个 server）。判据是文件存在，与条目写不写 `enabled` 无关。四组 probe 各跑两次（第 4 行为 2026-10-30 b5 复测 4 次，跑到正常为止）：
 
 | 目标目录配置 | `opencode mcp list` 实测 |
 |---|---|
 | 无 opencode.json | No MCP servers configured（不可达） |
 | `opencode.json` = `{}` | 首跑空，复跑列出全局 3 个（searxng/semble/collab2markdown） |
 | 只 kanban 条目（无 `enabled`） | 首跑空，复跑列出 kanban + 全局 3 个（全局与项目级合并，不是替换） |
-| 只 kanban 条目（有 `enabled: true`） | 首跑空（`enabled` 不阻止首跑 flake） |
+| 只 kanban 条目（有 `enabled: true`） | 首跑 1、2 次均空，第 3 次列出 kanban + 全局 3 个（`enabled` 不阻止首跑 flake；新目录首开连空 2 次） |
 
-**首跑可能报空（新目录首开 flake）**：配置齐全时首跑 `opencode mcp list` 仍可能报 "No MCP servers configured"，同目录立即复跑即正常（Gmail 批、新 worktree 各实测一次）。按一次结果判不可达会误拒派发；派发入口预检复跑一次再判（SKILL「派发方协议」预检项 3）。
+**首跑可能报空（新目录首开 flake）**：配置齐全时 `opencode mcp list` 首跑仍可能报 "No MCP servers configured"，同目录复跑后正常（2026-10-30 三例实测：Gmail 批第 2 次即正常；新 worktree 连空 2 次、隔数分钟正常；probe-enabled 新目录连空 2 次、第 3 次正常）。按一次结果判不可达会误拒派发；派发入口预检复跑一次再判（SKILL「派发方协议」预检项 3）。
 
 **注册方式**（kanban 条目一律绝对路径 + 显式 `AGENT_KANBAN_DB`；相对路径 `./.venv/...` 只在 kanban 仓内有效）：
 
