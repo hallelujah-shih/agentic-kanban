@@ -5,6 +5,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock cli.py alembic.ini README.md ./
 COPY src ./src
 COPY alembic ./alembic
+# 协议树是 wheel 的 force-include 源（build 时缺它会红），镜像内也要能 skill --dest 取出
+COPY skills ./skills
 
 # 双轨镜像源：默认国内轨（aliyun + 锁内 URL frozen sync，办公网零改动）；
 # 海外 CI 传 --build-arg UV_DEPS_MODE=pip --build-arg UV_PIP_INDEX=https://pypi.org/simple/

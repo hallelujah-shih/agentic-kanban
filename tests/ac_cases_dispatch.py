@@ -34,6 +34,8 @@ from ac_cases_k import _set_state, _update
 from ac_cases_l import _ak_dispose, _ak_import, _ak_restore
 from ac_lib import MCP, REPO_ROOT, cli, cli_ok, env_for, new_db, ok, query
 
+from agent_kanban import skillpack
+
 
 class _MockOpencode(BaseHTTPRequestHandler):
     def log_message(self, *a):  # 静音
@@ -199,7 +201,7 @@ def k_dispatch_main():
             ok("要素1 任务指针=req id 完整", rid in t)
             ok("要素1 指针行原文", f"workspace={ws}" in t)
             ok("要素2 协议入口=SKILL 绝对路径",
-               (REPO_ROOT / "skills" / "agent-kanban" / "SKILL.md").as_posix() in t)
+               skillpack.skill_file().as_posix() in t)
             ok("要素3 环境卡路径=指针值逐字", str(env_card) in t)
             ok("要素4 交付规格", "交付规格" in t and "事实锚" in t)
             ok("要素5 红线节原文", "禁推 main；禁写生产 DB" in t)

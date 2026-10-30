@@ -40,6 +40,7 @@ from ac_cases_n import (n1, n10, n11, n12, n13, n14, n15, n16, n17, n17b, n18,
 from ac_cases_o import (sa_added, sa_blankacc, sa_coverage, sa_dup, sa_empty,
                         sa_foreign, sa_form, sa_happy, sa_omit, sa_reason,
                         sa_size, sa_stracc)
+from ac_cases_p import p3_skill, p3_skill_links, p3_skill_text
 
 TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
@@ -104,6 +105,8 @@ TESTS: dict[str, object] = {
     "sa_coverage": sa_coverage, "sa_added": sa_added, "sa_empty": sa_empty,
     "sa_omit": sa_omit, "sa_dup": sa_dup, "sa_reason": sa_reason,
     "sa_stracc": sa_stracc, "sa_size": sa_size, "sa_blankacc": sa_blankacc,
+    "p3_skill": p3_skill, "p3_skill_text": p3_skill_text,
+    "p3_skill_links": p3_skill_links,
 }
 
 

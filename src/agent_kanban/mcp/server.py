@@ -12,6 +12,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp_types import CallToolResult, TextContent
 
+from .. import __version__
 from ..db import get_session_factory, run_op
 from ..errors import BusinessError
 from ..services import operations as ops
@@ -203,7 +204,7 @@ SERVER_INSTRUCTIONS = (
 
 def build_server() -> MCPServer:
     """12 工具注册单点（审#P2-4）：stdio 与 HTTP transport 共用，防注册表手工复制漂移。"""
-    server = MCPServer(name="agent-kanban", version="0.1.0", instructions=SERVER_INSTRUCTIONS)
+    server = MCPServer(name="agent-kanban", version=__version__, instructions=SERVER_INSTRUCTIONS)
     for tool in (
         list_tasks,
         get_task_detail,

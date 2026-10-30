@@ -22,6 +22,34 @@ uv run agent-kanban serve        # 启动 REST/人面 API（M0）
 
 MCP stdio 模式由客户端拉起进程，无需常驻。HTTP MCP 由 `serve` 进程承载（见 §2）。默认数据库路径与端口在 `AGENT_KANBAN_DB` / 配置文件中声明。
 
+### 1.1 装包与取出协同协议
+
+包自带整棵协同协议树（唯一来源 `skills/agent-kanban/`，构建期注入 wheel 的
+`agent_kanban/data/skill/`），adopter 不需要 clone 仓库：
+
+```sh
+pip install /path/to/agent_kanban-<版本>-py3-none-any.whl     # 或 uv pip install
+agent-kanban --version              # agent-kanban 0.1.0 (contract 3.2)
+agent-kanban skill --print          # 只把 SKILL.md 原样打到 stdout
+agent-kanban skill --dest ~/.config/opencode/skills           # 写 <目录>/agent-kanban/（整棵树）
+agent-kanban skill --check ~/.config/opencode/skills          # 校验 <目录>/agent-kanban/ 的自引用不断链
+```
+
+取出后的结构与源一致：
+
+```
+agent-kanban/
+├── SKILL.md              入口（门序 / 认领 / 记录 / 交接 / 高频错误码）
+├── references/           contract / errors / dispatch / client-opencode / project-conventions
+└── templates/            env-card / dispatch-brief / requirement
+```
+
+`--check` 不带目录时检查包内树；带目录时检查 `<目录>/agent-kanban/`（父目录或该目录本身都行，
+自己改过副本后用）。断链或文件不可解析 -> rc 1 并逐条列出。`--dest` 静默覆盖同名文件但不删除旧文件：
+升级后若有文件改名/删除，先删 `<父目录>/agent-kanban/` 再取。
+
+版本对齐：`--version` 的 `contract` 与 SKILL.md 头 `contract-version` 同一值；不一致＝已装 skill 与已装 MCP 漂移，重跑 `skill --dest` 覆盖。DB 默认 `~/.agent-kanban/kanban.db`，首次任何命令自动建表（幂等），无需迁移命令。
+
 ## 2. HTTP 传输（streamable-http，M1）
 
 MCP HTTP（mcp SDK 2.3.0 streamable-http，挂载 FastAPI `/mcp`）与 stdio 共用同一工具注册表（`build_server()` 单点），工具面 / 写保护 / 错误码两 transport 相同（PRD 4.1）。
@@ -117,12 +145,12 @@ opencode mcp list     # 应显示 connected
 
 ### 3.3 工具命名与权限
 
-opencode 把工具命名为 `<server>_<tool>`，即 `agent_kanban_claim_task`、`agent_kanban_request_review` 等。可按需用权限隐藏/禁用：
+opencode 把工具命名为 `<server>_<tool>`，`<server>` 是配置里的 MCP server 名，可自定义（本文示例 `kanban`）。server 名 `kanban` 时工具显示为 `kanban_claim_task`、`kanban_request_review` 等；server 名若配成 `agent-kanban`/`agent_kanban`，则显示为带该前缀的形态。工具原名固定为 12 个（§概览）。可按需用权限隐藏/禁用（前缀按你自己的 server 名写）：
 
 ```jsonc
 {
   "permissions": [
-    { "action": "agent_kanban_*", "resource": "*", "effect": "allow" }
+    { "action": "kanban_*", "resource": "*", "effect": "allow" }
   ]
 }
 ```
@@ -184,10 +212,12 @@ opencode mcp list                    # agent-kanban 显示 connected
 
 ## 8. 安装协同技能
 
-仓库内 `skills/agent-kanban/` 是给 agent 的协同协议（认领/拆解/记录/交接纪律）。安装方式任选其一：
+协议树随包分发（唯一来源 `skills/agent-kanban/`，构建期注入 wheel，结构见 §1.1），取出用
+`agent-kanban skill --dest <目录>`（复制整棵树），或 `--print` 取入口单文件。落到客户端 skills 目录任选其一：
 
-- 项目级：复制到 `.opencode/skills/agent-kanban/`（或 `.claude/skills/`、`.agents/skills/`）；
-- 全局：复制到 `~/.config/opencode/skills/`；
+- opencode 项目级：`<项目>/.opencode/skills/agent-kanban/`（兼容 `.agents/skills/agent-kanban/`）；
+- opencode 全局：`~/.config/opencode/skills/agent-kanban/`；
+- Claude Code 全局：`~/.claude/skills/agent-kanban/`；
 - 或通过 opencode 配置声明额外技能目录：
 
 ```jsonc
@@ -196,7 +226,11 @@ opencode mcp list                    # agent-kanban 显示 connected
 }
 ```
 
-技能 id = 目录名 `agent-kanban`。模型在遇到 `agent_kanban_*` 工具或看板任务时自动发现并加载（SKILL.md 的 description 触发）。
+技能 id = 目录名 `agent-kanban`。模型在遇到看板工具（前缀随 server 名）或看板任务时自动发现并加载（SKILL.md 的 description 触发）。
+
+升级包后重跑 `agent-kanban skill --dest <同一目录>` 覆盖旧文件（`--dest` 静默覆盖，不提供 `--force`）；
+再跑 `agent-kanban skill --check <同一目录>` 确认 references/templates 自引用完整。
+`agent-kanban --version` 的 `contract` 与 SKILL.md 头 `contract-version` 比对可判断是否漂移。
 
 ## 9. 设计注记（实现时）
 
