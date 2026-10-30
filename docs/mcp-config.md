@@ -92,24 +92,41 @@ curl -i http://127.0.0.1:8000/mcp -H "x-agent-kanban-token: ..." \
 
 ## 3. opencode v2
 
-### 3.0 全局注册（跨目录分发必需）
+### 3.0 跨目录分发（必需）
 
-worker 会话在 kanban 仓之外目录运行（如域项目目录）时，kanban MCP 必须注册在 user 级（绝对路径 + 显式 DB），否则 worker 在该目录没有看板，无法记录/交接：
+worker 会话在 kanban 仓之外目录运行（如域项目目录）时，kanban MCP 必须能从该目录可达，否则 worker 在该目录没有看板，无法记录/交接。两个前置事实（均实测，opencode v2.2.0，2026-10-30）+ 注册方式：
 
-```jsonc
-// ~/.config/opencode/opencode.json(c)
-{
-  "mcp": {
-    "kanban": {
-      "type": "local",
-      "command": ["/path/to/agentic-kanban/.venv/bin/agent-kanban", "mcp"],
-      "environment": { "AGENT_KANBAN_DB": "/home/<user>/.agent-kanban/kanban.db" }
-    }
-  }
-}
-```
+**目标项目须存在项目级 `opencode.json`（哪怕空对象 `{}`）**——否则全局 `~/.config/opencode/opencode.json` 的 mcp 段整片不加载，`opencode mcp list` 报 "No MCP servers configured"（同一全局配置在 kanban 仓内正常列出 4 个 server）。判据是文件存在，与条目写不写 `enabled` 无关。四组 probe 各跑两次（第 4 行为 2026-10-30 b5 复测 4 次，跑到正常为止）：
 
-项目级配置（相对路径 `./.venv/...`）只在 kanban 仓内有效；跨目录派发的正典装法是全局注册（SKILL「派发方协议」预检项）。
+| 目标目录配置 | `opencode mcp list` 实测 |
+|---|---|
+| 无 opencode.json | No MCP servers configured（不可达） |
+| `opencode.json` = `{}` | 首跑空，复跑列出全局 3 个（searxng/semble/collab2markdown） |
+| 只 kanban 条目（无 `enabled`） | 首跑空，复跑列出 kanban + 全局 3 个（全局与项目级合并，不是替换） |
+| 只 kanban 条目（有 `enabled: true`） | 首跑 1、2 次均空，第 3 次列出 kanban + 全局 3 个（`enabled` 不阻止首跑 flake；新目录首开连空 2 次） |
+
+**新目录首开 flake**：配置齐全时 `opencode mcp list` 在新目录首开需多次运行才 connected——2026-10-30 四例实测新目录首开需 3-7 次（3 / 4 / 5 / 7 次，其间报 "No MCP servers configured" 或全 pending；更早实测也有更早正常的：Gmail 批第 2 次、新 worktree 连空 2 次后隔数分钟正常）。可达判据＝kanban 行状态首 token == connected（pending 按不可达）。按一次结果判不可达会误拒派发；派发方派发前在目标目录跑 warm-up 到 kanban 行 connected，上限 8 次（SKILL「派发方协议」预检项 3），派发入口预检仍复跑一次再判。
+
+**注册方式**（kanban 条目一律绝对路径 + 显式 `AGENT_KANBAN_DB`；相对路径 `./.venv/...` 只在 kanban 仓内有效）：
+
+1. **项目级声明（跨目录派发正典装法）**：每个需要看板的项目在自己的项目级 `opencode.json` 声明 kanban 条目。当前全局配置无 kanban 条目（有意移除，2026-10-30），不要依赖全局：
+
+   ```jsonc
+   // <目标项目>/opencode.json
+   {
+     "mcp": {
+       "kanban": {
+         "type": "local",
+         "command": ["/path/to/agentic-kanban/.venv/bin/agent-kanban", "mcp"],
+         "environment": { "AGENT_KANBAN_DB": "/home/<user>/.agent-kanban/kanban.db" }
+       }
+     }
+   }
+   ```
+
+2. **全局（user 级）注册**：条目同上，放 `~/.config/opencode/opencode.json(c)`；仅在目标目录存在项目级 `opencode.json` 时生效（见上「目标项目须存在项目级 opencode.json」）。
+
+可达性核验：目标目录 `opencode mcp list` 显示 kanban connected（首跑判据见上）。
 
 ### 3.1 手工配置（推荐，可保留注释）
 
