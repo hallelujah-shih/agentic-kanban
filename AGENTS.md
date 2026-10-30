@@ -81,6 +81,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   - gh 无独立代理配置，读标准 env；`bash -lc` 登录 shell **不含**代理变量，必须命令前显式带（`HTTPS_PROXY=http://127.0.0.1:8888 HTTP_PROXY=... gh ...`），只靠 git 的 `http.proxy` 配置无效（B3 开 PR 实测：不带 env 报 TLS handshake timeout，带上立即成功）
   - 管道后 rc=$? 取的是管道末命令退出码；关键命令 rc 裸捕获（不接管道）
   - 代理抖动对 gh 是分端点的：`api.github.com/graphql`（`gh pr create/edit`）反复 TLS handshake timeout，同刻 `curl -x` 打 REST `/pulls/20` 稳定 200。gh 卡住时先 `gh auth token` 取 token，再用 `curl -x <proxy> -X PATCH -H "Authorization: Bearer"` 打 REST，不换网络不重登
+  - 给 CLI 传长文本（resume 指令、note、description）先把内容写文件再 `"$(cat f)"`：直接写双引号串时反引号会被 shell 当命令执行（2026-10-30 实锤：指令里的 `_default_transport` 变成 command not found，路径信息被吃，返工指令残缺，只能补发一次）
   - 测试种子插 events 表：id 是全局主键（跨需求也须唯一，用 uuid），seq 才是每需求维度；_seed_review 的 f"{seq:032x}" 形态只在 seq 全局唯一时安全
   - request_review 逐项自评 assessments 正典形态＝[{subtask_id, items:[{item 逐字（按子任务验收文本精确匹配）, state, deviation_reason（not_met/deviated 必填）}]}]；形态错/漏项/重复/引用已 abandon 子任务/超 8KB -> invalid_record（B3.2 起服务端门，消息含可用清单）；**不传 assessments 不构成豁免**；交接前 get_task_detail 核子任务 acceptance 落 state
   - 宿主里跑着的 kanban MCP server 在进程启动时快照代码（`opencode.json` 指向主仓 src）：合并后需重启 MCP server 新逻辑才生效；worker 在 worktree 里交接走的是主仓代码（旧），因此新契约不会在它自己那次交接上生效（B3.2 实测：payload 无 assessment 键）
