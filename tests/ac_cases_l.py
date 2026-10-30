@@ -259,6 +259,21 @@ def l_tool_self_desc():
     ok("l_tool_self_desc: 14 工具名集合 == 预期", names == EXPECTED_TOOLS, str(sorted(names)))
     missing = [t.name for t in tools if not (t.description and t.description.strip())]
     ok("l_tool_self_desc: 14 工具 description 全部非空", not missing, str(missing))
+    # b6（板上 7226dfd6）：状态机语义进工具描述——开工置 in_progress 是板面进度
+    # 与重试信号的来源说明，且明说不硬拒（todo->done 合法），防「协议只活在 SKILL 文本里」复现
+    by_name = {t.name: (t.description or "") for t in tools}
+    ok("l_tool_self_desc: update_subtask 描述含状态机语义（开工置 in_progress + 进度/重试信号唯一来源）",
+       "开工置 in_progress" in by_name["update_subtask"]
+       and "唯一来源" in by_name["update_subtask"]
+       and "重入 in_progress 触发重试计数" in by_name["update_subtask"],
+       by_name["update_subtask"])
+    ok("l_tool_self_desc: update_subtask 描述明说服务端不硬拒（todo->done 也合法）",
+       "不硬拒" in by_name["update_subtask"] and "todo->done 也合法" in by_name["update_subtask"],
+       by_name["update_subtask"])
+    ok("l_tool_self_desc: add_subtask 描述含状态机语义（起始 todo + 开工置 in_progress）",
+       "起始 todo" in by_name["add_subtask"]
+       and "开工把子任务置 in_progress" in by_name["add_subtask"],
+       by_name["add_subtask"])
 
 
 # ==================================================================== R3 读侧（T2）

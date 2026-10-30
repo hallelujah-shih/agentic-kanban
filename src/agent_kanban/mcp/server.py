@@ -107,6 +107,7 @@ async def add_subtask(
     ctx: Context | None = None,
 ) -> CallToolResult:
     """拆解子任务（写 decomposition 事件）。
+    状态机语义: 新建子任务起始 todo；开工把子任务置 in_progress（经 update_subtask）——状态迁移是板面进度（done/total）与重试超限信号的唯一来源，详见 update_subtask 描述。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, title, ordinal, acceptance（可选，验收项列表）。
     错误: no_active_claim / duplicate_subtask（title 重复）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     """
@@ -120,6 +121,7 @@ async def update_subtask(
     requirement_id: str, subtask_id: str, state: str, ctx: Context | None = None
 ) -> CallToolResult:
     """更新子任务状态（todo/in_progress/done/blocked/abandoned）。
+    状态机语义: 开工置 in_progress、完成置 done、放弃置 abandoned（原因进 note）——状态迁移是板面进度（done/total）、覆盖缺口和重试超限信号的唯一来源（重入 in_progress 触发重试计数）；服务端不硬拒迁移路径（todo->done 也合法），这是协议纪律。
     参数: requirement_id（32 位全 id 或 8~31 位唯一前缀，空白/大小写/连字符不敏感）, subtask_id, state。
     错误: no_active_claim / not_found / ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）/ invalid_record（非法 state）。
     """

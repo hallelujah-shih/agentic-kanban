@@ -96,6 +96,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   - worktree 里跑 e2e 前先 `npm ci`：node_modules 同样不随 worktree 同步，裸 `npx playwright test` 命中 npx 缓存缺 `@playwright/test` 报 MODULE_NOT_FOUND（2026-10-30 b5 实锤）
   - 新 worktree 切出后先 warm-up 再 dispatch：新目录首开 `opencode mcp list` 连空 2 次、甚至第 3 次 pending 是已知首开 flake，dispatch 预检 2 次尝试会误拒（mcp_unreachable）；在目标目录跑 warm-up 到 `kanban` 行出现 connected 为止（实测需 3-7 次，上限 8；2026-10-30 user 裁决：走派发方 warm-up，预检复跑次数不变）
   - skill 树仓内相对路径 token 门（p3_skill_text(1)）：skill 树内任何 .md（含 references/）禁出现仓内路径 token（如 `cli.py`）——CLI 一律以 `agent-kanban`（console script 名）指称。客户端特有 token 在 references/ 是正典要求（p3_skill_text(13)），但仓内路径在树内任何位置都禁（2026-10-30 b4 实锤：dispatch.md 首稿写 `cli.py dispatch`，全量红 1，改 `agent-kanban dispatch` 即绿）
+  - `tests/run_ac.py --only` 只收一个参数（逗号分隔列表）；写多个 --only flag 只取**第一个**，「结果 N/M」只对应第一例——多选须 `--only a,b,c`（2026-10-30 b6 实锤：连写三个 --only 只跑了 9/9 的第一例，误读为三例全绿）
 
 ## 主循环纪律
 
