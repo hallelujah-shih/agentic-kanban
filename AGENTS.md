@@ -33,11 +33,11 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 入口形态：本地开发机＝构建机（仓根 `.venv`）；远端＝GitHub Actions。
 - tier 阶梯（低 -> 高；tier 命名与组成按 ci-verification.md 正典）：
   1. 快速反馈（折入重跑最低 tier，SDD 机器纪律款）：`TMPDIR=<产物目录>/tmp .venv/bin/python tests/run_ac.py --only <用例 id>`
-  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **918/918**（2026-10-30 PR #19 合入后；worktree 内跑必带 `PYTHONPATH=$PWD/src`，见下）
+  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **950/950**（2026-10-30 PR #21 合入后；worktree 内跑必带 `PYTHONPATH=$PWD/src` 且先 `uv sync`，见下）
   3. 本地 e2e：`TMPDIR=<产物目录>/tmp AK_E2E_DB=<产物目录>/ak-e2e.db npx playwright test` —— 基线 **15/15**（撞端口加 `E2E_PORT`；sqlite disk I/O error 先查 /tmp quota＝环境面）
   4. 本地 docker 双轨：默认轨 build + smoke healthz 200；pypi 轨命令与
      办公网 MITM 局限见 ci-verification.md
-  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 918/918 +
+  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 950/950 +
      e2e 15/15 + docker 双轨 build + healthz 200）
   6. **CI 门槛（合并门槛，远端）**：特性分支 push -> GH Actions 三 job
      test/e2e/docker 全绿 + 分支保护必需 check `test`+`docker`（e2e 观察期：
@@ -90,6 +90,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   - models 的 UUIDHex＝sa.Uuid(as_uuid=False)：ORM 读回 36-char 带连字符，写路径/MCP 返回/事件 claim_id 均 32-hex——跨面比对先 services.ids.norm_id 归一
   - worktree 内 docker smoke 禁裸 `docker compose up`（compose 挂生产 ~/.agent-kanban:/data 且撞生产 8765 端口，restart 策略会crash-loop）：用 `docker run --rm --network host -e AGENT_KANBAN_PORT=<空闲端口> -v <scratch>:/data <image>` + curl healthz 后即 rm
   - opencode 服务 switchModel（POST /api/session/{id}/model）成功返回 204 No Content（非 200），wait 端点同为 204；mock 与状态判定须对齐真实回码，禁镜像实现假设（2026-10-30 实锤：resume --model 必失败，mock 回 200 掩盖此差异）
+  - worktree 里跑全量套件前先 `uv sync`：worktree 的 `.venv` 不会随主仓同步，缺 `dependency-groups.test`（如 hatchling）会让 AC 的 wheel 构建用例报 `No module named hatchling`，看起来像代码红（2026-10-30 skill-package 批复验实锤，白白怀疑一轮）
 
 ## 主循环纪律
 
