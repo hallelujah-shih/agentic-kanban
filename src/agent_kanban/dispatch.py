@@ -365,6 +365,8 @@ def _build_prompt(*, req, rid: str, ws: str | None, env_card: str | None,
         lines.append("- 产物落点: 环境卡未声明（按协议「工作区就绪」定落点："
                      "跨项目产物落所属项目仓，禁在本仓新建目录；无归属问人）")
     lines.append("- 交付物须落永久位置并用 ls 核存在（会话目录/批次 tmp 不是交付物落点，禁作唯一副本）")
+    lines.append("- 看板兜底: 拿不到 kanban MCP 工具（预检跳过或环境漂移）-> 立即停止并报告"
+                 "（写板面不可达走 CLI 正典路径），不硬写代码、不静默继续")
     if history:
         lines += ["", "## 历轮交付物（本需求历史 request_review，seq 升序）"]
         lines += history

@@ -1085,3 +1085,38 @@ def k_mcp_precheck_unreachable_rejects():
            calls.read_text(encoding="utf-8") if calls.exists() else "未调用")
     finally:
         stop()
+
+
+def k_b5_brief_fallback():
+    print("== b5-a3: 派发稿交付规格节含看板兜底指令（停止并报告 / 写板面走 CLI 正典路径 / 不硬写代码不静默继续）")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-b5-fallback-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    rid = cli_ok(db, "new", "--title", "兜底指令需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    sid = f"ses_req_{rid[:8]}"
+    srv, stop = _mock_start({"get_code": 404})
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    try:
+        res = cli(db, "dispatch", "--requirement-id", rid, extra=extra)
+        ok("dispatch rc=0", res.returncode == 0,
+           f"rc={res.returncode} stderr={res.stderr}")
+        prompts = [r for r in srv._log if r["method"] == "POST"
+                   and r["path"] == f"/api/session/{sid}/prompt"]
+        ok("派发稿已投递", len(prompts) == 1, f"n={len(prompts)}")
+        if prompts:
+            t = json.loads(prompts[0]["body"])["text"]
+            # 落点判据：兜底行须在交付规格节（与落点提醒同位置），散落别节必红
+            spec_start = t.index("## 交付规格")
+            spec = t[spec_start:t.index("\n## ", spec_start + 1)]
+            ok("交付规格节含兜底指令（停止并报告 + kanban 工具）",
+               "立即停止并报告" in spec and "kanban" in spec, spec)
+            ok("兜底指令含触发面（预检跳过或环境漂移）",
+               "预检跳过或环境漂移" in spec, spec)
+            ok("兜底指令含写板面不可达出路（CLI 正典路径）",
+               "CLI 正典路径" in spec, spec)
+            ok("兜底指令禁硬写代码/静默继续",
+               "不硬写代码" in spec and "不静默继续" in spec, spec)
+    finally:
+        stop()

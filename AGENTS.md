@@ -75,7 +75,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - workspace: /home/shih/test/AgenticKanban（主仓，main 只读）；开发工作走 .worktree/<name>；产物落点: docs/（文档）/ tests/（用例）；临时产物: /home/shih/.tmp-ak-m16/<batch>/
 - context: docs/PRD.md（spec v3.2）/ docs/design.md / docs/web.md / docs/ops/ci-verification.md / docs/adr/0000-known-gaps.md；看板协议 = skills/agent-kanban/SKILL.md
 - skills: strict-sdd-loop（开发循环）/ adversarial-review（审查）/ technical-research（调研，调研类任务默认）
-- tools/mcp: kanban（项目级 ./.venv/bin/agent-kanban mcp；跨目录用全局注册，见 docs/mcp-config.md §3.0）/ searxng（user 级）/ webfetch
+- tools/mcp: kanban（项目级 ./.venv/bin/agent-kanban mcp；跨目录派发＝目标项目自声明项目级 kanban 条目（绝对路径 + 显式 DB），见 docs/mcp-config.md §3.0）/ searxng（user 级）/ webfetch
 - reach: 操作面 = 本地构建机（仓根 .venv）；测试 = tests/run_ac.py + npx playwright e2e（tier 阶梯见上「验证入口」）；观察面 = 生产 DB ~/.agent-kanban/kanban.db（只读）+ docker 容器 + healthz
 - 红线: 禁直推 main（仅 MR）；生产 DB 只读，写走 CLI/MCP；禁 /tmp 作产物目录；Q1/Q2/Q3 裁决前禁 test/e2e 镜像现实现凑绿；merge 由 user 裁决
 - ops 教训:
