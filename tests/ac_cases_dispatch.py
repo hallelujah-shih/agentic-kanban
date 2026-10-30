@@ -927,10 +927,18 @@ def k_dispatch_placement():
                "- 产物落点: docs/（文档）/ tests/（用例）" in t1, t1)
             ok("交付物永久位置提醒在规格内（禁 tmp 作唯一副本）",
                "禁作唯一副本" in t1 and t1.index("## 交付规格") < t1.index("禁作唯一副本"), t1)
+            # b6（板上 7226dfd6）：子任务状态迁移提醒须在交付规格节（与落点提醒同位置），散落别节必红
+            spec = t1[t1.index("## 交付规格"):t1.index("\n## ", t1.index("## 交付规格") + 1)]
+            ok("交付规格含子任务状态迁移提醒（开工置 in_progress + 进度/重试信号唯一来源）",
+               "开工置 in_progress" in spec and "唯一来源" in spec, spec)
+            ok("状态迁移提醒明说服务端不硬拒（todo->done 也合法）",
+               "不硬拒" in spec and "todo->done 也合法" in spec, spec)
         if t2:
             ok("无落点 -> 指路跨项目归属与问人（不静默省略）",
                "- 产物落点: 环境卡未声明" in t2 and "问人" in t2
                and "禁在本仓新建目录" in t2, t2)
+            ok("状态迁移提醒为无条件行（无落点需求也带）",
+               "开工置 in_progress" in t2, t2)
     finally:
         stop()
 
