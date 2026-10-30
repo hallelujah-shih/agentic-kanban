@@ -105,7 +105,7 @@ worker 会话在 kanban 仓之外目录运行（如域项目目录）时，kanba
 | 只 kanban 条目（无 `enabled`） | 首跑空，复跑列出 kanban + 全局 3 个（全局与项目级合并，不是替换） |
 | 只 kanban 条目（有 `enabled: true`） | 首跑 1、2 次均空，第 3 次列出 kanban + 全局 3 个（`enabled` 不阻止首跑 flake；新目录首开连空 2 次） |
 
-**新目录首开 flake**：配置齐全时 `opencode mcp list` 在新目录首开需多次运行才 connected——2026-10-30 三例实测新目录首开需 4-7 次（4 / 5 / 7 次，其间报 "No MCP servers configured" 或全 pending；更早实测也有更早正常的：Gmail 批第 2 次、新 worktree 连空 2 次后隔数分钟正常）。可达判据＝kanban 行状态首 token == connected（pending 按不可达）。按一次结果判不可达会误拒派发；派发方派发前在目标目录跑 warm-up 到 kanban 行 connected，上限 8 次（SKILL「派发方协议」预检项 3），派发入口预检仍复跑一次再判。
+**新目录首开 flake**：配置齐全时 `opencode mcp list` 在新目录首开需多次运行才 connected——2026-10-30 四例实测新目录首开需 3-7 次（3 / 4 / 5 / 7 次，其间报 "No MCP servers configured" 或全 pending；更早实测也有更早正常的：Gmail 批第 2 次、新 worktree 连空 2 次后隔数分钟正常）。可达判据＝kanban 行状态首 token == connected（pending 按不可达）。按一次结果判不可达会误拒派发；派发方派发前在目标目录跑 warm-up 到 kanban 行 connected，上限 8 次（SKILL「派发方协议」预检项 3），派发入口预检仍复跑一次再判。
 
 **注册方式**（kanban 条目一律绝对路径 + 显式 `AGENT_KANBAN_DB`；相对路径 `./.venv/...` 只在 kanban 仓内有效）：
 
