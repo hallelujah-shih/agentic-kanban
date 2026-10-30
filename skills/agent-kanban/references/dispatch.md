@@ -21,7 +21,7 @@
 
 1. **工作目录状态**：目标目录有未提交改动或有并发会话 -> 用隔离工作区（worktree）或等。
 2. **工作区上下文**：环境卡或其等价来源（需求 description 指针 / README + 目录结构）。缺则自建最小上下文，并在派发稿注明「无环境卡，按 <来源> 自建」，不要因此停摆。
-3. **目标目录能连上看板**：MCP 注册就位，DB 路径（环境变量）与派发方一致或明确指向临时 DB。用 `opencode mcp list` 核时，**首跑报「不可达」要复跑一次再判**——已实测（2026-10-30 Gmail 批）opencode.json 配置齐全时首跑仍偶报「No MCP servers configured」，复跑立即正常；按一次结果判不可达会误拒派。复跑仍不可达才按不可达处置，首跑 flake 的依据记进 note。派发入口（`agent-kanban dispatch`）把本项做成硬门：在目标目录跑 `opencode mcp list`（命令可经 env `AGENT_KANBAN_DISPATCH_MCP_LIST_CMD` 覆盖），首跑不可达复跑一次，复跑仍不可达即拒派（错误码 `mcp_unreachable`，不建会话、不写板 note）；workspace 指针缺失时跳过本项（worker 就绪门自核）。
+3. **目标目录能连上看板**：MCP 注册就位，DB 路径（环境变量）与派发方一致或明确指向临时 DB。用 `opencode mcp list` 核时，**首跑报「不可达」要复跑一次再判**——已实测（2026-10-30 Gmail 批）opencode.json 配置齐全时首跑仍偶报「No MCP servers configured」，复跑立即正常；按一次结果判不可达会误拒派。复跑仍不可达才按不可达处置，首跑 flake 的依据记进 note。目标目录刚创建（新 worktree / 新项目目录）-> **派发前先在该目录跑一次 `opencode mcp list` 作 warm-up**：warm-up 报空是已知首开 flake（2026-10-30 两例实测：新目录连空 2 次、第 3 次正常），不作不可达结论；派发入口预检仍复跑一次再判。派发入口（`agent-kanban dispatch`）把本项做成硬门：在目标目录跑 `opencode mcp list`（命令可经 env `AGENT_KANBAN_DISPATCH_MCP_LIST_CMD` 覆盖），首跑不可达复跑一次，复跑仍不可达即拒派（错误码 `mcp_unreachable`，不建会话、不写板 note）；workspace 指针缺失时跳过本项（worker 就绪门自核）。
 4. **落点**：交付物类需求的会话工作目录指向**永久位置**（项目目录 / worktree），不指向批次临时目录——临时工作区里的产物在交接前必须搬到永久位置。
 
 ## 派发稿五要素

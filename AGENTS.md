@@ -94,6 +94,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   - opencode 服务 switchModel（POST /api/session/{id}/model）成功返回 204 No Content（非 200），wait 端点同为 204；mock 与状态判定须对齐真实回码，禁镜像实现假设（2026-10-30 实锤：resume --model 必失败，mock 回 200 掩盖此差异）
   - worktree 里跑全量套件前先 `uv sync`：worktree 的 `.venv` 不会随主仓同步，缺 `dependency-groups.test`（如 hatchling）会让 AC 的 wheel 构建用例报 `No module named hatchling`，看起来像代码红（2026-10-30 skill-package 批复验实锤，白白怀疑一轮）
   - worktree 里跑 e2e 前先 `npm ci`：node_modules 同样不随 worktree 同步，裸 `npx playwright test` 命中 npx 缓存缺 `@playwright/test` 报 MODULE_NOT_FOUND（2026-10-30 b5 实锤）
+  - 新 worktree 切出后先 warm-up 再 dispatch：新目录首开 `opencode mcp list` 连空 2 次是已知首开 flake，dispatch 预检 2 次尝试会误拒（mcp_unreachable）；先在目标目录手工跑一次 warm-up（2026-10-30 user 裁决：走派发方 warm-up，预检复跑次数不变）
   - skill 树仓内相对路径 token 门（p3_skill_text(1)）：skill 树内任何 .md（含 references/）禁出现仓内路径 token（如 `cli.py`）——CLI 一律以 `agent-kanban`（console script 名）指称。客户端特有 token 在 references/ 是正典要求（p3_skill_text(13)），但仓内路径在树内任何位置都禁（2026-10-30 b4 实锤：dispatch.md 首稿写 `cli.py dispatch`，全量红 1，改 `agent-kanban dispatch` 即绿）
 
 ## 主循环纪律
