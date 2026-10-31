@@ -194,8 +194,11 @@ grep -E "^\s*[0-9]+\) E(1|5|7|12) " /home/shih/.tmp-ak-m16/b12-render-oracle/red
 tail -2 /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log
 ```
 
-Expected: `rc=1`；失败计数行恰 4（E1、E5、E7、E12），汇总行含 `4 failed`（manifest 无
-`s10`/`s10_summary_line`/`s3_reason`，在板数仍 7）。
+Expected: `rc=1`；失败 3 条（E1、E5、E12），汇总行含 `3 failed`（manifest 无
+`s10`/`s10_summary_line`/`s3_reason`，在板数仍 7）。E7 不红＝`toEqual` 忽略数组尾部
+undefined 元素（`[s6,s9]` vs `[s6,s9,undefined]` 判等），机制自证留档
+red-e7-deviation.log；折入轮加 `expect(SEEDS.s10).toBeTruthy()` 守卫闭合该盲区
+（守卫的红态「manifest 无 s10」canonical 不可达，无红出生证，登记 G13 盲区段）。
 
 - [ ] **Step 3: 扩夹具（seed.py）**
 
