@@ -23,6 +23,7 @@ ALLOWED_EDGES: dict[tuple[str | None, str], str] = {
     ("CLAIMED", "BLOCKED"): AGENT,
     ("BLOCKED", "CLAIMED"): HUMAN,
     ("CLAIMED", "OPEN"): HUMAN,
+    ("CLAIMED", "REOPEN"): HUMAN,
     ("DONE", "REOPEN"): HUMAN,
     ("REOPEN", "OPEN"): HUMAN,
     ("REOPEN", "CANCELLED"): HUMAN,

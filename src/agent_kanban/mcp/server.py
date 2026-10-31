@@ -196,6 +196,7 @@ async def request_review(
           summary_line（交接一句话：做了什么/先看哪）。
     错误: illegal_state（非 CLAIMED）/ invalid_record（缺 evidence 或 summary_line / assessments 形态错或漏项）/ ambiguous_id（前缀命中多条，错误信息含候选，加长前缀重试）。
     记录契约: summary_line 必写「做了什么/先看哪」一句话，缺/空 -> invalid_record。
+    round: marker 与事件 payload 含 round（第几轮交接：1+本需求此前 review_request 数）。
     """
     return await _call(
         ctx, "request_review", requirement_id=requirement_id, evidence=evidence,

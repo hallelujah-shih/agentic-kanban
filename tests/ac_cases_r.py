@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ac_lib import (CLI, MCP, REST, REPO_ROOT, TIMEOUT, VENV_PY, cli, cli_ok, cli_err,
@@ -243,7 +242,7 @@ def r_lease():
     db = new_db()
     rid, _ = _seed_review(db, "r-lease")
     old = query(db, "SELECT id, lease_expires_at FROM claims WHERE requirement_id=?", (rid,))[0]
-    t_reject = time.time()
+    t_reject = datetime.now(timezone.utc)
     cli_ok(db, "reject", "--requirement-id", rid, "--reason", "x")
     row = query(db, "SELECT ended_at IS NULL AS active, lease_expires_at, release_reason "
                       "FROM claims WHERE requirement_id=?", (rid,))[0]
@@ -257,8 +256,8 @@ def r_lease():
     m.close()
     new_exp = datetime.fromisoformat(res["lease_expires_at"])
     ok("r_lease: 新认领全新 2h 窗口（lease > 拒时刻 + 7190s）",
-       new_exp > datetime.fromtimestamp(t_reject) + timedelta(seconds=7190),
-       f"new={new_exp.isoformat()} reject_at={t_reject}")
+       new_exp > t_reject + timedelta(seconds=7190),
+       f"new={new_exp.isoformat()} reject_at={t_reject.isoformat()}")
 
 
 def r_mcp_surface():
