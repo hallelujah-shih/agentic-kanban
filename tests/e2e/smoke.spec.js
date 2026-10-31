@@ -1,4 +1,4 @@
-// tests/e2e/smoke.spec.js —— e2e 冒烟 15 spec（plan T3 契约表；声明序=执行序，workers=1 共享单服务单 DB）
+// tests/e2e/smoke.spec.js —— e2e 冒烟 16 spec（plan T3 契约表；声明序=执行序，workers=1 共享单服务单 DB）
 //
 // 选择器登记表（壳 = src/agent_kanban/api/web.py board_shell():91 / detail_shell():302，零产品改动）：
 //   看板: #board-root .cols（四列容器，仅在板 tab 渲染成功后存在）/ .card（卡片 <a>）
@@ -47,9 +47,14 @@
 //      （progress_note，提纲=seed headline，manifest s3_headline）。E9/E10 s9 人面链=3
 //      （progress_note XSS headline + note 空 title + progress_note 旧 "progress"）；
 //      s9 CLAIMED 活跃租约无 reconcile（与 s3 区别）。
+// [C9] 夹具扩容（s10 review 种子带 summary_line）：E1 在板 7->8、E7 CLAIMED 集合
+//      [s6,s9]->[s6,s9,s10]；红步红因＝期望值未更新（陷阱库 3），非壳缺陷。
+//      反证位＝五处 mutation 探针（web.py:193/:418 剥腿 ×4 + 顺序颠倒 ×1），红日志留档。
+//      精确文本的前缀/提示字面锚壳实现（选择器登记表 smoke.spec.js:6/:10）与 web.md:31 的
+//      「人面确认:」/「解除阻塞:」措辞。
 //
 // 种子：webServer command 先跑 tests/e2e/seed.py 写 <AK_E2E_DB>.seeds.json 清单
-// （s1-s7 必建 + s9；预探针触发后备则 s8，e5_target 指向 E5 对象）。
+// （s1-s7 必建 + s9 + s10；预探针触发后备则 s8，e5_target 指向 E5 对象）。
 
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
@@ -81,18 +86,22 @@ test('E1 看板渲染与信号', async ({ page }) => {
   const dialogs = [];
   page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss().catch(() => {}); });
   await boardReady(page);
-  // 7 条在板种子标题全部渲染（各恰 1 卡；含 s9＝夹具扩容契约推论，[C7]）
-  for (const k of ['s1', 's2', 's3', 's4', 's5', 's6', 's9']) {
+  // 8 条在板种子标题全部渲染（各恰 1 卡；含 s9/s10＝夹具扩容契约推论，[C7][C9]）
+  for (const k of ['s1', 's2', 's3', 's4', 's5', 's6', 's9', 's10']) {
     await expect(cardByTitle(page, T[k]), `${k} 卡在场`).toHaveCount(1);
   }
-  // 在板总数恰 7（集合等价的计数投影；s7 DONE 不在板，[C7]）
-  await expect(page.locator('#top-count')).toHaveText('7 个在板需求');
+  // 在板总数恰 8（集合等价的计数投影；s7 DONE 不在板，[C7][C9]）
+  await expect(page.locator('#top-count')).toHaveText('8 个在板需求');
   await expect(cardByTitle(page, T.s7), 's7(DONE) 不在板').toHaveCount(0);
   // s3 看板行信号 = 等待人横幅（[C1]：attention 前提不成立，置顶顺序不断言，交 Q2）
   const s3wait = cardByTitle(page, T.s3).locator('.wait');
   await expect(s3wait, 's3 等待人横幅').toHaveCount(1);
   await expect(s3wait).toContainText('等待人:');
   await expect(s3wait).toContainText('kanban approve ' + SEEDS.s3);
+  await expect(s3wait).toHaveText(`等待人: ${SEEDS.s3_reason} kanban approve ${SEEDS.s3}`);
+  const s10wait = cardByTitle(page, T.s10).locator('.wait');
+  await expect(s10wait, 's10 等待人横幅').toHaveCount(1);
+  await expect(s10wait).toHaveText(`等待人: ${SEEDS.s10_summary_line} kanban approve ${SEEDS.s10}`);
   // 渲染期间无 XSS/异常 dialog
   expect(dialogs).toEqual([]);
 });
@@ -272,6 +281,7 @@ test('E5 深潜 s3：等待人横幅含 kanban approve 静态文案', async ({ p
   await expect(banner, '等待人横幅在场').toHaveCount(1);
   await expect(banner).toContainText('等待人决策:');
   await expect(banner).toContainText('kanban approve ' + SEEDS[target]);
+  await expect(banner).toHaveText(`等待人决策: ${SEEDS.s3_reason} （解除阻塞: kanban approve ${SEEDS[target]}）`);
 });
 
 test('E6 另一进程推进 -> SSE 刷新，新标题 15s 内上板', async ({ page }) => {
@@ -301,9 +311,9 @@ test('E7 /board?status=CLAIMED 过滤强断言', async () => {
   const { status, body } = await jget('/board?status=CLAIMED');
   expect(status).toBe(200);
   // 此时 s4 已归档(E4b)、s5 已删(E4c)、s1/s2 及 E4a/E6 新建均 OPEN、s3 BLOCKED、s7 DONE、
-  // s9 CLAIMED（夹具扩容契约推论，[C7]：[s6]->[s6,s9]；id 随机序，双侧 sort 后比较）
+  // s9/s10 CLAIMED（夹具扩容契约推论，[C7][C9]：[s6]->[s6,s9,s10]；id 随机序，双侧 sort 后比较）
   expect(body.tasks.map((t) => t.requirement_id).sort())
-    .toEqual([SEEDS.s6, SEEDS.s9].sort());
+    .toEqual([SEEDS.s6, SEEDS.s9, SEEDS.s10].sort());
 });
 
 test('E8 三 tab：已完成 s7 在场，回在板 s1 在场', async ({ page }) => {
@@ -370,4 +380,14 @@ test('E11 深潜 s3：簿记折叠（计数 + 默认收起 + 展开平铺 3 行�
   await expect(rows, '展开平铺 3 行').toHaveCount(3);
   const badges = (await rows.locator('.badge').allTextContents()).sort();
   expect(badges).toEqual(['reconcile/info', 'state_change/info', 'state_change/info']);
+});
+
+test('E12 深潜 s10：等待横幅显 summary_line（review 优先腿）', async ({ page }) => {
+  await boardReady(page);
+  await cardByTitle(page, T.s10).click();
+  await expect(page.locator('#detail-root h1')).toHaveText(T.s10);
+  const banner = page.locator('.wait-banner');
+  await expect(banner, '等待人横幅在场').toHaveCount(1);
+  await expect(banner).toHaveText(
+    `等待人决策: ${SEEDS.s10_summary_line} （人面确认: kanban approve ${SEEDS.s10}）`);
 });
