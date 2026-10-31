@@ -46,6 +46,7 @@ from ac_cases_p import p3_skill, p3_skill_links, p3_skill_text
 from ac_cases_q import q_jira_source, q_no_argv_escape, q_planning_entry, q_set_expectations_error
 from ac_cases_r import (r_delegated, r_happy, r_illegal_states, r_lease, r_mcp_surface,
                         r_no_reason, r_rest, r_rounds, r_target, r_zero_input)
+from ac_cases_s import s_journey, s_journey_shapes, s_surface_bidirectional
 
 TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
@@ -123,6 +124,9 @@ TESTS: dict[str, object] = {
     "r_illegal_states": r_illegal_states, "r_rounds": r_rounds,
     "r_delegated": r_delegated, "r_lease": r_lease,
     "r_mcp_surface": r_mcp_surface, "r_rest": r_rest, "r_zero_input": r_zero_input,
+    "s_surface_bidirectional": s_surface_bidirectional,
+    "s_journey": s_journey,
+    "s_journey_shapes": s_journey_shapes,
 }
 
 
