@@ -250,8 +250,17 @@ async def reject_review(
 ) -> dict:
     """评审拒绝（BCD b10 S1）：CLAIMED + 待审(kind=review) -> REOPEN；同事务结束认领
     （release_reason=review_rejected，不续租）+ 写 review_reject 事件（拒因/指向/轮次）。
-    round 读被拒交接标记（marker.round，legacy 无键按 1）；重复拒 = illegal_state。"""
+    round 读被拒交接标记（marker.round，legacy 无键按 1）；重复拒 = illegal_state。
+    校验序（与 release 同惯例：语义必填先于状态校验）：reason（invalid_record）
+    -> require_requirement（not_found）-> state（illegal_state）-> marker（illegal_state）
+    -> target（invalid_record）-> claim（not_found）。"""
     now = now or now_utc()
+    if not reason or not str(reason).strip():
+        raise BusinessError(
+            "invalid_record",
+            'reject requires a reason: one-line reject reason. e.g. reason="复验发现缺陷：X"',
+            requirement_id,
+        )
     req = await require_requirement(session, requirement_id)
     requirement_id = norm_id(req.id)
     if req.state != "CLAIMED":
@@ -261,12 +270,6 @@ async def reject_review(
         raise BusinessError(
             "illegal_state",
             "reject requires a pending review (awaiting_human kind=review)",
-            requirement_id,
-        )
-    if not reason or not str(reason).strip():
-        raise BusinessError(
-            "invalid_record",
-            'reject requires a reason: one-line reject reason. e.g. reason="复验发现缺陷：X"',
             requirement_id,
         )
     norm_target: str | None = None

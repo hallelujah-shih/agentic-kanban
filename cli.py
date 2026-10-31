@@ -141,7 +141,7 @@ def _cmd_reject(args: argparse.Namespace) -> int:
         if len(cands) == 1:
             args.requirement_id = cands[0]["requirement_id"]
         else:
-            rid = _pick_zero_input(cands)
+            rid = _pick_zero_input(cands, header="多条待审项，请用 --requirement-id 指定目标:")
             if rid is None:
                 return 1
             args.requirement_id = rid
@@ -449,20 +449,23 @@ def _zero_input_candidates() -> list[dict] | None:
     return result.get("awaiting") or []
 
 
-def _print_awaiting_list(cands: list[dict], *, file) -> None:
-    print("多条待决项，请用 --requirement-id 指定目标:", file=file)
+def _print_awaiting_list(cands: list[dict], *, file,
+                         header: str = "多条待决项，请用 --requirement-id 指定目标:") -> None:
+    print(header, file=file)
     for i, c in enumerate(cands, 1):
         print(f"  {i}. {c['requirement_id'][:8]} [{c['state']}] {c['title']}", file=file)
 
 
-def _pick_zero_input(cands: list[dict]) -> str | None:
+def _pick_zero_input(cands: list[dict],
+                     *, header: str = "多条待决项，请用 --requirement-id 指定目标:") -> str | None:
     """多条候选分支（宁拒不猜，BCD 强 5）：非 tty -> stderr 列表拒；tty -> 编号选择
     （非数字/越界/EOF -> 拒）。拒绝返回 None。行含 state（BLOCKED 被 approve 是解阻
-    而非 DONE，列表必须可区分——R6）。"""
+    而非 DONE，列表必须可区分——R6）。header 缺省通用文案；reject 传「待审项」
+    （候选已按 kind=review 过滤，I8 口径）。"""
     if not sys.stdin.isatty():
-        _print_awaiting_list(cands, file=sys.stderr)
+        _print_awaiting_list(cands, file=sys.stderr, header=header)
         return None
-    _print_awaiting_list(cands, file=sys.stdout)
+    _print_awaiting_list(cands, file=sys.stdout, header=header)
     sys.stdout.write("输入序号: ")
     sys.stdout.flush()
     line = sys.stdin.readline()

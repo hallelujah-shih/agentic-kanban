@@ -146,6 +146,19 @@ def r_illegal_states():
     r_open = seed_req(db, "r-illegal-open")
     code, _ = cli_err(db, "reject", "--requirement-id", r_open, "--reason", "x")
     ok("r_illegal: OPEN 未认领 -> illegal_state", code == "illegal_state", code)
+    # OPEN + 空白 reason（P4 P1-1：语义必填先于状态校验，PRD §4.2 口径，与 release 同惯例）
+    r_blank = seed_req(db, "r-illegal-blankreason")
+    before = _ev(db, r_blank)
+    res = cli(db, "reject", "--requirement-id", r_blank, "--reason", "  ")
+    after = _ev(db, r_blank)
+    state = query(db, "SELECT state FROM requirements WHERE id=?", (r_blank,))[0]["state"]
+    ok("r_illegal: OPEN + 空白 reason -> invalid_record（先于状态校验，PRD §4.2 口径）",
+       res.returncode == 1 and res.stderr.strip().startswith("invalid_record")
+       and "illegal_state" not in res.stderr,
+       f"rc={res.returncode} stderr={res.stderr[:120]}")
+    ok("r_illegal: OPEN + 空白 reason 零写入（state/事件链逐字不变）",
+       before == after and state == "OPEN" and _marker(db, r_blank) is None,
+       f"state={state} marker={_marker(db, r_blank)} events {len(before)}->{len(after)}")
     # BLOCKED（claim 后 mark_blocked）
     r_blk = seed_req(db, "r-illegal-blocked")
     m = MCP(db).start()
@@ -349,7 +362,8 @@ def r_zero_input():
     before = query(db3, "SELECT COUNT(*) AS n FROM events")[0]["n"]
     res = _run_cli_nul(db3, ["reject", "--reason", "x"])
     after = query(db3, "SELECT COUNT(*) AS n FROM events")[0]["n"]
-    ok("z2: 2 条待审非交互 -> rc1 列候选拒零写",
+    ok("z2: 2 条待审非交互 -> rc1 列候选拒零写（头部「多条待审项」，I8 过滤口径）",
        res.returncode == 1 and before == after
-       and r_a[:8] in res.stderr and r_b[:8] in res.stderr and "Traceback" not in res.stderr,
+       and r_a[:8] in res.stderr and r_b[:8] in res.stderr
+       and "多条待审项" in res.stderr and "Traceback" not in res.stderr,
        f"rc={res.returncode} {before}->{after} stderr={res.stderr[:300]}")
