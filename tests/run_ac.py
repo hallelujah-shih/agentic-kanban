@@ -24,7 +24,8 @@ from ac_cases_j import export_csv
 from ac_cases_dispatch import (k_b5_brief_fallback, k_bg_claim_binding, k_bg_heartbeat,
                                k_bg_note_basis, k_bg_renew_binding, k_dispatch_authfail,
                                k_dispatch_badstate, k_dispatch_failnote, k_dispatch_main,
-                               k_dispatch_placement, k_dispatch_reuse, k_dispatch_timeout,
+                               k_dispatch_placement, k_dispatch_reopen_foldback, k_dispatch_reuse,
+                               k_dispatch_timeout,
                                k_history_assembly, k_mcp_precheck_flake_recovers,
                                k_mcp_precheck_unreachable_rejects, k_resume, k_resume_errcase,
                                k_resume_model_204, k_resume_model_err)
@@ -85,6 +86,7 @@ TESTS: dict[str, object] = {
     "k_dispatch_reuse": k_dispatch_reuse,
     "k_dispatch_timeout": k_dispatch_timeout,
     "k_history_assembly": k_history_assembly,
+    "k_dispatch_reopen_foldback": k_dispatch_reopen_foldback,
     "k_dispatch_placement": k_dispatch_placement,
     "k_dispatch_failnote": k_dispatch_failnote,
     "k_mcp_precheck_flake_recovers": k_mcp_precheck_flake_recovers,
