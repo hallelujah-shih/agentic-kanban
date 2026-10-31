@@ -17,7 +17,8 @@ from ..errors import BusinessError
 from ..models import Claim, Event, Milestone, Requirement, Subtask, new_id
 from . import lease as lease_svc
 from .ids import norm_id
-from .operations_util import TERMINAL_STATES, add_event, normalize_anchors, normalize_title
+from .operations_util import (TERMINAL_STATES, add_event, anchor_item_text, normalize_anchors,
+                              normalize_title, validate_anchor_entries)
 from .retry_limit import (
     RETRY_LIMIT_CONN,
     RETRY_LIMIT_SURFACE,
@@ -67,6 +68,9 @@ def _validate_decision_payload(payload: Any) -> None:
     """decision 结构钉死：{choice, rationale, alternatives:[{option, rejected_reason}]}。"""
     if not isinstance(payload, dict):
         raise BusinessError("invalid_record", "decision requires a structured payload", None)
+    choice = payload.get("choice")
+    if not choice or not str(choice).strip():
+        raise BusinessError("invalid_record", "decision requires choice", None)
     rationale = payload.get("rationale")
     if not rationale or not str(rationale).strip():
         raise BusinessError("invalid_record", "decision requires rationale", None)
@@ -105,6 +109,7 @@ async def new_requirement(
     now: datetime | None = None,
 ) -> dict:
     now = now or now_utc()
+    validate_anchor_entries(acceptance)
     req = Requirement(
         id=new_id(),
         source=source,
@@ -132,6 +137,7 @@ async def set_expectations(
     now = now or now_utc()
     req = await require_requirement(session, requirement_id)
     requirement_id = norm_id(req.id)
+    validate_anchor_entries(acceptance)
     old = req.acceptance or []
     new = normalize_anchors(acceptance, old)
     removed = {a.get("id") for a in old if isinstance(a, dict) and a.get("id")} - {
@@ -656,6 +662,7 @@ async def add_subtask(
     )
     if ord_dup:
         raise BusinessError("invalid_record", f"ordinal {ordinal} already used", requirement_id)
+    validate_anchor_entries(acceptance)
     st = Subtask(
         id=new_id(), requirement_id=requirement_id, ordinal=ordinal, title=norm_title,
         acceptance=list(acceptance or []), state="todo", created_at=now, updated_at=now,
@@ -930,24 +937,11 @@ async def request_review(
     return {"requirement_id": requirement_id, "awaiting_human": req.awaiting_human}
 
 
-def _acc_text(a: Any) -> str | None:
-    """验收条目文本归一（normalize_anchors 同口径：裸字符串 str -> {"item": str}）。
-
-    空白/空文本条目返回 None（既不进覆盖分母也不参与匹配）：这种条目无法被逐字匹配
-    （提交同样文本会在 item 校验处被拒），若计入分母则需求永久卡在漏评。
-    """
-    v = a.get("item") if isinstance(a, dict) else a
-    if v is None:
-        return None
-    t = str(v)
-    return t if t.strip() else None
-
-
 def _assessment_available(subtasks: list) -> str:
     """本需求可用 subtask_id 与验收条目清单（错误消息自纠用，BCD b3.2 S11）。"""
     lines = []
     for st in subtasks:
-        items = [t for t in (_acc_text(a) for a in (st.acceptance or [])) if t is not None]
+        items = [t for t in (anchor_item_text(a) for a in (st.acceptance or [])) if t is not None]
         lines.append(f"subtask_id={norm_id(st.id)} (state={st.state}): acceptance={items}")
     return "\n".join(lines) if lines else "（本需求无子任务）"
 
@@ -1060,7 +1054,7 @@ def _validate_assessments(requirement_id: str, assessments: Any, subtasks: list)
             continue
         sid = norm_id(st.id)
         for a in (st.acceptance or []):
-            t = _acc_text(a)
+            t = anchor_item_text(a)
             if t is not None and (sid, t) not in assessed:
                 got = "、".join(f"『{x}』" for x in submitted.get(sid, [])) or "（未提交该子任务）"
                 missing.append(f"subtask_id={sid} 期望逐字「{t}」（你提交的：{got}）")
@@ -1085,7 +1079,7 @@ def _persist_self_assessment(requirement_id: str, validated: list[dict], subtask
     """
     required = sum(
         1 for st in subtasks if st.state != "abandoned"
-        for a in (st.acceptance or []) if _acc_text(a) is not None
+        for a in (st.acceptance or []) if anchor_item_text(a) is not None
     )
     covered = 0
     added = 0
@@ -1094,7 +1088,7 @@ def _persist_self_assessment(requirement_id: str, validated: list[dict], subtask
         current = list(st.acceptance or [])
         by_item: dict[str, Any] = {}
         for a in current:
-            t = _acc_text(a)
+            t = anchor_item_text(a)
             if t is not None and t not in by_item:
                 by_item[t] = a
         seen: set[str] = set()
@@ -1116,7 +1110,7 @@ def _persist_self_assessment(requirement_id: str, validated: list[dict], subtask
                 added += 1
             new_acc.append(entry)
         for a in current:
-            t = _acc_text(a)
+            t = anchor_item_text(a)
             if t is None or t not in seen:
                 new_acc.append(a)
         _check_payload_size(

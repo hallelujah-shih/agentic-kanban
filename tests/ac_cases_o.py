@@ -382,31 +382,34 @@ def sa_size():
 
 
 def sa_blankacc():
-    """S18 相邻（R1 复审 P2-9）：空白/空文本验收条目不进覆盖分母。
+    """b11 写侧拒（G36 配套行为变更）：add_subtask 空白 item 条目拒写；存量空白条目兜底见 ac_cases_s 断言 36。
 
-    这种条目无法被逐字匹配（提交同样文本会在 item 校验处被判「缺 item」），若计入分母，
-    需求就永久卡在漏评、唯一出路是 abandon 子任务。
+    写侧不再产生空白条目（validate_anchor_entries 拒，消息点名 item 文本）；读侧分母兜底
+    （空白条目不计分母、不卡死交接）保留，其 oracle 移到 ac_cases_s s_journey_shapes(36)
+    （SQL 直插 legacy 种子，先例 ac_cases_m._seed）。
     """
-    print("== sa_blankacc: 空白文本验收条目不进分母（不卡死交接）")
+    print("== sa_blankacc: 写侧拒空白 item 条目 + 零写入；正常条目不受影响")
     db = new_db()
     rid, m, (s1,) = _mk_claimed(db, "sa-blankacc", [
-        {"title": "impl1", "ordinal": 1, "acceptance": [{"item": "   "}, {"item": "Y1"}]},
+        {"title": "impl1", "ordinal": 1, "acceptance": [{"item": "Y1"}]},
     ])
+    before = _snapshot(db, rid)
+    code, msg = _call_err2(m, "add_subtask", {
+        "requirement_id": rid, "title": "impl2", "ordinal": 2,
+        "acceptance": [{"item": "   "}, {"item": "Y2"}]})
+    after = _snapshot(db, rid)
+    ok("sa_blankacc: add_subtask 空白 item 条目 -> invalid_record（消息点名 item 文本）且零写入",
+       code == "invalid_record" and "item text" in msg and before == after,
+       f"{code} {msg[:100]} changed={before != after}")
     m.call_ok("request_review", {"requirement_id": rid, "evidence": {"test_summary": "t"},
                                  "summary_line": "sa 交接",
                                  "assessments": [{"subtask_id": s1["subtask_id"],
                                                   "items": [{"item": "Y1", "state": "met"}]}]})
-    asm = _rr_payload(db, rid).get("assessment")
-    ok("sa_blankacc: 空白条目不计分母（required:1 covered:1）",
-       asm == {"required": 1, "covered": 1, "added": 0, "received_subtasks": 1, "received_items": 1},
-       json.dumps(asm))
-    _i11("sa_blankacc", asm)
     d = m.call_ok("get_task_detail", {"requirement_id": rid})
     acc = d["subtasks"][0]["acceptance"]
-    ok("sa_blankacc: 空白条目保留且不重复（另无重复 Y1）",
-       sorted(str(a.get("item")) for a in acc) == ["   ", "Y1"], json.dumps(acc))
-    ok("sa_blankacc: Y1 落 state=met（其余键不丢）",
+    ok("sa_blankacc: 正常条目 Y1 落库 + 自评 state=met（其余键不丢）",
        [a for a in acc if a.get("item") == "Y1"] == [{"item": "Y1", "state": "met"}], json.dumps(acc))
+    _i11("sa_blankacc", _rr_payload(db, rid).get("assessment"))
     m.close()
 
 

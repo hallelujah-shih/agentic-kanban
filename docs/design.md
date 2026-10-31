@@ -115,10 +115,12 @@ agent 与人 inline 交互的结果（批准方案、纠偏、解答问题）由
 
 ---
 
-## 6. MCP 工具面（记录渠道，约 12 个）
+## 6. MCP 工具面（记录渠道，14 个）
 
 | 工具 | 语义 | 归类 |
 |---|---|---|
+| new_requirement | 建需求（规划入口，与人面 `new` 同 service 层）：title + description + source/source_ref + acceptance[]（id 缺省自动分配）；不写事件 | 记录（规划通道） |
+| set_expectations | 设置/修改验收锚（唯一入口，两面同 service 层）；删除被 links_to 引用的锚项被拒 | 记录（规划通道） |
 | list_tasks | status 过滤，获取未完成任务 | 读 |
 | get_task_detail | 需求 + 子任务树 + 里程碑 + 事件流 + 认领 | 读 |
 | claim_task | 独占认领，返回租约 | 认领 |
@@ -126,7 +128,7 @@ agent 与人 inline 交互的结果（批准方案、纠偏、解答问题）由
 | update_subtask | state: todo/in_progress/done/blocked/abandoned | 记录（结构） |
 | add_milestone | title + planned_at | 记录（结构） |
 | update_milestone | state: planned/in_progress/achieved + actual_at | 记录（结构） |
-| add_record | kind = decision / risk / deviation / decomposition / note；decision 必含 alternatives + 拒绝理由；deviation severity 强制 >= attention | 记录（事件） |
+| add_record | kind = decision / risk / deviation / decomposition / note；decision 必含 choice + rationale + alternatives + 拒绝理由；deviation severity 强制 >= attention | 记录（事件） |
 | update_progress | progress 备注（不覆盖派生值） | 记录 |
 | request_review | 完工交接：设置 awaiting_human(kind=review)，持久化验收自评，附证据（至少一项，缺证据拒绝）；不改状态。前置 state=CLAIMED | 交接 |
 | mark_blocked | 声明阻塞：转移 CLAIMED -> BLOCKED + 设置 awaiting_human(kind=blocked)，附原因 | 交接（含状态转移） |

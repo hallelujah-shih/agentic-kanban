@@ -35,11 +35,11 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - 入口形态：本地开发机＝构建机（仓根 `.venv`）；远端＝GitHub Actions。
 - tier 阶梯（低 -> 高；tier 命名与组成按 ci-verification.md 正典）：
   1. 快速反馈（折入重跑最低 tier，SDD 机器纪律款）：`TMPDIR=<产物目录>/tmp .venv/bin/python tests/run_ac.py --only <用例 id>`
-  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **1055/1055**（b10 审查拒绝批次新增 58 断言：reject 37 + REOPEN 复派折回 19 + 校验序 2；历史值 997/988/976/950/918/902/859/835/816/696/521 为当时基线，勿再引用；worktree 内跑必带 `PYTHONPATH=$PWD/src` 且先 `uv sync`，见下）
+  2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **1090/1090**（b11 conformance 判据 +36 断言、sa_blankacc 净 -1；历史值 1055/997/988/976/950/918/902/859/835/816/696/521 为当时基线，勿再引用；worktree 内跑必带 `PYTHONPATH=$PWD/src` 且先 `uv sync`，见下）
   3. 本地 e2e：`TMPDIR=<产物目录>/tmp AK_E2E_DB=<产物目录>/ak-e2e.db npx playwright test` —— 基线 **15/15**（撞端口加 `E2E_PORT`；sqlite disk I/O error 先查 /tmp quota＝环境面）
   4. 本地 docker 双轨：默认轨 build + smoke healthz 200；pypi 轨命令与
      办公网 MITM 局限见 ci-verification.md
-  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 1055/1055 +
+  5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 1090/1090 +
      e2e 15/15 + docker 双轨 build + healthz 200）
   6. **CI 门槛（合并门槛，远端）**：特性分支 push -> GH Actions 三 job
      test/e2e/docker 全绿 + 分支保护必需 check `test`+`docker`（e2e 观察期：
@@ -83,6 +83,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   - gh 无独立代理配置，读标准 env；`bash -lc` 登录 shell **不含**代理变量，必须命令前显式带（`HTTPS_PROXY=http://127.0.0.1:8888 HTTP_PROXY=... gh ...`），只靠 git 的 `http.proxy` 配置无效（B3 开 PR 实测：不带 env 报 TLS handshake timeout，带上立即成功）
   - 管道后 rc=$? 取的是管道末命令退出码；关键命令 rc 裸捕获（不接管道）
   - 代理抖动对 gh 是分端点的：`api.github.com/graphql`（`gh pr create/edit`）反复 TLS handshake timeout，同刻 `curl -x` 打 REST `/pulls/20` 稳定 200。gh 卡住时先 `gh auth token` 取 token，再用 `curl -x <proxy> -X PATCH -H "Authorization: Bearer"` 打 REST，不换网络不重登
+  - CI 逐 job 状态打 `/check-suites/<id>/check-runs`；`/commits/<sha>/check-suites` 只给 suite 级 conclusion + `check_runs_url`，无 `workflow_runs` 键（2026-10-31 实锤：按 `workflow_runs` 解析的轮询循环空转 20 次，suite 级 conclusion 已 success 时直接读 check-runs）
   - 给 CLI 传长文本（resume 指令、note、description）先把内容写文件再 `"$(cat f)"`：直接写双引号串时反引号会被 shell 当命令执行（2026-10-30 实锤：指令里的 `_default_transport` 变成 command not found，路径信息被吃，返工指令残缺，只能补发一次）
   - 测试种子插 events 表：id 是全局主键（跨需求也须唯一，用 uuid），seq 才是每需求维度；_seed_review 的 f"{seq:032x}" 形态只在 seq 全局唯一时安全
   - request_review 逐项自评 assessments 正典形态＝[{subtask_id, items:[{item 逐字（按子任务验收文本精确匹配）, state, deviation_reason（not_met/deviated 必填）}]}]；形态错/漏项/重复/引用已 abandon 子任务/超 8KB -> invalid_record（B3.2 起服务端门，消息含可用清单）；**不传 assessments 不构成豁免**；交接前 get_task_detail 核子任务 acceptance 落 state
