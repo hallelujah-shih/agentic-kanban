@@ -65,8 +65,8 @@ Scenario 2 Then（展示半句）；docs/adr/0000-known-gaps.md G13（缺陷原�
 - e2e 仪器：Playwright 1.64.1（package.json `^1.64.1`）、node v24.21.0；夹具 DB
   `AK_E2E_DB=/home/shih/.tmp-ak-m16/b12-render-oracle/ak-e2e.db`（webServer 段每次 run 前
   `rm -f ${AK_E2E_DB}*` 重建，确定性前提）；`TMPDIR=/home/shih/.tmp-ak-m16/b12-render-oracle/tmp`。
-- 夹具变更（新增 s10）＝仪器改动：基线 15/15 作废，重新基线 16/16（预算＝一次全量 e2e 跑），
-  旧 15/15 证据标 superseded。
+- 夹具变更（新增 s10）＝仪器改动：基线 15/15 作废，重新基线 16/16（预算＝本批 e2e 跑次：全量 2 次
+  + 单 spec 探针 5 次），旧 15/15 证据标 superseded。
 - mutation 探针不改变仪器（跑完 `git checkout` 恢复）；红绿证据同源＝同一 spec 文件、同一基 commit。
 
 ## 不修清单（file:line + 理由 + 登记位置）
@@ -178,7 +178,8 @@ test('E12 深潜 s10：等待横幅显 summary_line（review 优先腿）', asyn
 // [C9] 夹具扩容（s10 review 种子带 summary_line）：E1 在板 7->8、E7 CLAIMED 集合
 //      [s6,s9]->[s6,s9,s10]；红步红因＝期望值未更新（陷阱库 3），非壳缺陷。
 //      反证位＝五处 mutation 探针（web.py:193/:418 剥腿 ×4 + 顺序颠倒 ×1），红日志留档。
-//      精确文本断言锚 web.md:31 的「等待人决策:」/「人面确认:」/「解除阻塞:」字面。
+//      精确文本的前缀/提示字面锚壳实现（选择器登记表 smoke.spec.js:6/:10）与 web.md:31 的
+//      「人面确认:」/「解除阻塞:」措辞。
 ```
 
 - [ ] **Step 2: 跑 e2e 确认红（夹具未扩，断言已写）**
@@ -188,11 +189,13 @@ TMPDIR=/home/shih/.tmp-ak-m16/b12-render-oracle/tmp \
 AK_E2E_DB=/home/shih/.tmp-ak-m16/b12-render-oracle/ak-e2e.db \
 npx playwright test > /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log 2>&1
 rc=$?
-echo "rc=$rc"; grep -c "failed" /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log
+echo "rc=$rc"
+grep -E "^\s*[0-9]+\) E(1|5|7|12) " /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log | wc -l
+tail -2 /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log
 ```
 
-Expected: `rc=1`；E1、E5、E7、E12 四条 FAIL（manifest 无 `s10`/`s10_summary_line`/`s3_reason`，
-在板数仍 7）。
+Expected: `rc=1`；失败计数行恰 4（E1、E5、E7、E12），汇总行含 `4 failed`（manifest 无
+`s10`/`s10_summary_line`/`s3_reason`，在板数仍 7）。
 
 - [ ] **Step 3: 扩夹具（seed.py）**
 
@@ -438,13 +441,15 @@ Expected: `git status --short` 空；`git show --stat HEAD` 只含两个文件�
 ```bash
 .venv/bin/python -m py_compile tests/e2e/seed.py
 node --check tests/e2e/smoke.spec.js
+.venv/bin/python -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"
 grep -n "15/15" AGENTS.md docs/ops/ci-verification.md
-TMPDIR=/home/shih/.tmp-ak-m16/b12-render-oracle/tmp .venv/bin/python tests/run_ac.py --only s_surface_bidirectional
+TMPDIR=/home/shih/.tmp-ak-m16/b12-render-oracle/tmp PYTHONPATH=$PWD/src \
+.venv/bin/python tests/run_ac.py --only s_surface_bidirectional
 ```
 
-Expected: py_compile 无错；node --check 无错；grep 只剩 `docs/ops/ci-verification.md:12`（b10 历史
-证据行，不修清单 4）；`s_surface_bidirectional` 全绿（docs/web.md 与 AGENTS.md 属 corpus 门，
-ac_cases_s.py:41-42）。
+Expected: py_compile 无错；node --check 无错；yaml 解析无异常；grep 只剩
+`docs/ops/ci-verification.md:12`（b10 历史证据行，不修清单 4）；`s_surface_bidirectional` 全绿
+（docs/web.md 与 AGENTS.md 属 corpus 门，ac_cases_s.py:41-42）。
 
 - [ ] **Step 5: 提交**
 
@@ -485,13 +490,23 @@ Expected: `rc=0`，断言计数 1090/1090（本批不触碰后端套件；若计
 - [ ] **Step 3: docker 默认轨 build + smoke**
 
 ```bash
-docker build -t ak-b12-smoke . && docker run --rm --network host -e AGENT_KANBAN_PORT=18799 -v /home/shih/.tmp-ak-m16/b12-render-oracle/scratch:/data ak-b12-smoke &
+docker build -t ak-b12-smoke . > /home/shih/.tmp-ak-m16/b12-render-oracle/docker-build.log 2>&1
+rc=$?
+echo "build rc=$rc"
+docker run -d --rm --network host -e AGENT_KANBAN_PORT=18799 \
+  -v /home/shih/.tmp-ak-m16/b12-render-oracle/scratch:/data ak-b12-smoke \
+  > /home/shih/.tmp-ak-m16/b12-render-oracle/docker-run.log 2>&1
+rc=$?
+cid=$(cat /home/shih/.tmp-ak-m16/b12-render-oracle/docker-run.log)
+echo "run rc=$rc cid=$cid"
+for i in $(seq 1 20); do code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18799/healthz); [ "$code" = "200" ] && break; sleep 1; done
+echo "healthz=$code"
+docker stop "$cid"
 ```
 
-（禁裸 `docker compose up`：compose 挂生产 ~/.agent-kanban:/data 且撞生产 8765 端口。起容器后
-`curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18799/healthz` 应为 200，随后 rm 容器。）
-
-Expected: build rc=0；healthz 200。留档 `docker-smoke.log`。
+Expected: `build rc=0`、`run rc=0`、`healthz=200`（`docker stop` 因 `--rm` 即清理）。禁裸
+`docker compose up`（compose 挂生产 ~/.agent-kanban:/data 且撞生产 8765 端口）。若 18799 被占，
+换空闲端口并同步 curl 端口。
 
 - [ ] **Step 4: 写证据行并提交**
 
@@ -516,4 +531,4 @@ Expected: commit 成功；`git status --short` 空。
 - 派发方复验（Phase 5）：折入前重跑最高 tier（全量 + e2e + docker）。
 - 合入走 PR（永不直推 main），merge 由 user 裁决。
 - 域外发现（本批不修，须报告并登记）：`docs/ops/skill-package-verification.md:52` 的 15/15 为历史
-  证据；G13 行自身锚点 `web.py:191-192` 已漂移（现行 :192-193）。
+  证据行，不改（不修清单 4）。
