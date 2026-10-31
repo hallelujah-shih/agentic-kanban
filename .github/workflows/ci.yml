@@ -88,7 +88,7 @@ jobs:
         # 浏览器下载无缓存（20-40s，登记不修清单）；本机 Fedora 本地跑用不带 --with-deps 的
         # `npx playwright install chromium`（CI 步骤以 GH ubuntu 为准）。
         run: npx playwright install --with-deps chromium
-      - name: e2e 冒烟（12 spec，workers=1）
+      - name: e2e 冒烟（16 spec，workers=1）
         # 端口 18765 / DB /tmp/ak-e2e.db 为 CI 默认值（GH 全新 VM 无冲突）；
         # 服务与种子由 playwright.config.js webServer 一体管（seed.py 先行无并发）。
         run: npx playwright test

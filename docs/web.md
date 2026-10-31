@@ -53,7 +53,7 @@
 2. 数据与 `/board` JSON 一致（核对 title/state/进度/信号标签）。
 3. 点深潜链接进深潜壳：三层结构（层0 决策线/层1 蒸馏/层2 次要）；验收对照缺口标红；事件流提纲优先（人面事件 `<details>` 默认收起，点开见 content 全文 + payload JSON；簿记事件折入「簿记 N」组默认收起）；kind/severity 过滤选中后按过滤结果平铺（覆盖分组，E3c/E11 口径）。
 4. 生命周期操作：新建表单提交（带/不带 acceptance 两行锚、带 Jira 链接）成功且看板重拉出现新任务；对 CLAIMED 需求 archive 成功（回看板，任务出现在已归档 tab）；delete 输入错误标题被拒、正确标题删成功（回看板，任务消失）。深链直接访问不存在的任务 -> 友好文案“任务不存在（可能已被人删除）”。
-5. 等待人提示：对 awaiting_human 任务确认深潜页与卡片横幅显示 `kanban approve <id>` 提示（静态文字，非按钮）；横幅/卡片 `summary_line` 在场优先显（评审交接一句话），缺失降级显 reason（E5 口径：s3 blocked 无 summary_line，显 reason）。
+5. 等待人提示：对 awaiting_human 任务确认深潜页与卡片横幅显示 `kanban approve <id>` 提示（静态文字，非按钮）；横幅/卡片文本按 `summary_line` 优先（评审交接一句话），缺失降级显 `reason`——渲染级断言覆盖四腿：E1（卡片：s10 显 summary_line、s3 显 reason）、E5（深潜横幅：blocked 显 reason）、E12（深潜横幅：review 显 summary_line 且不显 generic reason）。`kind` 兜底腿经 canonical API 不可达（mark_blocked 强制 reason 非空、request_review 强制 summary_line 非空），无渲染级断言，盲区登记见 docs/adr/0000-known-gaps.md G13。
 6. SSE 断连重连行为：断网/服务重启后 EventSource 自动重连，onopen 触发重拉，页面结构自愈（无历史回填，数据以重拉结果为准）；页面打开状态下另一进程（如 MCP stdio agent）推进状态 -> 页面 2s 内自动刷新（`AGENT_KANBAN_SSE_POLL_MS`）。
 7. `GET /board?status=CLAIMED` 等过滤有效。
 8. 非 localhost 无 token 访问 -> 401，页面显示加载失败。
