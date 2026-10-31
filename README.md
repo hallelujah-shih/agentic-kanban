@@ -6,7 +6,7 @@ AI 时代的看板：不是任务状态跟踪，而是**大黑箱（AI 自动化
 
 | 路径 | 内容 |
 |---|---|
-| `docs/PRD.md` | 需求规格 v3.2（当前权威，含反黑箱目标、状态机、MCP 契约、验收判据） |
+| `docs/PRD.md` | 需求规格 v3.3（当前权威，含反黑箱目标、状态机、MCP 契约、验收判据） |
 | `docs/design.md` | 设计理由与决策过程（为何是记录面而非控制面） |
 | `docs/mcp-config.md` | MCP 接入配置说明（opencode v2 / Claude Code / 通用客户端） |
 | `skills/agent-kanban/` | 协同技能：告诉其他 agent 如何通过 MCP 认领/拆解/记录/交接 |

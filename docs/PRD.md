@@ -296,7 +296,7 @@ requirement_id 输入统一归一（strip + 大小写不敏感 + 连字符去除
 
 威胁模型：
 - A: 本机任意进程通过接口写记录污染审计链 -> 默认 localhost + token（非 localhost）+ 写保护（3.3）。残余：直接写 SQLite 文件不可防（G1）。
-- B: agent 内容不可信（偏离不登记、自评造假）-> 结构强制（decision 必含 alternatives、验收自评表、deviation 强制 attention）+ 派生偏离信号（不依赖自愿登记）+ 人抽查（G2）。
+- B: agent 内容不可信（偏离不登记、自评造假）-> 结构强制（decision 必含 choice + alternatives、验收自评表、deviation 强制 attention）+ 派生偏离信号（不依赖自愿登记）+ 人抽查（G2）。
 - C: 无鉴权 API 暴露任务内容 -> 默认 localhost 绑定。
 
 ---

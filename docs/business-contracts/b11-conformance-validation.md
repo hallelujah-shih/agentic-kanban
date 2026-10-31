@@ -85,7 +85,7 @@
 - I3 SKILL「工具命名」节工具集合 == MCP 注册表集合（双向），且计数一致。
 - I4 corpus 内引用的 `agent-kanban <cmd>` 子命令必须存在于 CLI 子命令表。
 - I5 每个新增判据必须能咬住反例（注入假引用/删除真实引用必红）。
-- I6 状态机无 (REOPEN, CLAIMED) 边：REOPEN 上直接 claim 必 `illegal_state`。
+- I6 REOPEN 上直接 claim 必 `illegal_state`（机制：claim 起点写死 OPEN + transition rowcount 守卫；ALLOWED_EDGES 表加 (REOPEN,CLAIMED) 边不改变此结果，r1 盲审实测 17/17 仍绿）。
 
 软不变量（登记残余，不强制）：
 - S1 存量数据不迁移：历史缺 choice 的 decision 事件保留。

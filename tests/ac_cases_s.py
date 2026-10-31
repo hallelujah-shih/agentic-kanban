@@ -23,9 +23,10 @@ oracle 纪律：断言来源是 SKILL/PRD 文本（协议 spec）与 CLI 子命�
 
 静态判据 corpus（明确排除面，登记 known-gaps 残余）：skill 树（skills/agent-kanban/**.md，
 SKILL.md 命名节为 oracle）+ docs/PRD.md + docs/design.md + docs/mcp-config.md + docs/web.md
-+ AGENTS.md。排除：docs/adr（gap 登记引用坏命令作证据）、docs/ops（历史验证记录）、
-docs/plans、docs/superpowers、docs/business-contracts。规则盲区（不咬）：flag 名漂移、
-JSON 数组形态的命令引用（"args": ["run","agent-kanban","mcp"]）、基线数字 vs 套件实跑数。
++ AGENTS.md + README.md。排除：docs/adr（gap 登记引用坏命令作证据）、docs/ops（历史验证记录）、
+docs/plans、docs/superpowers、docs/business-contracts。规则盲区（不咬，G40）：flag 名/单
+dash/大写 token/JSON 数组形态的命令引用（"args": ["run","agent-kanban","mcp"]）、基线数字
+vs 套件实跑数、payload 形态未从 SKILL 文本派生、注册表 oracle 依赖 SDK 私有 _tool_manager。
 """
 
 from __future__ import annotations
@@ -37,9 +38,12 @@ import sqlite3
 from ac_lib import MCP, REPO_ROOT, cli, cli_ok, new_db, ok, query
 
 SKILL_ROOT = REPO_ROOT / "skills" / "agent-kanban"
-CORPUS_DOCS = ("docs/PRD.md", "docs/design.md", "docs/mcp-config.md", "docs/web.md", "AGENTS.md")
+CORPUS_DOCS = ("docs/PRD.md", "docs/design.md", "docs/mcp-config.md", "docs/web.md",
+               "AGENTS.md", "README.md")
 _NAMING_RE = re.compile(r"(\d+)\s*个工具的原名固定[：:]\s*(.+)")
-_TRAIL_PUNCT = "`\"' )]} ,;:."
+_COUNT_RE = re.compile(r"(\d+)\s*个\s*工具|工具(面|原名|集|清单)[^0-9\n]{0,15}(\d+)\s*个")
+_TRAIL_PUNCT = "`\"' )]} ,;:.（）「」『』，；：。"
+_TOK_SPLIT = re.compile(r"[\s（）「」『』，；：。]+")
 
 
 # ---------------------------------------------------------------- 静态判据工具
@@ -79,13 +83,33 @@ def _cli_subcommands() -> set[str]:
     return set(re.findall(r'add_parser\("([a-z_]+)"', text))
 
 
+def _naming_variant(section: str, mode: str) -> set[str] | None:
+    """token 级注入（禁整段字面 replace）：add＝命名列表末尾追加探针 token renew_tool；
+    del＝删除末位 token list_awaiting。返回变换后的工具名集合；注入失败（命名行缺失或
+    行未变化）返回 None，断言侧显式红。"""
+    lines = (section or "").splitlines()
+    for i, ln in enumerate(lines):
+        if not _NAMING_RE.search(ln):
+            continue
+        if mode == "add":
+            new = re.sub(r"(list_awaiting)(。)", r"\1 / renew_tool\2", ln, count=1)
+        else:
+            new = re.sub(r" / list_awaiting(。)", r"\1", ln, count=1)
+        if new == ln:
+            return None
+        lines[i] = new
+        return _naming_names("\n".join(lines))[1]
+    return None
+
+
 def _cli_ref_reds(line: str, subcommands: set[str]) -> list[str]:
     """行内每个 agent-kanban 出现按 plan rev3 修正版规则分类；返回不可分类（红）的上下文。
 
     规则（逐字）：前紧邻字符 ∈ {/ - _ . ASCII 字母数字} -> identifier/path 合法；后无 token
-    （行尾）合法；后随 token 以 -- 开头＝flag 合法；后随 token 剥尾随标点
-    ` " ' ) ] } , ; : . 后为空或非 [a-z_]+ ＝散文/版本/标点合法；剥后为 [a-z_]+ 必须 ∈ CLI
-    子命令集合，否则红。匹配按行内 token 边界，禁跨行。
+    （行尾）合法；后随首块（按空白 + 全角标点（）「」『』，；：。切分）以 -- 开头＝flag 合法；
+    首块剥尾随标点 ` " ' ) ] } , ; : . （）「」『』，；：。 后为空或非 [a-z_]+
+    ＝散文/版本/标点合法；剥后为 [a-z_]+ 必须 ∈ CLI 子命令集合，否则红。匹配按行内 token 边界，
+    禁跨行。
     """
     reds = []
     for m in re.finditer(r"agent-kanban", line):
@@ -93,10 +117,10 @@ def _cli_ref_reds(line: str, subcommands: set[str]) -> list[str]:
         prev = line[start - 1] if start else ""
         if prev and (prev in "/-_." or (prev.isascii() and prev.isalnum())):
             continue
-        toks = line[m.end():].split()
-        if not toks:
+        blocks = [b for b in _TOK_SPLIT.split(line[m.end():]) if b]
+        if not blocks:
             continue
-        nxt = toks[0]
+        nxt = blocks[0]
         if nxt.startswith("--"):
             continue
         stripped = nxt.rstrip(_TRAIL_PUNCT)
@@ -127,17 +151,21 @@ def s_surface_bidirectional():
        count is not None and count == len(registry),
        f"declared={count} registry={len(registry)}")
 
+    count_hits = []
     count_reds = []
     n = len(registry)
     for rel, body in files.items():
         for i, line in enumerate(body.splitlines(), 1):
-            if "工具" not in line:
-                continue
-            for m in re.finditer(r"(\d+)\s*个", line):
-                if int(m.group(1)) != n:
+            for m in _COUNT_RE.finditer(line):
+                count_hits.append(f"{rel}:{i}")
+                if int(m.group(1) or m.group(3)) != n:
                     count_reds.append(f"{rel}:{i} {m.group(0)}")
-    ok("s_surface(4): corpus 内同线含「工具」的「<n> 个」计数 == 注册表大小",
-       not count_reds, "; ".join(count_reds[:6]))
+    probes = ["本工具提供 3 个选项", "该工具 12 个参数中只有 2 个必填",
+              "工具命名节有 14 个条目，其中 3 个是交接类"]
+    probe_hits = [p for p in probes if _COUNT_RE.search(p)]
+    ok("s_surface(4): corpus 内工具计数行（收窄正则）== 注册表大小（探针不假红 + 命中下界防过窄）",
+       not count_reds and not probe_hits and len(count_hits) >= 4,
+       "; ".join(count_reds[:6]) or f"hits={len(count_hits)} probes={probe_hits}")
 
     subs = _cli_subcommands()
     ref_reds = []
@@ -146,26 +174,31 @@ def s_surface_bidirectional():
             if "agent-kanban" not in line:
                 continue
             ref_reds += [f"{rel}:{i}: {ctx}" for ctx in _cli_ref_reds(line, subs)]
-    ok("s_surface(5): corpus 内每个 agent-kanban 引用可分类（不可分类即红）",
-       not ref_reds, "; ".join(ref_reds[:6]))
+    n_skill = sum(1 for _ in SKILL_ROOT.rglob("*.md"))
+    total_refs = sum(body.count("agent-kanban") for body in files.values())
+    ok("s_surface(5): corpus 内每个 agent-kanban 引用可分类（输入面守卫：文件集齐 + 引用数下界）",
+       not ref_reds and len(CORPUS_DOCS) == 6 and len(files) == n_skill + len(CORPUS_DOCS)
+       and total_refs >= 20,
+       "; ".join(ref_reds[:6]) or f"files={len(files)} skill={n_skill} docs={len(CORPUS_DOCS)} refs={total_refs}")
 
     red_inj = _cli_ref_reds("详见 `agent-kanban serve` 用法", subs)
+    red_fw = _cli_ref_reds("跑 agent-kanban serve，然后看板", subs)
     g_eol = _cli_ref_reds("入口是 agent-kanban", subs)
     g_path = _cli_ref_reds("落到 <父目录>/agent-kanban/ 下", subs)
     g_cmd = _cli_ref_reds("uv run agent-kanban mcp", subs)
-    ok("s_surface(6): 断言 5 判别力自检（注入假子命令 serve 必红；行尾裸写/路径尾斜杠/真子命令必绿）",
-       bool(red_inj) and not g_eol and not g_path and not g_cmd,
-       f"red_inj={len(red_inj)} g_eol={g_eol} g_path={g_path} g_cmd={g_cmd}")
+    ok("s_surface(6): 断言 5 判别力自检（注入假子命令 serve 必红含全角逗号连写形；行尾裸写/路径尾斜杠/真子命令必绿）",
+       bool(red_inj) and bool(red_fw) and not g_eol and not g_path and not g_cmd,
+       f"red_inj={len(red_inj)} red_fw={len(red_fw)} g_eol={g_eol} g_path={g_path} g_cmd={g_cmd}")
 
-    _, n_inj = _naming_names(section.replace(" / list_awaiting。", " / list_awaiting / renew_tool。"))
-    ok("s_surface(7): 断言 2 判别力自检（命名节注入 renew_tool -> ⊄ 注册表必红）",
-       "renew_tool" in (n_inj or set()) and not (n_inj or set()) <= registry,
-       f"ghosts={sorted((n_inj or set()) - registry)}")
+    n_inj = _naming_variant(section, "add")
+    ok("s_surface(7): 断言 2 判别力自检（token 级注入 renew_tool -> ⊄ 注册表必红；注入失败必红）",
+       n_inj is not None and "renew_tool" in n_inj and not n_inj <= registry,
+       f"n_inj={sorted(n_inj) if n_inj else None} ghosts={sorted((n_inj or set()) - registry)}")
 
-    _, n_del = _naming_names(section.replace(" / list_awaiting。", "。"))
-    ok("s_surface(8): 断言 1 判别力自检（命名节删 list_awaiting -> ⊉ 注册表必红，防空集 vacuous 绿）",
-       "list_awaiting" not in (n_del or set()) and not registry <= (n_del or set()),
-       f"missing={sorted(registry - (n_del or set()))}")
+    n_del = _naming_variant(section, "del")
+    ok("s_surface(8): 断言 1 判别力自检（token 级删 list_awaiting -> ⊉ 注册表必红，防空集 vacuous 绿；删除失败必红）",
+       n_del is not None and "list_awaiting" not in n_del and not registry <= n_del,
+       f"n_del={sorted(n_del) if n_del else None} missing={sorted(registry - (n_del or set()))}")
 
 
 # ---------------------------------------------------------------- 剧本走查工具
@@ -250,9 +283,11 @@ def s_journey():
            sstate == "done", sstate)
 
         out = cli(db, "view", "summary", "--requirement-id", rid)
-        ok("s_journey(15): 人面 CLI view summary 板面进度 1/1（progress 派生，MCP 面无此键）",
-           out.returncode == 0 and "进度: 1/1 完成" in out.stdout,
-           out.stdout[:160] if out.returncode == 0 else out.stderr[:160])
+        det = m.call_ok("get_task_detail", {"requirement_id": rid})
+        ok("s_journey(15): 人面 CLI view summary 板面进度 1/1（progress 派生，get_task_detail 返回键不含 progress）",
+           out.returncode == 0 and "进度: 1/1 完成" in out.stdout and "progress" not in det,
+           f"rc={out.returncode} keys={sorted(det)} "
+           + (out.stdout[:120] if out.returncode == 0 else out.stderr[:120]))
 
         dec_payload = {"choice": "选 SQLite", "rationale": "零依赖",
                        "alternatives": [{"option": "Postgres", "rejected_reason": "运维成本高"}]}
@@ -299,7 +334,7 @@ def s_journey():
 
         snap = _snap_global(db)
         code = _err_code(m, "claim_task", {"requirement_id": rid, "agent_name": "journey"})
-        ok("s_journey(22): REOPEN 直接 claim_task -> illegal_state（无 REOPEN->CLAIMED 边，零写入）",
+        ok("s_journey(22): REOPEN 直接 claim_task -> illegal_state（claim 起点写死 OPEN + transition rowcount 守卫，零写入）",
            code == "illegal_state" and _snap_global(db) == snap, f"{code} snap_changed={_snap_global(db) != snap}")
 
         cli_ok(db, "reopen", "--requirement-id", rid, "--continue")
@@ -410,8 +445,13 @@ def s_journey_shapes():
                 "requirement_id": rid3, "evidence": {"test_summary": "t"}, "summary_line": "x",
                 "assessments": [{"subtask_id": sid, "items": [{"item": "B1", "state": "met"}]}]})
             asm = _rr_payload(db3, rid3).get("assessment")
-            ok("s_shapes(36): legacy 空白验收条目（SQL 种子）不计分母且不卡死交接（required==covered）",
-               asm is not None and asm["required"] == asm["covered"] == 1, json.dumps(asm))
+            acc3 = json.loads(query(db3, "SELECT acceptance FROM subtasks WHERE id=?",
+                                    (sid,))[0]["acceptance"])
+            ok("s_shapes(36): legacy 空白验收条目（SQL 种子）不计分母且不卡死交接（required==covered），"
+               "自评落库后条目逐字保留且不重复",
+               asm is not None and asm["required"] == asm["covered"] == 1
+               and sorted(str(a.get("item")) for a in acc3) == ["   ", "B1"],
+               json.dumps({"asm": asm, "acc": acc3}, ensure_ascii=False))
         finally:
             m3.close()
     finally:
