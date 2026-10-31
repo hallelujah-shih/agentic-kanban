@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import next_seq, now_utc
+from ..errors import BusinessError
 from ..models import Event, new_id
 
 
@@ -65,6 +66,27 @@ def normalize_anchors(acceptance: Any, existing: list | None = None) -> list:
             item["id"] = by_item.get(str(item.get("item"))) or f"a{i + 1}"
         out.append(item)
     return out
+
+
+def anchor_item_text(a: Any) -> str | None:
+    """验收条目文本归一（normalize_anchors 同口径：裸字符串 str -> {"item": str}）。
+
+    写侧不再产生空白条目（validate_anchor_entries 拒），此为存量兜底：无法被逐字匹配
+    的条目既不进覆盖分母也不参与匹配（计入分母则需求永久卡在漏评）。写侧与分母侧共用。
+    """
+    v = a.get("item") if isinstance(a, dict) else a
+    if v is None:
+        return None
+    t = str(v)
+    return t if t.strip() else None
+
+
+def validate_anchor_entries(acceptance: Any) -> None:
+    """写侧验收条目校验：dict 缺 item 文本 / 空白 item 文本 -> invalid_record（三入口共用）。"""
+    for a in (acceptance or []):
+        if anchor_item_text(a) is None:
+            raise BusinessError(
+                "invalid_record", "acceptance entry requires non-empty item text", None)
 
 
 # 终态集合单一事实源（spec 5 / 审 P1-1）：view.board / operations.list_tasks /
