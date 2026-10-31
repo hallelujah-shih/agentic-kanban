@@ -163,16 +163,16 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 
 | 工具 | 语义 | 前置 |
 |---|---|---|
-| new_requirement | 建需求（规划入口，与人面 `new` 同 service 层、参数对齐）：title + description（长文本免 argv 转义）+ source/source_ref + acceptance[]（字符串或 {item,id} 形态，id 缺省自动分配 a1..）；不写事件（规划通道，非执行证据） | 无（规划通道） |
-| set_expectations | 设置/修改验收锚（与人面 `set_expectations` 同 service 层、唯一入口语义两面一致）；删除被 subtask links_to 引用的锚项被拒（invalid_record） | 无（规划通道，无需未结束认领） |
+| new_requirement | 建需求（规划入口，与人面 `new` 同 service 层、参数对齐）：title + description（长文本免 argv 转义）+ source/source_ref + acceptance[]（字符串或 {item,id} 形态，id 缺省自动分配 a1..；条目 item 文本非空，缺/空 -> invalid_record）；不写事件（规划通道，非执行证据） | 无（规划通道） |
+| set_expectations | 设置/修改验收锚（与人面 `set_expectations` 同 service 层、唯一入口语义两面一致）；删除被 subtask links_to 引用的锚项被拒（invalid_record）；acceptance 条目 item 文本非空（缺/空 -> invalid_record） | 无（规划通道，无需未结束认领） |
 | list_tasks | status 过滤，获取未完成任务 | 读 |
 | get_task_detail | 需求 + 子任务树（含验收自评与覆盖对照）+ 里程碑 + 关键事件（最新优先，有界 200，输出 seq 升序；事件自带提纲——生成点写，无读侧语义挑选）+ 认领 + awaiting_human | 读 |
 | claim_task | 独占认领（单事务） | 无未结束认领 |
-| add_subtask | 拆解：title + acceptance[]（含 links_to 预期锚）+ ordinal | 未结束认领 |
+| add_subtask | 拆解：title + acceptance[]（含 links_to 预期锚）+ ordinal；acceptance 条目 item 文本非空（缺/空 -> invalid_record），落库形态逐字保留（不归一） | 未结束认领 |
 | update_subtask | state: todo/in_progress/done/blocked/abandoned | 未结束认领 |
 | add_milestone | title + planned_at | 未结束认领 |
 | update_milestone | state: planned/in_progress/achieved + actual_at | 未结束认领 |
-| add_record | title 必填（一行人话提纲，空 -> invalid_record）；kind = decision / risk / deviation / decomposition / note；decision 必含 alternatives[] + rationale + 拒绝理由；deviation severity 强制 >= attention | 未结束认领 |
+| add_record | title 必填（一行人话提纲，空 -> invalid_record）；kind = decision / risk / deviation / decomposition / note；decision 必含 choice + rationale + alternatives[] + 拒绝理由（choice 缺/空 -> invalid_record）；deviation severity 强制 >= attention | 未结束认领 |
 | update_progress | 进度备注（不覆盖派生值）；headline 必填（一行人话提纲，缺/空 -> invalid_record）；返回 lease_expires_at（租约到期时间，仅通知不延长租约——延长用 renew） | 未结束认领 |
 | request_review | 设 awaiting_human(kind=review)，持久化验收自评到 subtasks.acceptance[].state，附证据（PR / commit 区间 / 测试摘要，至少一项，缺证据拒绝）+ summary_line 必填（交接一句话，缺/空 -> invalid_record）；review_request 事件 severity=attention；不改状态 | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
 | mark_blocked | 转移 CLAIMED -> BLOCKED + 设 awaiting_human(kind=blocked)，附原因（一行人话，为空 -> invalid_record） | 未结束认领 且 state=CLAIMED（否则 illegal_state） |
@@ -186,7 +186,7 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 
 - `new`：创建需求（手工导入），可写入 acceptance 预期锚。agent 面等价入口＝MCP `new_requirement`（4.1，同 service 层，长文本免 argv 转义）。
 - `new --source jira --source-ref <链接>`：以链接引用登记 Jira 需求（description 贴摘要，完整详情留在 Jira——单一事件源，由 agent 自行获取）；不做自动导入（AI 已能做好的事不重复造，ADR 0004）。
-- `set_expectations`：设置/修改 requirement.acceptance（唯一入口；agent 面经 MCP `set_expectations` 同名可达（4.1），两面同 service 层语义一致）。锚项可修改文本；删除被 links_to 引用的锚项被拒绝（需 agent 先解除链接）。
+- `set_expectations`：设置/修改 requirement.acceptance（唯一入口；agent 面经 MCP `set_expectations` 同名可达（4.1），两面同 service 层语义一致）。锚项可修改文本；删除被 links_to 引用的锚项被拒绝（需 agent 先解除链接）；acceptance 条目 item 文本非空（缺/空 -> invalid_record）。
 - `approve`：按**当前状态**确认（决策表见 3.4）——CLAIMED 上确认 DONE、BLOCKED 上解除阻塞；按 awaiting_human.kind 清除标记，写 approval/state_change 事件（同事务）。 `--on-behalf "<kind>:<basis>"` 受托代执行（kind ∈ statement|action，basis 一行指向依据；surface 服务端派生为 delegated，派生规则见 5.1）。`--requirement-id` 可省（零输入）：awaiting_human 恰 1 条直接执行 / 0 条提示「无待决项」零写 / 多条非交互通道拒绝（列候选含状态 + 提示携 --requirement-id；tty 编号列选，无效选择零写）；`--on-behalf` 结构非法 -> invalid_record（先于候选读取拒绝）。
 - `release`：释放认领（唯一释放路径，人面）；要求存在未结束认领，无则 `not_found`；写 release 事件 + 清除 awaiting_human。`release --all-stale`：批量释放全部 STALE 认领（仅覆盖 CLAIMED 需求；逐项执行单释放语义，部分失败逐项返回，非全有全无）。 `--on-behalf` 与 `--requirement-id` 可省语义同 approve；零输入仍须 `--reason`（语义字段不免输，先于候选读取拒绝）。
 - `reject`：评审拒绝（3.5）——前置 CLAIMED + 待审（awaiting_human.kind=review），缺任一 -> `illegal_state`；`--reason` 拒因必填（空 -> `invalid_record`，先于状态校验拒绝），`--target` 可选（子任务 id 或验收锚 id；非法值 -> `invalid_record`，消息含本需求可用清单）；单事务写 state_change（CLAIMED->REOPEN）+ `review_reject` 事件（拒因/指向/轮次）+ 结束认领（release_reason=review_rejected，不续租）+ 清 marker。`--on-behalf` 与 `--requirement-id` 可省语义同 approve；零输入候选仅含 kind=review 待审项（blocked 待决不混入），0 条提示「无待审项」零写。
@@ -215,7 +215,7 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 MCP `is_error` + structured content（`{code, message, task_id}`），无 HTTP 码：
 `not_found | illegal_state | already_claimed | no_active_claim | lease_expired | duplicate_subtask | invalid_record | queue_full | db_busy | ambiguous_id`
 
-每个码有唯一触发条件：`ambiguous_id` = requirement_id 短前缀（8~31 hex）命中 >=2 条需求（0 命中 -> not_found）；`lease_expired` = 对已过期租约 renew；`db_busy` = SQLite 写失败重试 3 次后（7.3）；`queue_full` = claim_task 计数超上限（16）；`invalid_record` = 记录结构缺字段（decision 缺 alternatives / request_review 缺证据 / 缺 headline / 缺 summary_line / title 或 reason 为空 / delegated 结构非法（字符串形缺冒号 / kind 越 statement|action 枚举 / basis 空））；其余见工具表。
+每个码有唯一触发条件：`ambiguous_id` = requirement_id 短前缀（8~31 hex）命中 >=2 条需求（0 命中 -> not_found）；`lease_expired` = 对已过期租约 renew；`db_busy` = SQLite 写失败重试 3 次后（7.3）；`queue_full` = claim_task 计数超上限（16）；`invalid_record` = 记录结构缺字段（decision 缺 choice / 缺 alternatives / request_review 缺证据 / 缺 headline / 缺 summary_line / acceptance 条目缺 item 文本 / title 或 reason 为空 / delegated 结构非法（字符串形缺冒号 / kind 越 statement|action 枚举 / basis 空））；其余见工具表。
 
 requirement_id 输入统一归一（strip + 大小写不敏感 + 连字符去除）；8~31 位 hex 唯一前缀可解析（>=2 命中 -> ambiguous_id）；32 位全 id 精确匹配优先；<8 位或非 hex -> not_found；MCP/REST/CLI 三面同源；响应的 requirement_id 与 ambiguous_id 错误候选列表为 32-hex 形态，not_found 消息与错误 task_id 保留原始输入。
 

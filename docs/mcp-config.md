@@ -7,7 +7,7 @@
 | 项 | 值 |
 |---|---|
 | 传输 | stdio（本地 agent 默认，M0）+ streamable-http（HTTP，M1，挂载 FastAPI `/mcp`，与 stdio 共用工具注册表） |
-| 工具面 | 12 个（见 PRD 4.1：list_tasks / get_task_detail / claim_task / add_subtask / update_subtask / add_milestone / update_milestone / add_record / update_progress / request_review / mark_blocked / list_awaiting） |
+| 工具面 | 14 个（见 PRD 4.1：new_requirement / set_expectations / list_tasks / get_task_detail / claim_task / add_subtask / update_subtask / add_milestone / update_milestone / add_record / update_progress / request_review / mark_blocked / list_awaiting） |
 | 数据 | 本地 SQLite（默认 127.0.0.1 绑定；非 localhost 绑定必须带 token） |
 | 角色 | 单用户、无 RBAC；agent 面与人面（CLI/REST）分离 |
 
@@ -16,11 +16,11 @@
 实现后以 `pyproject.toml` 的 console entry point 为准（Spike 内定稿），目标形态：
 
 ```sh
-uv run agent-kanban mcp          # 启动 MCP server（stdio）
-uv run agent-kanban serve        # 启动 REST/人面 API（M0）
+uv run agent-kanban mcp              # 启动 MCP server（stdio）
+uv run python -m agent_kanban.api    # 启动 REST/人面 API（M0）
 ```
 
-MCP stdio 模式由客户端拉起进程，无需常驻。HTTP MCP 由 `serve` 进程承载（见 §2）。默认数据库路径与端口在 `AGENT_KANBAN_DB` / 配置文件中声明。
+MCP stdio 模式由客户端拉起进程，无需常驻。HTTP MCP 由 `python -m agent_kanban.api` 进程承载（见 §2）。默认数据库路径与端口在 `AGENT_KANBAN_DB` / 配置文件中声明。
 
 ### 1.1 装包与取出协同协议
 
@@ -63,7 +63,7 @@ MCP HTTP（mcp SDK 2.3.0 streamable-http，挂载 FastAPI `/mcp`）与 stdio 共
 ### 2.1 与 stdio 的选择
 
 - stdio：本地单机 agent 默认（opencode/Claude Code 直连），进程由客户端拉起，无需常驻端口。
-- HTTP：远端或多客户端共用一个常驻 server；`uv run agent-kanban serve` 承载，非 localhost 绑定强制设 token。
+- HTTP：远端或多客户端共用一个常驻 server；`uv run python -m agent_kanban.api` 承载，非 localhost 绑定强制设 token。
 
 ### 2.2 客户端示例
 
@@ -162,7 +162,7 @@ opencode mcp list     # 应显示 connected
 
 ### 3.3 工具命名与权限
 
-opencode 把工具命名为 `<server>_<tool>`，`<server>` 是配置里的 MCP server 名，可自定义（本文示例 `kanban`）。server 名 `kanban` 时工具显示为 `kanban_claim_task`、`kanban_request_review` 等；server 名若配成 `agent-kanban`/`agent_kanban`，则显示为带该前缀的形态。工具原名固定为 12 个（§概览）。可按需用权限隐藏/禁用（前缀按你自己的 server 名写）：
+opencode 把工具命名为 `<server>_<tool>`，`<server>` 是配置里的 MCP server 名，可自定义（本文示例 `kanban`）。server 名 `kanban` 时工具显示为 `kanban_claim_task`、`kanban_request_review` 等；server 名若配成 `agent-kanban`/`agent_kanban`，则显示为带该前缀的形态。工具原名固定为 14 个（§概览：new_requirement / set_expectations / list_tasks / get_task_detail / claim_task / add_subtask / update_subtask / add_milestone / update_milestone / add_record / update_progress / request_review / mark_blocked / list_awaiting）。可按需用权限隐藏/禁用（前缀按你自己的 server 名写）：
 
 ```jsonc
 {
