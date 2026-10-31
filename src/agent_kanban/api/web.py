@@ -479,7 +479,7 @@ function render(d, s){
 
   html += "<div class='sec wide'><h2>事件流</h2><div class='ops' style='margin-bottom:10px'>"
     + "<select id='ev-kind' style='width:auto'><option value=''>kind: 全部</option>";
-  ["decision","risk","deviation","decomposition","progress_note","state_change","review_request","approval","release","renew","note","reconcile"].forEach(function(k){
+  ["decision","risk","deviation","decomposition","progress_note","state_change","review_request","review_reject","approval","release","renew","note","reconcile"].forEach(function(k){
     html += "<option value='" + k + "'>" + k + "</option>";
   });
   html += "</select>";

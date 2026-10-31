@@ -1,6 +1,6 @@
-# Agentic Kanban - 产品需求文档 (PRD v3.2)
+# Agentic Kanban - 产品需求文档 (PRD v3.3)
 
-状态: 草案。v3.1 经双轴复审（需求轴 APPROVE-WITH-FIXES / 契约轴 REJECT 续审），本版折入全部 P1/P2（release 人面独占、approve 按状态判定、写锁先行、AC 错位、覆盖下界语义）；M1-3 折入：G10 裁决（ADR 0006——维持写口径 + 静默读意图内 + 连接级模型不引入）、§2 事件 kind 补 renew、§3.2 activity 行澄清（写口径 + renew 例外）、§4.2 prune 命令、§6 数据保留改终态需求级原子窗口
+状态: 草案。v3.1 经双轴复审（需求轴 APPROVE-WITH-FIXES / 契约轴 REJECT 续审），本版折入全部 P1/P2（release 人面独占、approve 按状态判定、写锁先行、AC 错位、覆盖下界语义）；M1-3 折入：G10 裁决（ADR 0006——维持写口径 + 静默读意图内 + 连接级模型不引入）、§2 事件 kind 补 renew、§3.2 activity 行澄清（写口径 + renew 例外）、§4.2 prune 命令、§6 数据保留改终态需求级原子窗口；v3.3 折入：评审拒绝（review 拒绝边 CLAIMED->REOPEN + 人面 reject op + review_reject 事件，拒因/指向/轮次可观测可计数）、request_review 轮次（marker 与事件 payload 带 round）、§4.2 dispatch 条目与 REOPEN 派发自动折回 OPEN 语义、租约口径（拒结束认领不续租，返工新认领新窗口），契约版本 3.2 -> 3.3
 里程碑: M0 完成（2026-10-22，AC10-13/15/17 + Spike AC1-9/16 + 9 码矩阵 + 补充全绿，验证见 docs/ops/m0-verification.md）；M1 未开工
 定位: AI 时代的看板——不是任务状态跟踪，而是**大黑箱（AI 自动化执行）的关键节点暴露窗口 + 可回溯审计资产 + AI 与人对称交换关键信息的场所 + 关键决策的记录点/审计点**。看板不承担共识达成逻辑：子任务/里程碑的共识在 AI 会话内（in-band）达成，看板只展现结果；决策记录两类来源——人在 AI 中做出的决策（agent 以既有 decision/note 事件记录，带 actor provenance）与 AI 自主的决策（decision 事件）
 读者: 实现者、后续维护者、评审者
@@ -56,7 +56,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 
 | 表 | 关键字段 | 状态由谁写 |
 |---|---|---|
-| requirements | id, source(`jira`/`manual`), source_ref, title, description(摘要+工作区指针行), acceptance[]（人写预期验收锚）, state, awaiting_human{reason,evidence,since,kind,summary_line}, created_at, updated_at | 状态机；acceptance 仅人面可写；DONE 仅人确认；source=`jira` 时 source_ref 存链接（引用登记，无自动导入）；description 存摘要，完整内容留源头（单一事件源）；工作区指针行（`workspace=<dir> env-card=<路径>`，约定见 SKILL「工作区就绪」，结构化字段后置）；summary_line 由 request_review 设置（评审交接一句话），mark_blocked 不设（blocked 用 reason） |
+| requirements | id, source(`jira`/`manual`), source_ref, title, description(摘要+工作区指针行), acceptance[]（人写预期验收锚）, state, awaiting_human{reason,evidence,since,kind,summary_line,round（kind=review 时：第几轮交接）}, created_at, updated_at | 状态机；acceptance 仅人面可写；DONE 仅人确认；source=`jira` 时 source_ref 存链接（引用登记，无自动导入）；description 存摘要，完整内容留源头（单一事件源）；工作区指针行（`workspace=<dir> env-card=<路径>`，约定见 SKILL「工作区就绪」，结构化字段后置）；summary_line 由 request_review 设置（评审交接一句话），mark_blocked 不设（blocked 用 reason） |
 | claims | id, requirement_id, agent_name(声明), agent_conn(观测), started_at, lease_expires_at, last_activity_at, ended_at, release_reason | 系统推导（租约） |
 | subtasks | id, requirement_id, ordinal, title, acceptance[{item, criteria, state: met|not_met|deviated, deviation_reason?, links_to[]}], state, milestone_id?, created_at, updated_at | agent 报告，带 provenance |
 | milestones | id, requirement_id, title, planned_at?, actual_at?, state, created_at, updated_at | agent 报告，带 provenance |
@@ -69,7 +69,7 @@ AI 执行是黑箱：模型推理不可见、过程不可重放、输出质量�
 - `UNIQUE (requirement_id, seq)` on events；seq 全局单调递增，服务端签发
 - `ts` 由服务端在写入时签发，不接受调用方传入
 
-事件 kind：`decision` / `risk` / `deviation` / `decomposition` / `progress_note` / `state_change` / `review_request` / `approval` / `release` / `renew`（人面续租写事件，可回溯谁续了租约）/ `note` / `reconcile`（对账事件，系统对账写事件，PRD §6 可观测）。
+事件 kind：`decision` / `risk` / `deviation` / `decomposition` / `progress_note` / `state_change` / `review_request` / `review_reject`（评审拒绝，人面 reject 写事件：payload={reason 拒因必填, target 子任务/锚 id 可空, round 被拒交接轮次}，severity=attention）/ `approval` / `release` / `renew`（人面续租写事件，可回溯谁续了租约）/ `note` / `reconcile`（对账事件，系统对账写事件，PRD §6 可观测）。
 事件 severity：`info` / `attention` / `critical`。**deviation 的 severity 强制 >= attention**（不允许压级逃逸，见 5.3）。
 
 `awaiting_human` 是 requirements 上的 JSON 列，不是状态：
@@ -93,8 +93,9 @@ OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN；终�
 | CLAIMED | BLOCKED | agent | 附原因；同时设 awaiting_human(kind=blocked) |
 | BLOCKED | CLAIMED | 人 | 解除阻塞，清除标记 |
 | CLAIMED | OPEN | 人 | 释放认领（唯一释放路径，无自动释放） |
-| DONE | REOPEN | 人 | - |
-| REOPEN | OPEN | 人 | 重开回到可认领（避免死端） |
+| CLAIMED | REOPEN | 人 | 评审拒绝（reject，见 3.5）：写 review_reject 事件（拒因/指向/轮次），同事务结束认领（release_reason=review_rejected）+ 清 marker；重入走 REOPEN->OPEN |
+| DONE | REOPEN | 人 | 事后拒绝（reopen，与评审拒绝区分见事件链：本边无 review_reject 事件） |
+| REOPEN | OPEN | 人 | 重开回到可认领（避免死端）；dispatch 遇 REOPEN 复派亦经本边自动折回（见 4.2 dispatch 条目） |
 | REOPEN | CANCELLED | 人 | - |
 | 任一 | REJECTED | 人 | 转移时清除 awaiting_human |
 | 任一 | ARCHIVED | 人 | 终态，无出边（无 unarchive）；转移时清除 awaiting_human；同事务结束未结束认领（release_reason=archive） |
@@ -103,6 +104,7 @@ OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN；终�
 
 - 认领 = `INSERT claims` + 条件 `UPDATE requirements SET state=CLAIMED WHERE state=OPEN`，**单事务**，rowcount 校验；任一失败整体回滚。
 - 释放（人面 CLI `release`，唯一释放路径）= 单事务（置 ended_at + 条件更新需求 CLAIMED -> OPEN + 写 release 事件），`release_reason` 必填。
+- 评审拒绝（人面 CLI `reject`）同样结束认领（release_reason=review_rejected）且**不续租**（lease_expires_at 不改写）；拒后返工 = 新认领周期（REOPEN -> OPEN 后重新 claim，全新 lease 2h / idle 30min）——租约口径 = 重置（见 3.5）。
 - 租约推导（不存状态字段）：
   - `ended_at 非空 -> 结束`
   - `now > lease_expires_at 且无 awaiting_human -> STALE`
@@ -140,6 +142,17 @@ OPEN -> CLAIMED -> DONE；侧向 BLOCKED / REJECTED / CANCELLED / REOPEN；终�
   BLOCKED + kind=review 组合不可达：request_review 前置要求 state=CLAIMED（4.1）。
 - DONE 后追加更正：写保护要求未结束认领，因此更正需人面操作（CLI `note`）或 REOPEN 后由 agent 继续——两条路径都明确，不冲突。
 
+### 3.5 评审拒绝与返工轮次
+
+- `reject` 前置：state=CLAIMED 且 awaiting_human.kind=review（语义对象是「待审交接」）。CLAIMED 无待审标记的退回走既有 `release --reason`（CLAIMED->OPEN），两路不混用。
+- 拒绝可观测：reject 单事务 = 状态转移（CLAIMED->REOPEN）+ 结束认领（release_reason=review_rejected，不续租）+ `review_reject` 事件（severity=attention，payload={reason 拒因必填, target 子任务 id 或验收锚 id 可空, round}）+ 清 marker。谁拒＝事件 actor 归属；一次真实返工在板面可读出第几轮、谁拒、拒因。
+- **round 两口径（单计数源，结构上无漂移）**：
+  - 交接轮次：request_review 的 round = 1 + 本需求此前 `review_request` 事件数；marker 与事件 payload 同值。
+  - 拒事件 round：读自被拒交接的 marker.round（被拒的是哪一轮交接就是几；legacy 标记无 round 键按 1）。
+- 重复拒 = `illegal_state`：每个交接轮次至多一次 reject（第一次拒后 state=REOPEN，第二次前置不满足）；再次拒绝必须经由新一轮交接。
+- REOPEN 双来源（事件链区分）：交接被拒（本节约，入边 from=CLAIMED + review_reject 事件）vs 完成被拒（既有，入边 from=DONE，无 review_reject 事件）。
+- 返工重入路径：REOPEN -> OPEN（人面 `reopen --continue`，或 dispatch 复派时自动折回，见 4.2）-> 返工方首个动作 = `claim_task` 重认领（新认领行、全新租约）-> 返工 -> 再次 request_review（round 自动 +1，第几轮交接板面可区分）。
+
 ---
 
 ## 4. 记录渠道（MCP 工具面 + 人面）
@@ -176,6 +189,7 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 - `set_expectations`：设置/修改 requirement.acceptance（唯一入口；agent 面经 MCP `set_expectations` 同名可达（4.1），两面同 service 层语义一致）。锚项可修改文本；删除被 links_to 引用的锚项被拒绝（需 agent 先解除链接）。
 - `approve`：按**当前状态**确认（决策表见 3.4）——CLAIMED 上确认 DONE、BLOCKED 上解除阻塞；按 awaiting_human.kind 清除标记，写 approval/state_change 事件（同事务）。 `--on-behalf "<kind>:<basis>"` 受托代执行（kind ∈ statement|action，basis 一行指向依据；surface 服务端派生为 delegated，派生规则见 5.1）。`--requirement-id` 可省（零输入）：awaiting_human 恰 1 条直接执行 / 0 条提示「无待决项」零写 / 多条非交互通道拒绝（列候选含状态 + 提示携 --requirement-id；tty 编号列选，无效选择零写）；`--on-behalf` 结构非法 -> invalid_record（先于候选读取拒绝）。
 - `release`：释放认领（唯一释放路径，人面）；要求存在未结束认领，无则 `not_found`；写 release 事件 + 清除 awaiting_human。`release --all-stale`：批量释放全部 STALE 认领（仅覆盖 CLAIMED 需求；逐项执行单释放语义，部分失败逐项返回，非全有全无）。 `--on-behalf` 与 `--requirement-id` 可省语义同 approve；零输入仍须 `--reason`（语义字段不免输，先于候选读取拒绝）。
+- `reject`：评审拒绝（3.5）——前置 CLAIMED + 待审（awaiting_human.kind=review），缺任一 -> `illegal_state`；`--reason` 拒因必填（空 -> `invalid_record`，先于状态校验拒绝），`--target` 可选（子任务 id 或验收锚 id；非法值 -> `invalid_record`，消息含本需求可用清单）；单事务写 state_change（CLAIMED->REOPEN）+ `review_reject` 事件（拒因/指向/轮次）+ 结束认领（release_reason=review_rejected，不续租）+ 清 marker。`--on-behalf` 与 `--requirement-id` 可省语义同 approve；零输入候选仅含 kind=review 待审项（blocked 待决不混入），0 条提示「无待审项」零写。
 - `renew`：续租（对已过期租约返回 `lease_expired`）。
 - `note`：人追加更正/质疑（写入 note 事件）。
 - `export`：JSON / Markdown 全量导出。
@@ -183,6 +197,7 @@ transport：**stdio**（本地 agent 默认，opencode/Claude Code 直连）+ **
 - `archive`：归档（任一状态 -> ARCHIVED 终态，同事务结束未结束认领 release_reason=archive）；语义 = 移出活跃视野，**无工作判断**（区别于 abandon 的 REJECTED/CANCELLED）；无 unarchive。
 - `delete`：整需求硬删（requirement + subtasks/milestones/claims/events 单事务原子，不写事件）；任意状态可删（含活跃认领）；不受数据保留窗口约束；删除后该需求的回溯承诺作废，建议先 `export` 留档（提示不强制）；Web 上需输入标题确认。
 - `prune`：数据保留清理（§6）——`--months N`（默认 12，日历月 + 月末回绕 clamp）、`--export-path`（默认 `./exports/kanban-export-<ts>.json`）、`--yes` 跳过确认；流程 = 强制全量导出（timestamped JSON 0600，导出失败中止清理）-> 确认门（stdin `y/N`，EOF/拒绝/非 y 中止不删、非零退出）-> 按终态需求级原子窗口删除 events（仅 DONE/REJECTED/CANCELLED/ARCHIVED 且全部事件早于窗口的需求整删，链永不半断）。
+- `dispatch`：worker 派发（worker 派发协议细节归 skill 树 dispatch reference，此处只登记状态面语义）：状态门 OPEN/REOPEN，其余状态 -> `illegal_state`；**遇 REOPEN 派发前自动折回 OPEN**——经既有 REOPEN->OPEN 边（人面 actor + 受托痕）、板 note 留痕、派发稿/续接稿注明；折回发生在 MCP 预检之后（预检拒派零写）、服务发现/会话创建之前；折回后派发失败不折回滚（需求已 OPEN，可认领或再派，幂等）。折回闭合的断点：claim 硬写 from_state=OPEN，REOPEN 下不折回则 worker 首个动作认领必失败。
 
 **Web 窗口（M1，人面）**：
 

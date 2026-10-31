@@ -857,7 +857,7 @@ def k_history_assembly():
             ok("节位置在摘要之后（续接稿）",
                "## 历轮交付物" in t
                and t.index("## 历轮交付物") > t.index("- 子任务进度: 0/0"), "")
-            ok("既有摘要行不变（回归）", "- state: REOPEN" in t and "子任务进度: 0/0" in t, t)
+            ok("摘要行反映折回后状态（REOPEN 派发先折回 OPEN）", "- state: OPEN" in t and "子任务进度: 0/0" in t, t)
         # 无历史需求 -> 新建派发稿零差异（BCD S2/E2）
         rid2 = cli_ok(db, "new", "--title", "A2 无历史需求",
                       "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
@@ -1126,5 +1126,92 @@ def k_b5_brief_fallback():
                "CLI 正典路径" in spec, spec)
             ok("兜底指令禁硬写代码/静默继续",
                "不硬写代码" in spec and "不静默继续" in spec, spec)
+    finally:
+        stop()
+
+
+def k_dispatch_reopen_foldback():
+    print("== B10-T2.5: REOPEN 复派折回（a 新建分支：自动折回 OPEN + 受托痕 + 板 note + 派发稿注明 "
+          "+ claim 成功（断点闭合）；b 续接分支：state 行 + 折回注明；c OPEN 负例：零折回）")
+    tmp = Path(tempfile.mkdtemp(prefix="ak-dispatch-foldback-"))
+    db = new_db()
+    ws, env_card = _workspace(tmp)
+    # (a) 新建分支：session 不存在（GET 404 -> create）
+    rid = cli_ok(db, "new", "--title", "REOPEN 折回需求",
+                 "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+    sid = f"ses_req_{rid[:8]}"
+    _set_state(db, rid, "REOPEN")
+    srv, stop = _mock_start({"get_code": 404})
+    port = srv.server_address[1]
+    extra = _dispatch_env(db, port)
+    try:
+        res = cli(db, "dispatch", "--requirement-id", rid,
+                  "--model", "ks-cp/glm-5-3-flash", "--budget", "10m", extra=extra)
+        ok("REOPEN dispatch rc=0（折回不阻塞派发）", res.returncode == 0,
+           f"rc={res.returncode} stderr={res.stderr}")
+        state = query(db, "SELECT state FROM requirements WHERE id=?", (rid,))[0]["state"]
+        ok("DB 直查 state=OPEN（折回完成，断点闭合前提）", state == "OPEN", state)
+        sc = query(db, "SELECT payload FROM events WHERE requirement_id=? AND kind='state_change'",
+                   (rid,))
+        ok("恰 1 条 state_change 事件（REOPEN->OPEN）", len(sc) == 1, f"n={len(sc)}")
+        if sc:
+            p = json.loads(sc[0]["payload"])
+            ok("state_change from=REOPEN to=OPEN",
+               p.get("from") == "REOPEN" and p.get("to") == "OPEN", p)
+            d = p.get("delegated") or {}
+            ok("state_change 带受托痕 delegated.kind=statement（人面 actor）",
+               d.get("kind") == "statement", p)
+            ok("delegated basis 含 dispatch", "dispatch" in d.get("basis", ""), p)
+        notes = _note_contents(db, rid)
+        folds = [c for c in notes if "自动折回" in c.splitlines()[0]]
+        ok("恰 1 条折回 note", len(folds) == 1, f"notes={notes}")
+        if folds:
+            first = folds[0].splitlines()[0]
+            ok("折回 note 首行含「自动折回」与「REOPEN -> OPEN」",
+               "自动折回" in first and "REOPEN -> OPEN" in first, first)
+        prompts = [r for r in srv._log
+                   if r["method"] == "POST" and r["path"] == f"/api/session/{sid}/prompt"]
+        ok("派发稿已投递", len(prompts) == 1, f"n={len(prompts)}")
+        if prompts:
+            t = json.loads(prompts[0]["body"])["text"]
+            ok("派发稿注明自动折回（含「自动折回」与「OPEN」）",
+               "自动折回" in t and "OPEN" in t, t)
+        # 核心断言（断点闭合）：折回后 worker 首个动作 claim_task 成功
+        m = MCP(db, extra=extra).start()
+        m.call_ok("claim_task", {"requirement_id": rid, "agent_name": "foldback-claim"})
+        m.close()
+        state2 = query(db, "SELECT state FROM requirements WHERE id=?", (rid,))[0]["state"]
+        ok("认领后 state=CLAIMED（REOPEN 复派断点闭合）", state2 == "CLAIMED", state2)
+        # (b) 续接分支：session 预置存在 -> 复用投续接稿
+        rid2 = cli_ok(db, "new", "--title", "REOPEN 折回续接需求",
+                      "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+        sid2 = f"ses_req_{rid2[:8]}"
+        _set_state(db, rid2, "REOPEN")
+        srv._exists[sid2] = True  # 预置 session 存在 -> 复用路径（续接稿）
+        res2 = cli(db, "dispatch", "--requirement-id", rid2,
+                   "--model", "ks-cp/glm-5-3-flash", "--budget", "10m", extra=extra)
+        ok("续接分支 REOPEN dispatch rc=0", res2.returncode == 0,
+           f"rc={res2.returncode} stderr={res2.stderr}")
+        state_b = query(db, "SELECT state FROM requirements WHERE id=?", (rid2,))[0]["state"]
+        ok("续接分支 state=OPEN", state_b == "OPEN", state_b)
+        prompts2 = [r for r in srv._log
+                    if r["method"] == "POST" and r["path"] == f"/api/session/{sid2}/prompt"]
+        ok("续接稿已投递", len(prompts2) == 1, f"n={len(prompts2)}")
+        if prompts2:
+            t2 = json.loads(prompts2[0]["body"])["text"]
+            ok("续接稿 state 行反映折回后状态（- state: OPEN）", "- state: OPEN" in t2, t2)
+            ok("续接稿含「自动折回」行", "自动折回" in t2, t2)
+        # (c) OPEN 负例：未动状态 -> 零折回（防误触发）
+        rid3 = cli_ok(db, "new", "--title", "OPEN 负例需求",
+                      "--description", f"workspace={ws} env-card={env_card}")["requirement_id"]
+        res3 = cli(db, "dispatch", "--requirement-id", rid3,
+                   "--model", "ks-cp/glm-5-3-flash", "--budget", "10m", extra=extra)
+        ok("OPEN dispatch rc=0", res3.returncode == 0,
+           f"rc={res3.returncode} stderr={res3.stderr}")
+        sc3 = query(db, "SELECT 1 FROM events WHERE requirement_id=? AND kind='state_change'",
+                    (rid3,))
+        ok("零 state_change 事件（折回不误触发）", len(sc3) == 0, f"n={len(sc3)}")
+        notes3 = _note_contents(db, rid3)
+        ok("零「自动折回」note", not any("自动折回" in c for c in notes3), notes3)
     finally:
         stop()

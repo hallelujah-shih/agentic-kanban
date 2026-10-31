@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -234,6 +235,90 @@ async def release(
         actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
     )
     return {"requirement_id": requirement_id, "state": "OPEN", "claim_id": norm_id(claim.id)}
+
+
+async def reject_review(
+    session: AsyncSession,
+    *,
+    requirement_id: str,
+    reason: str,
+    target: str | None = None,
+    actor_surface: str,
+    actor_conn: str,
+    now: datetime | None = None,
+    delegated: dict | None = None,
+) -> dict:
+    """评审拒绝（BCD b10 S1）：CLAIMED + 待审(kind=review) -> REOPEN；同事务结束认领
+    （release_reason=review_rejected，不续租）+ 写 review_reject 事件（拒因/指向/轮次）。
+    round 读被拒交接标记（marker.round，legacy 无键按 1）；重复拒 = illegal_state。
+    校验序（与 release 同惯例：语义必填先于状态校验）：reason（invalid_record）
+    -> require_requirement（not_found）-> state（illegal_state）-> marker（illegal_state）
+    -> target（invalid_record）-> claim（not_found）。"""
+    now = now or now_utc()
+    if not reason or not str(reason).strip():
+        raise BusinessError(
+            "invalid_record",
+            'reject requires a reason: one-line reject reason. e.g. reason="复验发现缺陷：X"',
+            requirement_id,
+        )
+    req = await require_requirement(session, requirement_id)
+    requirement_id = norm_id(req.id)
+    if req.state != "CLAIMED":
+        raise BusinessError("illegal_state", f"reject requires state=CLAIMED, got {req.state}", requirement_id)
+    marker = req.awaiting_human
+    if not marker or marker.get("kind") != "review":
+        raise BusinessError(
+            "illegal_state",
+            "reject requires a pending review (awaiting_human kind=review)",
+            requirement_id,
+        )
+    norm_target: str | None = None
+    if target is not None:
+        t = str(target).strip()
+        if not t:
+            raise BusinessError(
+                "invalid_record", "reject target must not be empty; omit --target to reject the whole handoff",
+                requirement_id,
+            )
+        cand = norm_id(t) if re.fullmatch(r"[0-9a-fA-F-]{8,}", t) else t
+        subtasks = (await session.scalars(
+            select(Subtask).where(Subtask.requirement_id == requirement_id)
+        )).all()
+        sub_ids = [norm_id(st.id) for st in subtasks]
+        anchor_ids = [str(a.get("id")) for a in (req.acceptance or [])
+                      if isinstance(a, dict) and a.get("id")]
+        if cand not in sub_ids and cand not in anchor_ids:
+            raise BusinessError(
+                "invalid_record",
+                f"reject target {t!r} 不属于本需求；可用：\n"
+                f"subtasks: {sub_ids or '[]'}\nanchors: {anchor_ids or '[]'}",
+                requirement_id,
+            )
+        norm_target = cand
+    claim = await session.scalar(
+        select(Claim).where(Claim.requirement_id == requirement_id, Claim.ended_at.is_(None))
+    )
+    if claim is None:
+        raise BusinessError("not_found", f"no active claim to reject for {requirement_id}", requirement_id)
+    rnd = int(marker.get("round") or 1)
+    await transition(
+        session, requirement_id=requirement_id, from_state="CLAIMED", to_state="REOPEN",
+        actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
+        event_payload={"reason": reason, "target": norm_target, "round": rnd,
+                       **({"delegated": delegated} if delegated else {})},
+    )
+    await session.execute(
+        update(Claim).where(Claim.id == claim.id).values(ended_at=now, release_reason="review_rejected")
+    )
+    await add_event(
+        session, requirement_id=requirement_id, kind="review_reject", severity="attention",
+        title="review rejected",
+        payload={"reason": reason, "target": norm_target, "round": rnd,
+                 **({"delegated": delegated} if delegated else {})},
+        actor_surface=actor_surface, actor_conn=actor_conn, claim_id=claim.id, now=now,
+    )
+    return {"requirement_id": requirement_id, "state": "REOPEN", "round": rnd,
+            "claim_id": norm_id(claim.id)}
 
 
 async def release_all_stale(
@@ -818,15 +903,22 @@ async def request_review(
     )).all()
     validated = _validate_assessments(requirement_id, assessments, subtasks)
     assessment = _persist_self_assessment(requirement_id, validated, subtasks, now)
+    # 交接轮次（BCD b10 I3 单计数源）：1 + 本需求此前 review_request 事件数（当前事件未入库）
+    prev_reviews = await session.scalar(
+        select(func.count()).select_from(Event).where(
+            Event.requirement_id == requirement_id, Event.kind == "review_request")
+    )
+    rnd = 1 + (prev_reviews or 0)
     req.awaiting_human = {
         "reason": "review requested",
         "evidence": evidence,
         "since": now.isoformat(),
         "kind": "review",
         "summary_line": str(summary_line).strip(),
+        "round": rnd,
     }
     payload = {"evidence": evidence, "summary_line": str(summary_line).strip(),
-               "assessment": assessment}
+               "assessment": assessment, "round": rnd}
     _check_payload_size(requirement_id, payload)  # PRD §6：事件 payload < 8KB（S19）
     await add_event(
         session, requirement_id=requirement_id, kind="review_request", severity="attention",

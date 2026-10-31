@@ -24,7 +24,8 @@ from ac_cases_j import export_csv
 from ac_cases_dispatch import (k_b5_brief_fallback, k_bg_claim_binding, k_bg_heartbeat,
                                k_bg_note_basis, k_bg_renew_binding, k_dispatch_authfail,
                                k_dispatch_badstate, k_dispatch_failnote, k_dispatch_main,
-                               k_dispatch_placement, k_dispatch_reuse, k_dispatch_timeout,
+                               k_dispatch_placement, k_dispatch_reopen_foldback, k_dispatch_reuse,
+                               k_dispatch_timeout,
                                k_history_assembly, k_mcp_precheck_flake_recovers,
                                k_mcp_precheck_unreachable_rejects, k_resume, k_resume_errcase,
                                k_resume_model_204, k_resume_model_err)
@@ -43,6 +44,8 @@ from ac_cases_o import (sa_added, sa_blankacc, sa_coverage, sa_dup, sa_empty,
                         sa_size, sa_stracc)
 from ac_cases_p import p3_skill, p3_skill_links, p3_skill_text
 from ac_cases_q import q_jira_source, q_no_argv_escape, q_planning_entry, q_set_expectations_error
+from ac_cases_r import (r_delegated, r_happy, r_illegal_states, r_lease, r_mcp_surface,
+                        r_no_reason, r_rest, r_rounds, r_target, r_zero_input)
 
 TESTS: dict[str, object] = {
     "ac1": ac1, "ac2": ac2, "ac3": ac3, "ac4": ac4, "ac5": ac5,
@@ -83,6 +86,7 @@ TESTS: dict[str, object] = {
     "k_dispatch_reuse": k_dispatch_reuse,
     "k_dispatch_timeout": k_dispatch_timeout,
     "k_history_assembly": k_history_assembly,
+    "k_dispatch_reopen_foldback": k_dispatch_reopen_foldback,
     "k_dispatch_placement": k_dispatch_placement,
     "k_dispatch_failnote": k_dispatch_failnote,
     "k_mcp_precheck_flake_recovers": k_mcp_precheck_flake_recovers,
@@ -115,6 +119,10 @@ TESTS: dict[str, object] = {
     "p3_skill_links": p3_skill_links,
     "q_planning_entry": q_planning_entry, "q_jira_source": q_jira_source,
     "q_no_argv_escape": q_no_argv_escape, "q_set_expectations_error": q_set_expectations_error,
+    "r_happy": r_happy, "r_target": r_target, "r_no_reason": r_no_reason,
+    "r_illegal_states": r_illegal_states, "r_rounds": r_rounds,
+    "r_delegated": r_delegated, "r_lease": r_lease,
+    "r_mcp_surface": r_mcp_surface, "r_rest": r_rest, "r_zero_input": r_zero_input,
 }
 
 

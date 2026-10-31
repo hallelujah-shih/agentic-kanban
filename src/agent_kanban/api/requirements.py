@@ -51,6 +51,12 @@ class ReleaseIn(BaseModel):
     delegated: DelegatedIn | None = None
 
 
+class RejectIn(BaseModel):
+    reason: str
+    target: str | None = None
+    delegated: DelegatedIn | None = None
+
+
 class NoteIn(BaseModel):
     content: str
     delegated: DelegatedIn | None = None
@@ -106,6 +112,13 @@ async def release(requirement_id: str, body: ReleaseIn) -> dict:
     delegated = parse_delegation(body.delegated.model_dump() if body.delegated else None)
     return await _run("release", requirement_id=requirement_id, reason=body.reason,
                       delegated=delegated)
+
+
+@router.post("/requirements/{requirement_id}/reject")
+async def reject_review(requirement_id: str, body: RejectIn) -> dict:
+    delegated = parse_delegation(body.delegated.model_dump() if body.delegated else None)
+    return await _run("reject_review", requirement_id=requirement_id, reason=body.reason,
+                      target=body.target, delegated=delegated)
 
 
 @router.post("/requirements/{requirement_id}/renew")

@@ -42,11 +42,18 @@
 
 ## 验收
 
-worker 的 `request_review` 是回执，不是完成。派发方按板面三问自答核交付：对照预期锚 / 偏离 / 有更好的方案吗。**不代 worker 交接**。
+worker 的 `request_review` 是回执，不是完成。派发方按板面三问自答核交付：对照预期锚 / 偏离 / 有更好的方案吗。复验发现缺陷时走人面 `agent-kanban reject --reason <拒因> [--target <子任务 id 或锚 id>]`（评审拒绝正典路径，见「循环（返工）」），不留痕的口头拒绝不做。**不代 worker 交接**。
 
 ## 循环（返工）
 
-人 REOPEN 后派新指令给同一会话（带上下文）：返工意见写明「哪里不达标 + 参照哪条锚」，不要只说「再改改」。同一需求续派时沿用同一会话，上下文不丢。
+复验发现缺陷的正典路径：人面 `agent-kanban reject --reason <拒因> [--target <子任务 id 或锚 id>]`——拒因/指向/轮次落板（review_reject 事件，第几轮交接被拒板面可计数），需求转 REOPEN，认领结束（不续租）。**禁只靠隐式 resume 投意见**（拒绝不留痕，轮次不可计数）。
+
+返工重入两路（返工意见写明「哪里不达标 + 参照哪条锚」，不要只说「再改改」）：
+
+- **resume 同会话**（上下文不丢、省启动成本）：人先 `agent-kanban reopen --continue` 把需求回 OPEN，再 resume 投返工意见；worker 恢复后**首个动作是 claim_task 重认领**（新认领、新租约窗口）再动板面。
+- **重派新会话**（会话丢失 / 上下文过期 / 换模型）：直接对 REOPEN 需求走派发入口——dispatch 遇 REOPEN **自动折回 OPEN**（板 note + 派发稿注明，worker 首个动作 claim_task 结构性可成功），无需先跑 reopen --continue。
+
+同一需求续派时沿用同一会话，上下文不丢。
 
 ## 长段心跳
 

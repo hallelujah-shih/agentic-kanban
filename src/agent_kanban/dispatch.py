@@ -47,6 +47,8 @@ URL_ENV = "AGENT_KANBAN_OPENCODE_URL"
 AUTH_ENV = "AGENT_KANBAN_OPENCODE_AUTH"
 HEARTBEAT_ENV = "AGENT_KANBAN_DISPATCH_HEARTBEAT_SEC"
 SERVICE_JSON = Path.home() / ".config" / "opencode" / "service.json"
+# REOPEN 派发前自动折回 OPEN（既有 (REOPEN, OPEN) 边、人面 actor + 受托痕、板 note +
+# 派发稿注明，见 BCD b10 §3 末段）
 DISPATCHABLE_STATES = ("OPEN", "REOPEN")
 _SERVICE_TIMEOUT = 10  # 服务发现 subprocess 超时（秒）
 _DEFAULT_HEARTBEAT_SEC = 60.0
@@ -289,6 +291,26 @@ def _write_note(rid: str, content: str) -> None:
     asyncio.run(run_op(get_session_factory(), _do, is_write=True))
 
 
+def _fold_back_to_open(rid: str, title: str) -> None:
+    """REOPEN 自动折回（b10 断点收口）：复用既有 (REOPEN, OPEN) 边，无新边。
+
+    ops.reopen(continue_) 人面 actor（cli）+ delegated 受托痕（kind=statement）；
+    随后板 note 首行人话（「自动折回」前缀不夺 _bg_note_seq 的「分发：」锚）。
+    并发状态变更 -> BusinessError 上抛（fail-closed：不建半建会话、不投 prompt）；
+    折回不滚回——派发后续失败需求已 OPEN，可认领或再派（幂等）。
+    """
+    surface, conn = cli_actor()
+
+    async def _do(session):
+        return await ops.reopen(session, requirement_id=rid, continue_=True,
+                                actor_surface=surface, actor_conn=conn,
+                                delegated={"kind": "statement",
+                                           "basis": f"dispatch REOPEN 自动折回: {title}"})
+
+    asyncio.run(run_op(get_session_factory(), _do, is_write=True))
+    _write_note(rid, f"自动折回: {title}，REOPEN -> OPEN（dispatch 折回，可正常认领）")
+
+
 # ---------------------------------------------------------------- 派发稿
 def _skill_path() -> str:
     """协议入口＝skill 树的 SKILL.md（包内资源优先，源码树回退；与 CLI `skill` 子命令同源）。"""
@@ -339,14 +361,18 @@ def _placement_text(env_card: str) -> str | None:
 def _build_prompt(*, req, rid: str, ws: str | None, env_card: str | None,
                   redline: str | None, placement: str | None,
                   budget_raw: str | None,
-                  warnings: list[str], history: list[str]) -> str:
-    """新建派发稿（五要素 + 预算 + 警示 + 有历史时的历轮交付物）：任务指针/协议入口/环境卡路径/交付规格/历轮交付物（仅当有历史）/红线提醒。"""
+                  warnings: list[str], history: list[str],
+                  folded_back: bool = False) -> str:
+    """新建派发稿（五要素 + 预算 + 警示 + 有历史时的历轮交付物）：任务指针/协议入口/环境卡路径/交付规格/历轮交付物（仅当有历史）/红线提醒。
+    folded_back：REOPEN 自动折回后注明（任务指针节，worker 认领前已知板面状态）。"""
     lines = ["【派发稿】你是本需求的 worker 会话，按看板协议执行。", "", "## 任务指针",
              f"- 需求 id: {rid}", f"- 标题: {req.title}"]
     ptr_lines = [l.strip() for l in (req.description or "").splitlines()
                  if "workspace=" in l or "env-card=" in l]
     lines.append("- 指针行（原文）: " + " / ".join(ptr_lines[:2]) if ptr_lines
                  else "- 指针行: 缺失")
+    if folded_back:
+        lines.append("- 自动折回: 本需求 REOPEN，dispatch 已自动折回 OPEN（可正常认领）")
     lines += ["", "## 协议入口", f"看板协议正典路径: {_skill_entry()}（认领后先读，按协议执行）",
               "", "## 环境卡路径"]
     if env_card:
@@ -425,8 +451,9 @@ def _history_digest(rid: str) -> list[str]:
     return asyncio.run(run_op(get_read_session_factory(), _read, is_write=False))
 
 
-def _build_continuation(req, rid: str, history: list[str]) -> str:
-    """续接稿（GET 200 复用路径，P-imp4）：会话已存在，继续当前需求 + 最近板面状态摘要 + 有历史时的历轮交付物。"""
+def _build_continuation(req, rid: str, history: list[str], folded_back: bool = False) -> str:
+    """续接稿（GET 200 复用路径，P-imp4）：会话已存在，继续当前需求 + 最近板面状态摘要
+    + 有历史时的历轮交付物。folded_back：REOPEN 自动折回后注明（state 行后）。"""
     done, total = _subtask_progress(rid)
     awaiting = req.awaiting_human
     if isinstance(awaiting, dict) and awaiting:
@@ -436,8 +463,11 @@ def _build_continuation(req, rid: str, history: list[str]) -> str:
         awaiting_desc = "无"
     lines = ["【续接稿】会话已存在，继续当前需求。", "",
              f"- 需求 id: {rid}", f"- 标题: {req.title}",
-             f"- state: {req.state}", f"- awaiting: {awaiting_desc}",
-             f"- 子任务进度: {done}/{total}"]
+             f"- state: {req.state}"]
+    if folded_back:
+        lines.append("- 自动折回: 本需求 REOPEN，dispatch 已自动折回 OPEN（可正常认领）")
+    lines += [f"- awaiting: {awaiting_desc}",
+              f"- 子任务进度: {done}/{total}"]
     if history:
         lines += ["", "## 历轮交付物（本需求历史 request_review，seq 升序）"]
         lines += history
@@ -475,7 +505,8 @@ def _delivery_fail_note(*, title: str, sid: str, model_desc: str, directory: str
 def run_dispatch(requirement_id: str, *, model: str | None = None,
                  directory: str | None = None, budget: str | None = None,
                  bg: bool = False) -> dict:
-    """dispatch 主链：状态门 -> 指针解析 -> MCP 预检（a4，ws 缺失跳过）-> 服务发现
+    """dispatch 主链：状态门（OPEN/REOPEN；REOPEN 派发前自动折回 OPEN，见 BCD b10 §3 末段）
+    -> 指针解析 -> MCP 预检（a4，ws 缺失跳过）-> REOPEN 自动折回 -> 服务发现
     -> 存在检查 -> 创建（404）-> 派发稿 prompt -> 同步 wait（budget 封顶）或
     --bg 心跳子进程 -> 板 note。
     --bg（D1）：不 wait，prompt 投递 + 分发 note 后 spawn 独立 bg 子进程
@@ -501,6 +532,14 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
         # a4 预检（subprocess，非 HTTP；先于服务发现 fail-closed，拒派不建会话不写 note；
         # ws 缺失跳过——worker 就绪门自核看板可达）
         mcp_precheck(cwd=ws)
+    # REOPEN 自动折回（b10 断点收口）：预检之后（拒派保持零写）、服务发现/会话创建前
+    # 完成状态归一——既有 (REOPEN, OPEN) 边、人面 actor + 受托痕、板 note；并发状态变更
+    # -> BusinessError fail-closed（不建半建会话、不投 prompt），CLI 既有捕获路径不变
+    folded_back = False
+    if req.state == "REOPEN":
+        _fold_back_to_open(rid, req.title)
+        req.state = "OPEN"
+        folded_back = True
     history = _history_digest(rid)  # 板面只读，先于一切 HTTP（读失败不留半建会话）
     svc = discover_service()
     sid = f"ses_req_{rid[:8]}"
@@ -531,12 +570,12 @@ def run_dispatch(requirement_id: str, *, model: str | None = None,
         # 200：session 已存在 -> 复用投续接稿（P-imp4：同 id 不新 create）；
         # 404->创建：投完整五要素新建稿
         if reused:
-            prompt = _build_continuation(req, rid, history)
+            prompt = _build_continuation(req, rid, history, folded_back=folded_back)
         else:
             prompt = _build_prompt(req=req, rid=rid, ws=ws, env_card=env_card,
                                    redline=redline, placement=placement,
                                    budget_raw=budget, warnings=warnings,
-                                   history=history)
+                                   history=history, folded_back=folded_back)
         code, _ = _api(svc, "POST", f"/api/session/{sid}/prompt", {"text": prompt})
         prompt_code = code
         _check_http_error("POST", f"/api/session/{sid}/prompt", code)

@@ -1,5 +1,5 @@
 """agent-kanban CLI（人面，PRD 4.2）。子命令：mcp / skill / new / set_expectations / approve /
-release / renew / note / abandon / reopen / export / view。agent 面工具仅经 MCP 暴露，
+release / reject / renew / note / abandon / reopen / export / view。agent 面工具仅经 MCP 暴露，
 CLI 不提供（PRD 4.1）。"""
 
 from __future__ import annotations
@@ -118,6 +118,35 @@ def _cmd_release(args: argparse.Namespace) -> int:
             args.requirement_id = rid
     return _invoke("release", requirement_id=args.requirement_id, reason=args.reason,
                    delegated=delegated)
+
+
+def _cmd_reject(args: argparse.Namespace) -> int:
+    try:
+        delegated = parse_delegation(args.on_behalf)
+    except BusinessError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return 1
+    if args.requirement_id is None:
+        if not args.reason or not str(args.reason).strip():
+            print("invalid_record: reject requires a reason", file=sys.stderr)
+            return 1
+        cands_all = _zero_input_candidates()
+        if cands_all is None:
+            return 1
+        # 候选仅 kind=review 待审（BCD b10 I8：blocked 待决不混入拒绝候选）
+        cands = [c for c in cands_all if (c.get("awaiting_human") or {}).get("kind") == "review"]
+        if not cands:
+            print("无待审项")
+            return 0
+        if len(cands) == 1:
+            args.requirement_id = cands[0]["requirement_id"]
+        else:
+            rid = _pick_zero_input(cands, header="多条待审项，请用 --requirement-id 指定目标:")
+            if rid is None:
+                return 1
+            args.requirement_id = rid
+    return _invoke("reject_review", requirement_id=args.requirement_id, reason=args.reason,
+                   target=args.target, delegated=delegated)
 
 
 def _cmd_renew(args: argparse.Namespace) -> int:
@@ -420,20 +449,23 @@ def _zero_input_candidates() -> list[dict] | None:
     return result.get("awaiting") or []
 
 
-def _print_awaiting_list(cands: list[dict], *, file) -> None:
-    print("多条待决项，请用 --requirement-id 指定目标:", file=file)
+def _print_awaiting_list(cands: list[dict], *, file,
+                         header: str = "多条待决项，请用 --requirement-id 指定目标:") -> None:
+    print(header, file=file)
     for i, c in enumerate(cands, 1):
         print(f"  {i}. {c['requirement_id'][:8]} [{c['state']}] {c['title']}", file=file)
 
 
-def _pick_zero_input(cands: list[dict]) -> str | None:
+def _pick_zero_input(cands: list[dict],
+                     *, header: str = "多条待决项，请用 --requirement-id 指定目标:") -> str | None:
     """多条候选分支（宁拒不猜，BCD 强 5）：非 tty -> stderr 列表拒；tty -> 编号选择
     （非数字/越界/EOF -> 拒）。拒绝返回 None。行含 state（BLOCKED 被 approve 是解阻
-    而非 DONE，列表必须可区分——R6）。"""
+    而非 DONE，列表必须可区分——R6）。header 缺省通用文案；reject 传「待审项」
+    （候选已按 kind=review 过滤，I8 口径）。"""
     if not sys.stdin.isatty():
-        _print_awaiting_list(cands, file=sys.stderr)
+        _print_awaiting_list(cands, file=sys.stderr, header=header)
         return None
-    _print_awaiting_list(cands, file=sys.stdout)
+    _print_awaiting_list(cands, file=sys.stdout, header=header)
     sys.stdout.write("输入序号: ")
     sys.stdout.flush()
     line = sys.stdin.readline()
@@ -496,6 +528,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--on-behalf", metavar='"kind:basis"',
                    help="受托代执行（kind: statement|action，basis 一行指向依据）")
     p.set_defaults(handler=_cmd_release)
+
+    p = sub.add_parser("reject", help="评审拒绝：CLAIMED+待审 -> REOPEN（写拒因/指向/轮次，结束认领）")
+    p.add_argument("--requirement-id")
+    p.add_argument("--reason")
+    p.add_argument("--target", help="指向子任务 id 或验收锚 id（可空＝整体退回）")
+    p.add_argument("--on-behalf", metavar='"kind:basis"',
+                   help="受托代执行（kind: statement|action，basis 一行指向依据）")
+    p.set_defaults(handler=_cmd_reject)
 
     p = sub.add_parser("renew", help="续租")
     p.add_argument("--requirement-id", required=True)

@@ -13,15 +13,16 @@
 | CLAIMED -> BLOCKED | agent（mark_blocked） |
 | CLAIMED -> OPEN | 人（release） |
 | CLAIMED -> DONE | 人（approve） |
+| CLAIMED -> REOPEN | 人（reject 评审拒绝：拒因/指向/轮次进事件链，同事务结束认领） |
 | BLOCKED -> CLAIMED | 人（解除阻塞 / 重派） |
-| DONE -> REOPEN | 人（reject 返工） |
-| REOPEN -> OPEN | 人（重排队） |
+| DONE -> REOPEN | 人（reopen 事后拒绝） |
+| REOPEN -> OPEN | 人（reopen --continue 重排队；dispatch 遇 REOPEN 复派亦经本边自动折回，见 dispatch 协议） |
 | OPEN -> CANCELLED | 人 |
 | REOPEN -> CANCELLED | 人 |
 | 任一 -> REJECTED | 人 |
 | 任一 -> ARCHIVED | 人 |
 
-不在表内的转移一律 `illegal_state`。转移到除 BLOCKED 外的状态会同时清 `awaiting_human` 标记。**agent 面无 DONE / release / approve 工具**：这些只能由人在人面执行（或 agent 代执行收尾协议，见 SKILL.md）。
+不在表内的转移一律 `illegal_state`。转移到除 BLOCKED 外的状态会同时清 `awaiting_human` 标记。**agent 面无 DONE / release / approve / reject 工具**：这些只能由人在人面执行（approve/release 另有 agent 代执行收尾协议，见 SKILL.md）。REOPEN 有两个来源，事件链区分：入边 from=CLAIMED 且带 review_reject 事件 = 交接被拒（reject）；from=DONE = 完成被拒（reopen），无 review_reject 事件。
 
 ## 租约：两个时钟
 
@@ -30,7 +31,7 @@
 
 派生信号（按序判定，不存状态字段）：认领已结束 -> `ended`；租约过期 + 有等待人标记 -> `waiting`；租约过期无标记 -> `stale`；未过期但静默超 idle（默认 30min）且无标记 -> `suspect`；否则 `active`。
 
-**续租是人面操作**：agent 面无 renew 工具。预计总时长超过租约的任务，开工前请人续租，或改走客户端派发心跳（见 dispatch 协议）。租约过期后 agent 面写操作会被拒（`lease_expired` / 认领已结束）。
+**续租是人面操作**：agent 面无 renew 工具。预计总时长超过租约的任务，开工前请人续租，或改走客户端派发心跳（见 dispatch 协议）。租约过期后 agent 面写操作会被拒（`lease_expired` / 认领已结束）。人面 reject（评审拒绝）结束认领且不续租（lease_expires_at 不改写）；返工经重认领获得全新租约窗口（REOPEN -> OPEN 后重新 claim）。
 
 ## 写保护
 

@@ -1,7 +1,7 @@
 ---
 name: agent-kanban
-description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工作的协议。当环境中出现看板工具（new_requirement / set_expectations / list_tasks / get_task_detail / claim_task / add_subtask / update_subtask / add_milestone / update_milestone / add_record / update_progress / request_review / mark_blocked / list_awaiting）且要开始或继续看板任务时加载。各客户端工具前缀不同：opencode 显示为 kanban_<tool>（如 kanban_list_tasks），Claude Code 显示为 mcp__<server>__<tool>（server 名示例 kanban）。说明如何认领、拆解、记录决策/风险/偏离、交接评审，以及哪些是人的职责（DONE 确认、释放、解除阻塞）。契约版本 3.2。
-contract-version: 3.2
+description: 通过 agent-kanban 看板 MCP 与人类及其他 agent 协同工作的协议。当环境中出现看板工具（new_requirement / set_expectations / list_tasks / get_task_detail / claim_task / add_subtask / update_subtask / add_milestone / update_milestone / add_record / update_progress / request_review / mark_blocked / list_awaiting）且要开始或继续看板任务时加载。各客户端工具前缀不同：opencode 显示为 kanban_<tool>（如 kanban_list_tasks），Claude Code 显示为 mcp__<server>__<tool>（server 名示例 kanban）。说明如何认领、拆解、记录决策/风险/偏离、交接评审，以及哪些是人的职责（DONE 确认、评审拒绝、释放、解除阻塞）。契约版本 3.3。
+contract-version: 3.3
 ---
 
 # Agent Kanban 协同协议
@@ -51,12 +51,12 @@ MCP server 名由客户端配置决定（本文示例 `kanban`）。14 个工具
 5. 拆解：`add_subtask`，每条带 acceptance[]（验收项 + 链接预期锚 links_to）。不要窄化范围；锚项无覆盖会显示覆盖缺口，这是有意的下界语义。需求 acceptance 为空时，你拆出的子任务验收 = 事实锚，交接时提请人确认/升格。
 6. 执行 + 记录：开工把子任务置 `in_progress`、完成置 `done`、放弃置 `abandoned`（原因进 note）——`update_subtask` 的状态迁移是板面进度（done/total）、覆盖缺口和重试超限信号的唯一来源，不更新等于板面看不见你在做什么。其余见「记录纪律」。
 7. 交接：`request_review`（附证据 + 验收自评表），然后**等人**。
-8. 等裁决：DONE 由人确认（approve）。人可能拒绝/要求返工（REOPEN 后你继续）。
+8. 等裁决：人 approve（确认 DONE）或 reject（评审拒绝：拒因/指向/轮次进事件链，需求转 REOPEN，见「交接与等待 · 被拒后的返工路径」）。人可能要求返工（REOPEN 后你继续）。
 
 ## 认领纪律
 
 - 认领排他：一个需求同时只一个 agent。抢占返回 `already_claimed` + 持有者句柄。
-- 租约：lease 2h / idle 30min（可配置）。两个时钟分开：① **活动**——写操作更新 last_activity_at，防 SUSPECT；② **租约**——claim 时写死 lease_expires_at，写操作**不延长**，到点失效：有等待人标记 -> `waiting`（在等人裁决，不算失联），无标记 -> `stale`（人可见告警，按失联读）。派生信号与判序的唯一口径见 <skill_dir>/references/contract.md。**续租是人面 op（agent 面无 renew）**：预计总时长 >2h 的任务，开工前请人续租或改走客户端派发的心跳代续；不要用伪造活动掩盖，卡住就 `mark_blocked` 说明卡在租约。
+- 租约：lease 2h / idle 30min（可配置）。两个时钟分开：① **活动**——写操作更新 last_activity_at，防 SUSPECT；② **租约**——claim 时写死 lease_expires_at，写操作**不延长**，到点失效：有等待人标记 -> `waiting`（在等人裁决，不算失联），无标记 -> `stale`（人可见告警，按失联读）。派生信号与判序的唯一口径见 <skill_dir>/references/contract.md。**续租是人面 op（agent 面无 renew）**：预计总时长 >2h 的任务，开工前请人续租或改走客户端派发的心跳代续；不要用伪造活动掩盖，卡住就 `mark_blocked` 说明卡在租约。人面 reject（评审拒绝）结束认领且不续租，返工经重认领获得全新窗口（见「交接与等待 · 被拒后的返工路径」）。
 - **释放是人的职责**：agent 面无 release 工具。不要试图用 mark_blocked 或伪造状态"退出"；确实要放弃就 `mark_blocked` 说明原因，等人裁决（release / reject）。
 - 重试：同一需求累计重试超 2 次，系统会写 risk 事件并进"需要关注"区——这意味着你要向人说明，而不是继续闷头重试。
 - **重试成本自报**：每次重试时用 `add_record(kind=note)` 报本次重试的成本（token 数 / 耗时），让"重试代价"进事件流——系统只计数不记成本，人靠你的 note 看到一次重试付了多少钱。
@@ -103,6 +103,7 @@ MCP server 名由客户端配置决定（本文示例 `kanban`）。14 个工具
 - `mark_blocked`：只有真需要人决策才用（需求转 BLOCKED + awaiting_human(kind=blocked)）。reason 必写一行人话原因（报节点不报流水账），进事件链可回溯。
 - 人与你 inline 交互（会话内当场问答）**不经看板**：结果记一条 decision 事件即可，不设标记，流程零中断。只有交接在会话之外（session 结束、人不在场）才需要 request_review / mark_blocked。
 - **永不声称 DONE**：DONE 只能人确认。你的 request_review 是"交回请审核"，不是完成。
+- **被拒后的返工路径**：交接被拒（人面 reject）后需求转 REOPEN——拒因/指向/轮次在板面事件链（review_reject 事件），认领已结束（不续租），板面可读出「第几轮交接被拒」。返工重入：人复派（dispatch 对 REOPEN 需求自动折回 OPEN，派发稿会注明）或人先 reopen --continue 回 OPEN——**你的首个动作是 claim_task 重认领**（新认领、全新租约窗口），没有活跃认领时写板会报 no_active_claim，这是硬条款不是建议。然后返工 -> 再次 request_review（round 自动 +1，第几轮交接板面可区分）。resume（续接同一会话）vs 重新派发（新会话）判据：会话还在且上下文可用、省启动成本 -> resume；会话丢失 / 上下文过期 / 需换模型 -> 重新派发。
 
 ## Session 与恢复
 
