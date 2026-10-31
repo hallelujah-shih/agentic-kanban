@@ -312,6 +312,7 @@ test('E7 /board?status=CLAIMED 过滤强断言', async () => {
   expect(status).toBe(200);
   // 此时 s4 已归档(E4b)、s5 已删(E4c)、s1/s2 及 E4a/E6 新建均 OPEN、s3 BLOCKED、s7 DONE、
   // s9/s10 CLAIMED（夹具扩容契约推论，[C7][C9]：[s6]->[s6,s9,s10]；id 随机序，双侧 sort 后比较）
+  expect(SEEDS.s10, 's10 夹具在场').toBeTruthy();
   expect(body.tasks.map((t) => t.requirement_id).sort())
     .toEqual([SEEDS.s6, SEEDS.s9, SEEDS.s10].sort());
 });
