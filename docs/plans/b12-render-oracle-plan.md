@@ -33,10 +33,11 @@ Scenario 2 Then（展示半句）；docs/adr/0000-known-gaps.md G13（缺陷原�
      t.awaiting_human.reason || t.awaiting_human.kind || "")`
    - `src/agent_kanban/api/web.py:417-419` 深潜横幅：`var hint = ...` / `var whats = s.awaiting_human.summary_line
      || s.awaiting_human.reason || s.awaiting_human.kind || "";` / `html += "<div class='wait-banner'>等待人决策: " + esc(whats)`
-   - `src/agent_kanban/services/operations.py:903-908` request_review 强制 summary_line 非空；
+   - `src/agent_kanban/services/operations.py:901-906` request_review 强制 summary_line 非空；
      `:919-924` 写 marker：`reason="review requested"`、`kind="review"`、`summary_line=str(summary_line).strip()`
-   - `src/agent_kanban/services/operations.py:1161` mark_blocked 写 marker：`{"reason": reason, "evidence": ..., "kind": "blocked"}`
-     （reason 非空强制：MCP 参数校验 + `l_blocked_reason_empty` 用例）
+   - `src/agent_kanban/services/operations.py:1148-1152` mark_blocked 强制 reason 非空；
+     `:1161` 写 marker：`{"reason": reason, "evidence": ..., "kind": "blocked"}`
+     （另有 `l_blocked_reason_empty` 用例背书 reason 非空）
    - `tests/e2e/seed.py`（TITLES 表 + MCP 动作段 + manifest）、`tests/e2e/smoke.spec.js:80-99`（E1）、
      `:266-274`（E5）、`:300-306`（E7）
 3. **逐例期望**
@@ -75,8 +76,8 @@ Scenario 2 Then（展示半句）；docs/adr/0000-known-gaps.md G13（缺陷原�
 2. `tests/e2e/smoke.spec.js:102-104`（E2 的逐 id 列表不含 s9/s10）— 同测试的集合等价断言
    （页面标题集合 == JSON 标题集合）已覆盖全部在板任务，逐 id 列表是冗余；登记＝本 plan 不修清单。
 3. `|| kind` 兜底腿无渲染级 fixture — canonical 路径不可达：mark_blocked 强制 reason 非空
-   （operations.py:1161 + MCP 参数校验），request_review 强制 summary_line 非空
-   （operations.py:903-908），故「无 summary_line 且无 reason」的 marker 只能由直写 SQL 造出；
+   （operations.py:1148-1152 + `l_blocked_reason_empty` 用例），request_review 强制 summary_line 非空
+   （operations.py:901-906），故「无 summary_line 且无 reason」的 marker 只能由直写 SQL 造出；
    造 fixture 钉死不可达分支属无收益断言。登记＝G13 闭合行的盲区段。
 4. `docs/ops/skill-package-verification.md:52`、`docs/plans/*`、`docs/superpowers/*`、
    `docs/ops/ci-verification.md:12`（b10 证据行）中的 `15/15` — 历史批次证据记录，非活基线，不改；
@@ -85,12 +86,13 @@ Scenario 2 Then（展示半句）；docs/adr/0000-known-gaps.md G13（缺陷原�
    不并批，独立批次立项；登记＝known-gaps G14 行（已存在）。
 6. `tests/e2e/seed.py:140-157` 预探针 / s8 后备路径 — 不动；但 E1 的「8 个在板需求」计数断言与该
    死路径耦合：若预探针触发（s3 marker 被清 -> 建 s8），在板数变 9，E1 计数断言必红＝显性红逼修
-   真实机制，非本批缺陷。登记＝本 plan Review Focus 第 5 条。
+   真实机制，非本批缺陷。删除该路径不优先：删掉即移除显性红探针（陷阱库 1：竞争窗宁可显性红，
+   不可侥幸绿）。登记＝本 plan Review Focus 第 5 条 + G13 闭合行盲区段。
 
 ## Review Focus（spec 未说、断言未直接覆盖的输入类）
 
-1. 优先级腿的反证位：四条可达腿（卡片 summary/reason、横幅 summary/reason）各有 mutation 探针
-   （Task 1 Step 5-8）。
+1. 优先级腿的反证位：四条可达腿（卡片 summary/reason、横幅 summary/reason）各有剥腿探针
+   （Task 1 Step 5-8），另有一处顺序颠倒探针（Step 9）钉「优先」语义本身。
 2. 夹具扩容与服务启动对账的交互：s10 有 awaiting marker -> 启动 reconcile 对 s10 追加 1 条
    `reconcile` 事件（同 s3 口径，smoke.spec.js [C3]）。E12 不断言事件计数，故无期望值耦合；
    若后续给 E12 加计数断言，必须按此口径。
@@ -175,7 +177,7 @@ test('E12 深潜 s10：等待横幅显 summary_line（review 优先腿）', asyn
 ```js
 // [C9] 夹具扩容（s10 review 种子带 summary_line）：E1 在板 7->8、E7 CLAIMED 集合
 //      [s6,s9]->[s6,s9,s10]；红步红因＝期望值未更新（陷阱库 3），非壳缺陷。
-//      四腿反证位＝mutation 探针（web.py:193 / :418 剥腿），红日志留档。
+//      反证位＝五处 mutation 探针（web.py:193/:418 剥腿 ×4 + 顺序颠倒 ×1），红日志留档。
 //      精确文本断言锚 web.md:31 的「等待人决策:」/「人面确认:」/「解除阻塞:」字面。
 ```
 
@@ -247,7 +249,8 @@ echo "rc=$rc"; tail -3 /home/shih/.tmp-ak-m16/b12-render-oracle/e2e-green-base.l
 python3 -c "import json;m=json.load(open('/home/shih/.tmp-ak-m16/b12-render-oracle/ak-e2e.db.seeds.json'));print(sorted(k for k in m if k.startswith('s')));print(m['s10_summary_line'], m['s3_reason'])"
 ```
 
-Expected: `rc=0`，`16 passed`；manifest 键含 s1..s7、s9、s10（s8 为 None 后备位），
+Expected: `rc=0`，`16 passed`；manifest 的 `s*` 键含 s1..s7、s9、s10、s8（None 后备位）及派生键
+`s3_awaiting_human`/`s3_event_kinds`/`s3_headline`/`s3_reason`/`s9_event_kinds`/`s10_summary_line`；
 `s10_summary_line` = 「e2e 评审交接：补渲染断言，先看 E12 横幅」，`s3_reason` = 「e2e 阻塞原因」。
 
 - [ ] **Step 5: 反证探针 A（卡片 summary_line 腿）**
@@ -341,7 +344,34 @@ echo "rc=$rc"
 
 Expected: `rc=1`（E5 精确文本断言处失败，s3 横幅显 `blocked`）。
 
-- [ ] **Step 9: 复跑全量 e2e 确认绿并留档**
+- [ ] **Step 9: 反证探针 E（顺序颠倒，钉「优先」语义）**
+
+两处同时把 `summary_line` 与 `reason` 顺序交换（两腿都在时显 reason）：
+
+```bash
+.venv/bin/python - <<'EOF'
+import pathlib
+p = pathlib.Path("src/agent_kanban/api/web.py")
+s = p.read_text()
+a = 'esc(t.awaiting_human.summary_line || t.awaiting_human.reason || t.awaiting_human.kind || "")'
+b = 'var whats = s.awaiting_human.summary_line || s.awaiting_human.reason || s.awaiting_human.kind || "";'
+assert s.count(a) == 1 and s.count(b) == 1
+s = s.replace(a, 'esc(t.awaiting_human.reason || t.awaiting_human.summary_line || t.awaiting_human.kind || "")')
+s = s.replace(b, 'var whats = s.awaiting_human.reason || s.awaiting_human.summary_line || s.awaiting_human.kind || "";')
+p.write_text(s)
+EOF
+TMPDIR=/home/shih/.tmp-ak-m16/b12-render-oracle/tmp \
+AK_E2E_DB=/home/shih/.tmp-ak-m16/b12-render-oracle/ak-e2e.db \
+npx playwright test -g "E1 看板渲染与信号|E12" > /home/shih/.tmp-ak-m16/b12-render-oracle/red-probe-E.log 2>&1
+rc=$?
+git checkout src/agent_kanban/api/web.py
+echo "rc=$rc"
+```
+
+Expected: `rc=1`，两条 spec（E1、E12）皆红（s10 有 summary_line 与 generic reason 双值，顺序颠倒即显
+`review requested`）。
+
+- [ ] **Step 10: 复跑全量 e2e 确认绿并留档**
 
 ```bash
 TMPDIR=/home/shih/.tmp-ak-m16/b12-render-oracle/tmp \
@@ -354,7 +384,7 @@ git status --short
 
 Expected: `rc=0`，`16 passed`；`git status --short` 只剩 tests/e2e 两文件（探针已恢复）。
 
-- [ ] **Step 10: 提交**
+- [ ] **Step 11: 提交**
 
 ```bash
 git add tests/e2e/seed.py tests/e2e/smoke.spec.js
@@ -392,8 +422,11 @@ Expected: `git status --short` 空；`git show --stat HEAD` 只含两个文件�
 `docs/adr/0000-known-gaps.md` G13 行的「升级路径」与「生效点」两列改为：
 
 ```markdown
-已闭合（2026-10-31，b12-render-oracle）：e2e 新增 s10 review 种子（带 summary_line）+ 渲染级精确文本断言 E1（卡片两腿）/E5（blocked 降级腿显 reason）/E12（review 优先腿显 summary_line，精确文本钉死故 generic reason 不可能同时在场）；反证位＝四处 mutation 探针（web.py:193 剥 summary_line 腿 -> E1 红；web.py:193 剥 reason 腿 -> E1 红；web.py:418 剥 summary_line 腿 -> E12 红；web.py:418 剥 reason 腿 -> E5 红），红日志留档 /home/shih/.tmp-ak-m16/b12-render-oracle/red-probe-{A,B,C,D}.log；web.md 冒烟项 5 措辞翻正；基线 15/15->16/16。残余盲区：`kind` 兜底腿 canonical 不可达（reason/summary_line 均服务端强制非空），无渲染级 oracle，接受 | 2026-10-31 闭合（b12）
+已闭合（2026-10-31，b12-render-oracle）：e2e 新增 s10 review 种子（带 summary_line）+ 渲染级精确文本断言 E1（卡片两腿）/E5（blocked 降级腿显 reason）/E12（review 优先腿显 summary_line，精确文本钉死故 generic reason 不可能同时在场）；反证位＝五处 mutation 探针（web.py:193 剥 summary_line 腿 -> E1 红；web.py:193 剥 reason 腿 -> E1 红；web.py:418 剥 summary_line 腿 -> E12 红；web.py:418 剥 reason 腿 -> E5 红；两处顺序颠倒 -> E1+E12 红），红日志留档 /home/shih/.tmp-ak-m16/b12-render-oracle/red-probe-{A,B,C,D,E}.log；web.md 冒烟项 5 措辞翻正；基线 15/15->16/16。残余盲区：`kind` 兜底腿 canonical 不可达（reason/summary_line 均服务端强制非空），无渲染级 oracle，接受；s8 后备路径与 E1 计数断言耦合（预探针触发则在板 9 -> E1 显性红），保留作显性红探针 | 2026-10-31 闭合（b12）
 ```
+
+同一 commit 内把该行「残余」列的锚点 `web.py:191-192` / `web.py:417` 翻正为
+`web.py:192-193` / `web.py:417-419`（现行代码实测）。
 
 - [ ] **Step 3: 基线数字同步**
 
@@ -447,7 +480,7 @@ Expected: `rc=0`，断言计数 1090/1090（本批不触碰后端套件；若计
 
 - [ ] **Step 2: e2e 全量**
 
-同 Task 1 Step 9 的命令，日志留档 `e2e-green-final.log`。Expected: `rc=0`，`16 passed`。
+同 Task 1 Step 10 的命令，日志留档 `e2e-green-final.log`。Expected: `rc=0`，`16 passed`。
 
 - [ ] **Step 3: docker 默认轨 build + smoke**
 
