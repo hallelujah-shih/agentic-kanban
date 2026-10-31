@@ -65,8 +65,8 @@ Scenario 2 Then（展示半句）；docs/adr/0000-known-gaps.md G13（缺陷原�
 - e2e 仪器：Playwright 1.64.1（package.json `^1.64.1`）、node v24.21.0；夹具 DB
   `AK_E2E_DB=/home/shih/.tmp-ak-m16/b12-render-oracle/ak-e2e.db`（webServer 段每次 run 前
   `rm -f ${AK_E2E_DB}*` 重建，确定性前提）；`TMPDIR=/home/shih/.tmp-ak-m16/b12-render-oracle/tmp`。
-- 夹具变更（新增 s10）＝仪器改动：基线 15/15 作废，重新基线 16/16（预算＝本批 e2e 跑次：全量 2 次
-  + 单 spec 探针 5 次），旧 15/15 证据标 superseded。
+- 夹具变更（新增 s10）＝仪器改动：基线 15/15 作废，重新基线 16/16（预算＝本批 e2e 跑次：全量 4 次
+  ＋ 单 spec 探针 5 次），旧 15/15 证据标 superseded。
 - mutation 探针不改变仪器（跑完 `git checkout` 恢复）；红绿证据同源＝同一 spec 文件、同一基 commit。
 
 ## 不修清单（file:line + 理由 + 登记位置）
@@ -490,23 +490,23 @@ Expected: `rc=0`，断言计数 1090/1090（本批不触碰后端套件；若计
 - [ ] **Step 3: docker 默认轨 build + smoke**
 
 ```bash
-docker build -t ak-b12-smoke . > /home/shih/.tmp-ak-m16/b12-render-oracle/docker-build.log 2>&1
+docker build -t ak-b12-smoke . > /home/shih/.tmp-ak-m16/b12-render-oracle/docker-smoke.log 2>&1
 rc=$?
-echo "build rc=$rc"
-docker run -d --rm --network host -e AGENT_KANBAN_PORT=18799 \
-  -v /home/shih/.tmp-ak-m16/b12-render-oracle/scratch:/data ak-b12-smoke \
-  > /home/shih/.tmp-ak-m16/b12-render-oracle/docker-run.log 2>&1
+echo "build rc=$rc" | tee -a /home/shih/.tmp-ak-m16/b12-render-oracle/docker-smoke.log
+cid=$(docker run -d --rm --network host -e AGENT_KANBAN_PORT=18799 \
+  -v /home/shih/.tmp-ak-m16/b12-render-oracle/scratch:/data ak-b12-smoke 2>> /home/shih/.tmp-ak-m16/b12-render-oracle/docker-smoke.log)
 rc=$?
-cid=$(cat /home/shih/.tmp-ak-m16/b12-render-oracle/docker-run.log)
-echo "run rc=$rc cid=$cid"
-for i in $(seq 1 20); do code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18799/healthz); [ "$code" = "200" ] && break; sleep 1; done
-echo "healthz=$code"
-docker stop "$cid"
+echo "run rc=$rc cid=$cid" | tee -a /home/shih/.tmp-ak-m16/b12-render-oracle/docker-smoke.log
+if [ "$rc" = 0 ]; then
+  for i in $(seq 1 20); do code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18799/healthz); [ "$code" = "200" ] && break; sleep 1; done
+  echo "healthz=$code" | tee -a /home/shih/.tmp-ak-m16/b12-render-oracle/docker-smoke.log
+  docker stop "$cid"
+fi
 ```
 
-Expected: `build rc=0`、`run rc=0`、`healthz=200`（`docker stop` 因 `--rm` 即清理）。禁裸
-`docker compose up`（compose 挂生产 ~/.agent-kanban:/data 且撞生产 8765 端口）。若 18799 被占，
-换空闲端口并同步 curl 端口。
+Expected: `build rc=0`、`run rc=0`、`healthz=200`（`docker stop` 因 `--rm` 即清理），三者均写入
+`docker-smoke.log`。禁裸 `docker compose up`（compose 挂生产 ~/.agent-kanban:/data 且撞生产 8765
+端口）。若 18799 被占，换空闲端口并同步 curl 端口。
 
 - [ ] **Step 4: 写证据行并提交**
 
