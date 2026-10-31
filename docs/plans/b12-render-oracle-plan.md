@@ -190,7 +190,7 @@ AK_E2E_DB=/home/shih/.tmp-ak-m16/b12-render-oracle/ak-e2e.db \
 npx playwright test > /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log 2>&1
 rc=$?
 echo "rc=$rc"
-grep -E "^\s*[0-9]+\) E(1|5|7|12) " /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log | wc -l
+grep -E "^ *[0-9]+ failed" /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log
 tail -2 /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log
 ```
 
