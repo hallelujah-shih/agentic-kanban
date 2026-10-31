@@ -36,11 +36,11 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
 - tier 阶梯（低 -> 高；tier 命名与组成按 ci-verification.md 正典）：
   1. 快速反馈（折入重跑最低 tier，SDD 机器纪律款）：`TMPDIR=<产物目录>/tmp .venv/bin/python tests/run_ac.py --only <用例 id>`
   2. 本地全量套件：`TMPDIR=<产物目录>/tmp .venv/bin/python -u tests/run_ac.py` —— 基线 **1090/1090**（b11 conformance 判据 +36 断言、sa_blankacc 净 -1；历史值 1055/997/988/976/950/918/902/859/835/816/696/521 为当时基线，勿再引用；worktree 内跑必带 `PYTHONPATH=$PWD/src` 且先 `uv sync`，见下）
-  3. 本地 e2e：`TMPDIR=<产物目录>/tmp AK_E2E_DB=<产物目录>/ak-e2e.db npx playwright test` —— 基线 **15/15**（撞端口加 `E2E_PORT`；sqlite disk I/O error 先查 /tmp quota＝环境面）
+  3. 本地 e2e：`TMPDIR=<产物目录>/tmp AK_E2E_DB=<产物目录>/ak-e2e.db npx playwright test` —— 基线 **16/16**（撞端口加 `E2E_PORT`；sqlite disk I/O error 先查 /tmp quota＝环境面）
   4. 本地 docker 双轨：默认轨 build + smoke healthz 200；pypi 轨命令与
      办公网 MITM 局限见 ci-verification.md
   5. **最高 tier（本地，合并门槛）**：2+3+4 全绿（正典组成＝全量 1090/1090 +
-     e2e 15/15 + docker 双轨 build + healthz 200）
+     e2e 16/16 + docker 双轨 build + healthz 200）
   6. **CI 门槛（合并门槛，远端）**：特性分支 push -> GH Actions 三 job
      test/e2e/docker 全绿 + 分支保护必需 check `test`+`docker`（e2e 观察期：
      自 CI 首跑 2026-10-26 起一两周无连红后补设，交接命令
@@ -98,6 +98,7 @@ docs/ops/ci-verification.md（CI/验证）、docs/adr/0000-known-gaps.md（残�
   - 新 worktree 切出后先 warm-up 再 dispatch：新目录首开 `opencode mcp list` 连空 2 次、甚至第 3 次 pending 是已知首开 flake，dispatch 预检 2 次尝试会误拒（mcp_unreachable）；在目标目录跑 warm-up 到 `kanban` 行出现 connected 为止（实测需 3-9 次，上限 10；2026-10-30 user 裁决：走派发方 warm-up，预检复跑次数不变）
   - skill 树仓内相对路径 token 门（p3_skill_text(1)）：skill 树内任何 .md（含 references/）禁出现仓内路径 token（如 `cli.py`）——CLI 一律以 `agent-kanban`（console script 名）指称。客户端特有 token 在 references/ 是正典要求（p3_skill_text(13)），但仓内路径在树内任何位置都禁（2026-10-30 b4 实锤：dispatch.md 首稿写 `cli.py dispatch`，全量红 1，改 `agent-kanban dispatch` 即绿）
   - `tests/run_ac.py --only` 只收一个参数（逗号分隔列表）；写多个 --only flag 只取**第一个**，「结果 N/M」只对应第一例——多选须 `--only a,b,c`（2026-10-30 b6 实锤：连写三个 --only 只跑了 9/9 的第一例，误读为三例全绿）
+  - Playwright toEqual 忽略数组尾部 undefined 元素：红预先声明步骤里期望值含尚未扩容的 manifest 键（SEEDS.x = undefined）时断言不红（[s6,s9] vs [s6,s9,undefined] 判等）——红的出生证需「键在场值不同」态或 mutation 探针（2026-10-31 b12 实锤：plan 红步预期 4 failed 实跑 3，E7 缺夹具态不红，判别力经 defined-id 对照验证成立）
 
 ## 主循环纪律
 

@@ -8,8 +8,9 @@
 
 ## tier / 入口
 
-- 最高 tier（本地，合并门槛）: 全量 run_ac **1090/1090**（断言数；b11 conformance 判据 +36 断言、sa_blankacc 净 -1，历史批次的 1055/997/988/976/950/918/902/859/835/816/696/521 等数字为当时基线，勿再引用）+ e2e **15/15** + docker 双轨 build + healthz 200（tier 组成的活口径以 AGENTS.md tier 2/5 为准）
+- 最高 tier（本地，合并门槛）: 全量 run_ac **1090/1090**（断言数；b11 conformance 判据 +36 断言、sa_blankacc 净 -1，历史批次的 1055/997/988/976/950/918/902/859/835/816/696/521 等数字为当时基线，勿再引用）+ e2e **16/16** + docker 双轨 build + healthz 200（tier 组成的活口径以 AGENTS.md tier 2/5 为准）
   - b10 批次本地最高 tier 证据（2026-10-31，worktree b10-review-reject @ 3bfc339）: 全量 1055/1055（green-full-2.log rc=0）+ e2e 15/15（15.9s）+ docker 默认轨 build + smoke healthz 200（docker run 空闲端口 18765 + scratch 卷，pypi 轨容器段仍办公网环境面阻塞，闭合点＝GH 首跑 docker job）；批次产物 /home/shih/.tmp-ak-m16/b10-review-reject/
+  - b12 批次本地最高 tier 证据（2026-10-31，worktree b12-render-oracle @ c94a038）: 全量 1090/1090（dispatcher-green-full-head.log rc=0）+ e2e 16/16（dispatcher-e2e-final.log，15.5s；折入轮 e2e-green-rework.log 亦 16/16）+ docker 默认轨 build + smoke healthz 200（docker run 空闲端口 18799 + scratch 卷，dispatcher-docker2.log）+ corpus 门 s_surface_bidirectional,s_journey,s_journey_shapes 36/36（dispatcher-corpus-gate.log）；批次产物 /home/shih/.tmp-ak-m16/b12-render-oracle/（实现者跑：green-full.log / e2e-green-{base,final,rework}.log / red-fixture.log / red-probe-{A..E}.log / red-e7-deviation.log / docker-smoke.log；派发方复验：dispatcher-*.log）
   - 默认轨（aliyun frozen）本地绿（t1/g4.log + t1/smoke-probes.log）；pypi 轨容器段办公网环境面阻塞，闭合点 = GH 首跑 docker job（见已知局限）
   - G12 批次红绿索引（2026-10-26，套件基线 514->521，k_g12 增例 N=7）: 红 = R1 泄漏复现 2 断言皆红（r1-red.log 0/2）/ 绿 = 521/521（g2-full.log）；产物目录 /home/shih/.tmp-ak-m16/g12/t1/；生产生效窗 = merge 回 main + 生产容器下次重启后启动自愈自动回填，此前生产行为不变（存量行数未知，自愈幂等 0 行也安全）
 - CI 门槛: PR 三 job（test/e2e/docker）真实 GH run 全绿 + 分支保护必需 check

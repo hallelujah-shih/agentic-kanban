@@ -3,7 +3,7 @@
 
 用法: .venv/bin/python tests/e2e/seed.py <db_path>
 
-复用 tests/ac_lib（CLI + MCP stdio）。8 种子（预探针触发后备则 9）：
+复用 tests/ac_lib（CLI + MCP stdio）。9 种子（预探针触发后备则 10）：
   s1 OPEN+description（对抗内容：<img onerror> + 引号 + 换行，真浏览器 XSS 探针）
   s2 OPEN+acceptance 2 锚 0 子任务（覆盖缺口标红对象）
   s3 claim+mark_blocked+update_progress（事件链=恰好 3：state_change×2+progress_note×1；
@@ -14,6 +14,7 @@
      直 SQL 两条旧形状事件——note title="" 空、progress_note title="progress"
      payload.note。在板使 E1 6->7、E7 CLAIMED 集合 +s9＝夹具扩容契约推论，
      期望值同步更新预先声明（陷阱库 3））
+  s10 claim+request_review(summary_line)（E12 review 优先腿 + E1 卡片 summary_line 腿夹具）
 预探针：seed 首跑后核 s3 awaiting_human 仍非空（update_progress 预期不清 marker，
 代码裁决 state_machine.py 转移处唯一清点位）；若被清 -> 后备种子 s8（仅 claim+
 mark_blocked，E5 改用 s8）。两路径写死。
@@ -45,6 +46,7 @@ S9_HEADLINE = "<img src=x onerror=alert(1)>"
 S9_NOTE = "e2e s9 展开全文"
 S9_OLD_NOTE_CONTENT = "e2e s9 空提纲旧形状"
 S9_OLD_PROGRESS = "e2e s9 旧形状进度注记"
+S10_SUMMARY = "e2e 评审交接：补渲染断言，先看 E12 横幅"
 AGENT = "e2e-agent"
 
 TITLES = {
@@ -57,6 +59,7 @@ TITLES = {
     "s7": "e2e-s7-claimed-done",
     "s8": "e2e-s8-blocked-fallback",
     "s9": "e2e-s9-claimed-xss",
+    "s10": "e2e-s10-review-summary",
 }
 
 
@@ -82,6 +85,7 @@ def main() -> int:
     ids["s6"] = ac_lib.seed_req(db, TITLES["s6"])
     ids["s7"] = ac_lib.seed_req(db, TITLES["s7"])
     ids["s9"] = ac_lib.seed_req(db, TITLES["s9"])
+    ids["s10"] = ac_lib.seed_req(db, TITLES["s10"])
     for k, v in ids.items():
         print(f"seed {k} = {v}  {TITLES[k]}", flush=True)
 
@@ -98,9 +102,16 @@ def main() -> int:
         _claim(mcp, ids["s9"])
         mcp.call_ok("update_progress", {"requirement_id": ids["s9"], "note": S9_NOTE,
                                          "headline": S9_HEADLINE})
+        _claim(mcp, ids["s10"])
+        mcp.call_ok("request_review", {
+            "requirement_id": ids["s10"],
+            "evidence": {"test_summary": "e2e 夹具自检"},
+            "summary_line": S10_SUMMARY,
+        })
     finally:
         mcp.close()
-    print("mcp: s3 claim+blocked+progress / s4 claim / s6 claim / s7 claim / s9 claim+progress(XSS headline)", flush=True)
+    print("mcp: s3 claim+blocked+progress / s4 claim / s6 claim / s7 claim / s9 claim+progress(XSS headline)"
+          " / s10 claim+request_review(summary_line)", flush=True)
     ac_lib.cli_ok(db, "approve", "--requirement-id", ids["s7"])
     print("cli: s7 approve -> DONE", flush=True)
 
@@ -167,6 +178,8 @@ def main() -> int:
         "s3_awaiting_human": s3_marker,
         "s3_event_kinds": s3_kinds,
         "s3_headline": S3_HEADLINE,
+        "s3_reason": S3_REASON,
+        "s10_summary_line": S10_SUMMARY,
         "s9_event_kinds": s9_kinds,
         "e5_target": e5_target,
     }
