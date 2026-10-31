@@ -191,6 +191,7 @@ npx playwright test > /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log 2
 rc=$?
 echo "rc=$rc"
 grep -E "^ *[0-9]+ failed" /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log
+grep -E "^[0-9]+\) tests/e2e/smoke.spec.js" /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log
 tail -2 /home/shih/.tmp-ak-m16/b12-render-oracle/red-fixture.log
 ```
 
